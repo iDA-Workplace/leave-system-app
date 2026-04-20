@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, Link, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { invokeFunction } from '../lib/api'
 
 // ===== 員工管理 =====
 function UserManagement() {
@@ -28,21 +29,19 @@ function UserManagement() {
       return
     }
     setSaving(true)
-    const { data, error } = await supabase.functions.invoke('manage-users', {
-      body: {
-        action: 'create',
-        email: newUser.email,
-        full_name: newUser.full_name,
-        role: newUser.role,
-        password: 'Welcome@123'
-      }
+    const { data, error } = await invokeFunction('manage-users', {
+      action: 'create',
+      email: newUser.email,
+      full_name: newUser.full_name,
+      role: newUser.role,
+      password: 'Welcome@123'
     })
     if (error || data?.error) {
       alert('新增失敗：' + (data?.error || error.message))
       setSaving(false)
       return
     }
-    alert(`員工新增成功！預設密碼為 Welcome@123`)
+    alert('員工新增成功！預設密碼為 Welcome@123')
     setNewUser({ email: '', full_name: '', role: 'employee' })
     setShowAdd(false)
     setSaving(false)
@@ -51,15 +50,13 @@ function UserManagement() {
 
   async function handleUpdateUser(user) {
     setSaving(true)
-    const { data, error } = await supabase.functions.invoke('manage-users', {
-      body: {
-        action: 'update',
-        userId: user.id,
-        full_name: editing.full_name,
-        role: editing.role,
-        slack_user_id: editing.slack_user_id,
-        is_active: editing.is_active
-      }
+    const { data, error } = await invokeFunction('manage-users', {
+      action: 'update',
+      userId: user.id,
+      full_name: editing.full_name,
+      role: editing.role,
+      slack_user_id: editing.slack_user_id,
+      is_active: editing.is_active
     })
     if (error || data?.error) {
       alert('更新失敗：' + (data?.error || error.message))
@@ -77,9 +74,7 @@ function UserManagement() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h3 style={{ margin: 0, color: '#1f2937' }}>員工帳號管理</h3>
-        <button onClick={() => setShowAdd(!showAdd)} style={btnPrimary}>
-          + 新增員工
-        </button>
+        <button onClick={() => setShowAdd(!showAdd)} style={btnPrimary}>+ 新增員工</button>
       </div>
 
       {showAdd && (
@@ -91,29 +86,15 @@ function UserManagement() {
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
             <div>
               <label style={labelStyle}>姓名 *</label>
-              <input
-                value={newUser.full_name}
-                onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))}
-                style={inputStyle}
-                placeholder="請輸入姓名"
-              />
+              <input value={newUser.full_name} onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))} style={inputStyle} placeholder="請輸入姓名" />
             </div>
             <div>
               <label style={labelStyle}>Email *</label>
-              <input
-                value={newUser.email}
-                onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))}
-                style={inputStyle}
-                placeholder="請輸入 Email"
-              />
+              <input value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} style={inputStyle} placeholder="請輸入 Email" />
             </div>
             <div>
               <label style={labelStyle}>角色 *</label>
-              <select
-                value={newUser.role}
-                onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
-                style={inputStyle}
-              >
+              <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
                 <option value="employee">員工</option>
                 <option value="supervisor">主管</option>
                 <option value="admin">管理員</option>
@@ -121,9 +102,7 @@ function UserManagement() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleAddUser} disabled={saving} style={btnPrimary}>
-              {saving ? '新增中...' : '新增'}
-            </button>
+            <button onClick={handleAddUser} disabled={saving} style={btnPrimary}>{saving ? '新增中...' : '新增'}</button>
             <button onClick={() => setShowAdd(false)} style={btnSecondary}>取消</button>
           </div>
         </div>
@@ -138,19 +117,11 @@ function UserManagement() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                     <div>
                       <label style={labelStyle}>姓名</label>
-                      <input
-                        value={editing.full_name}
-                        onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))}
-                        style={inputStyle}
-                      />
+                      <input value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} style={inputStyle} />
                     </div>
                     <div>
                       <label style={labelStyle}>角色</label>
-                      <select
-                        value={editing.role}
-                        onChange={e => setEditing(p => ({ ...p, role: e.target.value }))}
-                        style={inputStyle}
-                      >
+                      <select value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
                         <option value="employee">員工</option>
                         <option value="supervisor">主管</option>
                         <option value="admin">管理員</option>
@@ -158,25 +129,14 @@ function UserManagement() {
                     </div>
                     <div>
                       <label style={labelStyle}>Slack User ID</label>
-                      <input
-                        value={editing.slack_user_id || ''}
-                        onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))}
-                        style={inputStyle}
-                        placeholder="U0123ABCD"
-                      />
+                      <input value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} style={inputStyle} placeholder="U0123ABCD" />
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button onClick={() => handleUpdateUser(user)} disabled={saving} style={btnPrimary}>
-                      {saving ? '儲存中...' : '儲存'}
-                    </button>
+                    <button onClick={() => handleUpdateUser(user)} disabled={saving} style={btnPrimary}>{saving ? '儲存中...' : '儲存'}</button>
                     <button onClick={() => setEditing(null)} style={btnSecondary}>取消</button>
                     <label style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                      <input
-                        type="checkbox"
-                        checked={editing.is_active}
-                        onChange={e => setEditing(p => ({ ...p, is_active: e.target.checked }))}
-                      />
+                      <input type="checkbox" checked={editing.is_active} onChange={e => setEditing(p => ({ ...p, is_active: e.target.checked }))} />
                       帳號啟用
                     </label>
                   </div>
@@ -190,21 +150,16 @@ function UserManagement() {
                         marginLeft: '8px',
                         backgroundColor: user.role === 'admin' ? '#EEF2FF' : user.role === 'supervisor' ? '#FEF3C7' : '#F3F4F6',
                         color: user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706' : '#6B7280',
-                        padding: '2px 8px',
-                        borderRadius: '4px',
-                        fontSize: '12px'
+                        padding: '2px 8px', borderRadius: '4px', fontSize: '12px'
                       }}>
                         {roleMap[user.role]}
                       </span>
                       {!user.is_active && (
-                        <span style={{ marginLeft: '8px', backgroundColor: '#FEE2E2', color: '#EF4444', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>
-                          停用
-                        </span>
+                        <span style={{ marginLeft: '8px', backgroundColor: '#FEE2E2', color: '#EF4444', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>停用</span>
                       )}
                     </div>
                     <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                      {user.email}
-                      {user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
+                      {user.email}{user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
                     </div>
                   </div>
                   <button onClick={() => setEditing({ ...user })} style={btnSecondary}>編輯</button>
@@ -240,7 +195,11 @@ function FlowManagement() {
   }
 
   async function fetchUsers() {
-    const { data } = await supabase.from('users').select('id, full_name, role').eq('is_active', true).in('role', ['supervisor', 'admin'])
+    const { data } = await supabase
+      .from('users')
+      .select('id, full_name, role')
+      .eq('is_active', true)
+      .in('role', ['supervisor', 'admin'])
     setUsers(data || [])
   }
 
@@ -309,21 +268,14 @@ function FlowManagement() {
                 <div>
                   <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
                     {flow.name}
-                    {flow.is_default && (
-                      <span style={{ marginLeft: '8px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>預設</span>
-                    )}
+                    {flow.is_default && <span style={{ marginLeft: '8px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>預設</span>}
                   </div>
                   {flow.description && <div style={{ fontSize: '13px', color: '#6b7280' }}>{flow.description}</div>}
                 </div>
-                <button
-                  onClick={() => {
-                    setEditSteps(flow.id)
-                    setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
-                  }}
-                  style={btnSecondary}
-                >
-                  設定審核人
-                </button>
+                <button onClick={() => {
+                  setEditSteps(flow.id)
+                  setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
+                }} style={btnSecondary}>設定審核人</button>
               </div>
 
               {flow.steps?.length > 0 && editSteps !== flow.id && (
@@ -344,15 +296,11 @@ function FlowManagement() {
                   {steps.map((step, i) => (
                     <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
                       <span style={{ fontSize: '14px', color: '#6b7280', minWidth: '50px' }}>第{step.step_order}關</span>
-                      <select
-                        value={step.approver_id}
-                        onChange={e => {
-                          const updated = [...steps]
-                          updated[i].approver_id = e.target.value
-                          setSteps(updated)
-                        }}
-                        style={{ ...inputStyle, width: 'auto', flex: 1 }}
-                      >
+                      <select value={step.approver_id} onChange={e => {
+                        const updated = [...steps]
+                        updated[i].approver_id = e.target.value
+                        setSteps(updated)
+                      }} style={{ ...inputStyle, width: 'auto', flex: 1 }}>
                         <option value="">請選擇審核人</option>
                         {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
                       </select>
@@ -360,9 +308,7 @@ function FlowManagement() {
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                    <button onClick={() => setSteps([...steps, { step_order: steps.length + 1, approver_id: '' }])} style={btnSecondary}>
-                      + 新增關卡
-                    </button>
+                    <button onClick={() => setSteps([...steps, { step_order: steps.length + 1, approver_id: '' }])} style={btnSecondary}>+ 新增關卡</button>
                     <button onClick={() => handleSaveSteps(flow.id)} style={btnPrimary}>儲存</button>
                     <button onClick={() => setEditSteps(null)} style={btnSecondary}>取消</button>
                   </div>
@@ -463,9 +409,7 @@ function DelegateManagement() {
             <div key={d.id} style={{ ...cardStyle, padding: '16px 20px', opacity: d.is_active ? 1 : 0.6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <div>
-                  <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
-                    {d.original?.full_name} → 由 {d.delegate?.full_name} 代理
-                  </div>
+                  <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>{d.original?.full_name} → 由 {d.delegate?.full_name} 代理</div>
                   <div style={{ fontSize: '13px', color: '#6b7280' }}>{d.start_date} ～ {d.end_date}</div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -526,9 +470,7 @@ function NotificationTargets() {
   return (
     <div>
       <h3 style={{ marginBottom: '8px', color: '#1f2937' }}>核准通知對象</h3>
-      <p style={{ color: '#6b7280', fontSize: '14px', marginBottom: '20px' }}>
-        假單核准後，除了申請人之外，以下人員也會收到 Slack 通知。
-      </p>
+      <p style={{ color: '#6b7280', fontSize: '14px', marginBottom: '20px' }}>假單核准後，除了申請人之外，以下人員也會收到 Slack 通知。</p>
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         <select value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
           <option value="">選擇要加入的人員</option>
@@ -660,19 +602,17 @@ function MyDelegates({ userProfile }) {
 
 // ===== 修改密碼 =====
 function ChangePassword() {
-  const [form, setForm] = useState({ current: '', newPass: '', confirm: '' })
+  const [form, setForm] = useState({ newPass: '', confirm: '' })
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
 
   async function handleSubmit(e) {
     e.preventDefault()
     if (form.newPass !== form.confirm) {
-      setMessage('error:新密碼與確認密碼不符')
-      return
+      setMessage('error:新密碼與確認密碼不符'); return
     }
     if (form.newPass.length < 6) {
-      setMessage('error:密碼長度至少 6 位')
-      return
+      setMessage('error:密碼長度至少 6 位'); return
     }
     setSaving(true)
     const { error } = await supabase.auth.updateUser({ password: form.newPass })
@@ -680,7 +620,7 @@ function ChangePassword() {
       setMessage('error:' + error.message)
     } else {
       setMessage('success:密碼修改成功！')
-      setForm({ current: '', newPass: '', confirm: '' })
+      setForm({ newPass: '', confirm: '' })
     }
     setSaving(false)
   }
@@ -692,10 +632,7 @@ function ChangePassword() {
         <div style={{
           backgroundColor: message.startsWith('error:') ? '#FEE2E2' : '#D1FAE5',
           color: message.startsWith('error:') ? '#DC2626' : '#059669',
-          padding: '12px',
-          borderRadius: '8px',
-          marginBottom: '16px',
-          fontSize: '14px'
+          padding: '12px', borderRadius: '8px', marginBottom: '16px', fontSize: '14px'
         }}>
           {message.replace(/^(error|success):/, '')}
         </div>
@@ -703,29 +640,13 @@ function ChangePassword() {
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: '16px' }}>
           <label style={labelStyle}>新密碼 *</label>
-          <input
-            type="password"
-            value={form.newPass}
-            onChange={e => setForm(p => ({ ...p, newPass: e.target.value }))}
-            style={inputStyle}
-            placeholder="請輸入新密碼（至少 6 位）"
-            required
-          />
+          <input type="password" value={form.newPass} onChange={e => setForm(p => ({ ...p, newPass: e.target.value }))} style={inputStyle} placeholder="請輸入新密碼（至少 6 位）" required />
         </div>
         <div style={{ marginBottom: '24px' }}>
           <label style={labelStyle}>確認新密碼 *</label>
-          <input
-            type="password"
-            value={form.confirm}
-            onChange={e => setForm(p => ({ ...p, confirm: e.target.value }))}
-            style={inputStyle}
-            placeholder="請再次輸入新密碼"
-            required
-          />
+          <input type="password" value={form.confirm} onChange={e => setForm(p => ({ ...p, confirm: e.target.value }))} style={inputStyle} placeholder="請再次輸入新密碼" required />
         </div>
-        <button type="submit" disabled={saving} style={btnPrimary}>
-          {saving ? '修改中...' : '確認修改'}
-        </button>
+        <button type="submit" disabled={saving} style={btnPrimary}>{saving ? '修改中...' : '確認修改'}</button>
       </form>
     </div>
   )
@@ -754,19 +675,12 @@ function AdminPanel({ userProfile }) {
       <h2 style={{ marginBottom: '20px', color: '#1f2937', fontSize: '22px' }}>管理後台</h2>
       <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', borderBottom: '2px solid #e5e7eb', flexWrap: 'wrap' }}>
         {tabs.map(tab => (
-          <Link
-            key={tab.path}
-            to={tab.path}
-            style={{
-              padding: '10px 20px',
-              textDecoration: 'none',
-              fontSize: '14px',
-              fontWeight: '500',
-              color: location.pathname === tab.path ? '#4F46E5' : '#6b7280',
-              borderBottom: location.pathname === tab.path ? '2px solid #4F46E5' : '2px solid transparent',
-              marginBottom: '-2px'
-            }}
-          >
+          <Link key={tab.path} to={tab.path} style={{
+            padding: '10px 20px', textDecoration: 'none', fontSize: '14px', fontWeight: '500',
+            color: location.pathname === tab.path ? '#4F46E5' : '#6b7280',
+            borderBottom: location.pathname === tab.path ? '2px solid #4F46E5' : '2px solid transparent',
+            marginBottom: '-2px'
+          }}>
             {tab.label}
           </Link>
         ))}
@@ -791,49 +705,10 @@ function AdminPanel({ userProfile }) {
 }
 
 // ===== 共用樣式 =====
-const cardStyle = {
-  backgroundColor: 'white',
-  borderRadius: '12px',
-  padding: '20px',
-  boxShadow: '0 1px 4px rgba(0,0,0,0.06)'
-}
-
-const labelStyle = {
-  display: 'block',
-  marginBottom: '6px',
-  fontSize: '14px',
-  fontWeight: '500',
-  color: '#374151'
-}
-
-const inputStyle = {
-  width: '100%',
-  padding: '10px 12px',
-  border: '1px solid #e5e7eb',
-  borderRadius: '8px',
-  fontSize: '14px',
-  boxSizing: 'border-box'
-}
-
-const btnPrimary = {
-  padding: '8px 18px',
-  backgroundColor: '#4F46E5',
-  color: 'white',
-  border: 'none',
-  borderRadius: '8px',
-  cursor: 'pointer',
-  fontSize: '14px',
-  fontWeight: '500'
-}
-
-const btnSecondary = {
-  padding: '8px 18px',
-  backgroundColor: '#f3f4f6',
-  color: '#374151',
-  border: 'none',
-  borderRadius: '8px',
-  cursor: 'pointer',
-  fontSize: '14px'
-}
+const cardStyle = { backgroundColor: 'white', borderRadius: '12px', padding: '20px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }
+const labelStyle = { display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#374151' }
+const inputStyle = { width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }
+const btnPrimary = { padding: '8px 18px', backgroundColor: '#4F46E5', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px', fontWeight: '500' }
+const btnSecondary = { padding: '8px 18px', backgroundColor: '#f3f4f6', color: '#374151', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }
 
 export default AdminPanel
