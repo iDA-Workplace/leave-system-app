@@ -7,8 +7,9 @@ function UserManagement() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee', password: '' })
+  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee' })
   const [showAdd, setShowAdd] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => { fetchUsers() }, [])
 
@@ -22,34 +23,51 @@ function UserManagement() {
   }
 
   async function handleAddUser() {
-    if (!newUser.email || !newUser.full_name || !newUser.password) {
-      alert('請填寫所有欄位')
+    if (!newUser.email || !newUser.full_name) {
+      alert('請填寫姓名和 Email')
       return
     }
-    const { data, error } = await supabase.auth.admin.createUser({
-      email: newUser.email,
-      password: newUser.password,
-      user_metadata: { full_name: newUser.full_name, role: newUser.role },
-      email_confirm: true
+    setSaving(true)
+    const { data, error } = await supabase.functions.invoke('manage-users', {
+      body: {
+        action: 'create',
+        email: newUser.email,
+        full_name: newUser.full_name,
+        role: newUser.role,
+        password: 'Welcome@123'
+      }
     })
-    if (error) { alert('新增失敗：' + error.message); return }
-    await supabase.from('users').update({
-      full_name: newUser.full_name,
-      role: newUser.role
-    }).eq('id', data.user.id)
-    setNewUser({ email: '', full_name: '', role: 'employee', password: '' })
+    if (error || data?.error) {
+      alert('新增失敗：' + (data?.error || error.message))
+      setSaving(false)
+      return
+    }
+    alert(`員工新增成功！預設密碼為 Welcome@123`)
+    setNewUser({ email: '', full_name: '', role: 'employee' })
     setShowAdd(false)
-    fetchUsers()
+    setSaving(false)
+    setTimeout(() => fetchUsers(), 1000)
   }
 
   async function handleUpdateUser(user) {
-    await supabase.from('users').update({
-      full_name: editing.full_name,
-      role: editing.role,
-      slack_user_id: editing.slack_user_id,
-      is_active: editing.is_active
-    }).eq('id', user.id)
+    setSaving(true)
+    const { data, error } = await supabase.functions.invoke('manage-users', {
+      body: {
+        action: 'update',
+        userId: user.id,
+        full_name: editing.full_name,
+        role: editing.role,
+        slack_user_id: editing.slack_user_id,
+        is_active: editing.is_active
+      }
+    })
+    if (error || data?.error) {
+      alert('更新失敗：' + (data?.error || error.message))
+      setSaving(false)
+      return
+    }
     setEditing(null)
+    setSaving(false)
     fetchUsers()
   }
 
@@ -67,22 +85,35 @@ function UserManagement() {
       {showAdd && (
         <div style={cardStyle}>
           <h4 style={{ marginTop: 0, color: '#1f2937' }}>新增員工</h4>
+          <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px' }}>
+            新員工預設密碼為 <strong>Welcome@123</strong>，登入後可自行修改。
+          </p>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
             <div>
               <label style={labelStyle}>姓名 *</label>
-              <input value={newUser.full_name} onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))} style={inputStyle} placeholder="請輸入姓名" />
+              <input
+                value={newUser.full_name}
+                onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))}
+                style={inputStyle}
+                placeholder="請輸入姓名"
+              />
             </div>
             <div>
               <label style={labelStyle}>Email *</label>
-              <input value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} style={inputStyle} placeholder="請輸入 Email" />
-            </div>
-            <div>
-              <label style={labelStyle}>密碼 *</label>
-              <input type="password" value={newUser.password} onChange={e => setNewUser(p => ({ ...p, password: e.target.value }))} style={inputStyle} placeholder="請輸入密碼" />
+              <input
+                value={newUser.email}
+                onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))}
+                style={inputStyle}
+                placeholder="請輸入 Email"
+              />
             </div>
             <div>
               <label style={labelStyle}>角色 *</label>
-              <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
+              <select
+                value={newUser.role}
+                onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}
+                style={inputStyle}
+              >
                 <option value="employee">員工</option>
                 <option value="supervisor">主管</option>
                 <option value="admin">管理員</option>
@@ -90,7 +121,9 @@ function UserManagement() {
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleAddUser} style={btnPrimary}>新增</button>
+            <button onClick={handleAddUser} disabled={saving} style={btnPrimary}>
+              {saving ? '新增中...' : '新增'}
+            </button>
             <button onClick={() => setShowAdd(false)} style={btnSecondary}>取消</button>
           </div>
         </div>
@@ -105,11 +138,19 @@ function UserManagement() {
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                     <div>
                       <label style={labelStyle}>姓名</label>
-                      <input value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} style={inputStyle} />
+                      <input
+                        value={editing.full_name}
+                        onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))}
+                        style={inputStyle}
+                      />
                     </div>
                     <div>
                       <label style={labelStyle}>角色</label>
-                      <select value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
+                      <select
+                        value={editing.role}
+                        onChange={e => setEditing(p => ({ ...p, role: e.target.value }))}
+                        style={inputStyle}
+                      >
                         <option value="employee">員工</option>
                         <option value="supervisor">主管</option>
                         <option value="admin">管理員</option>
@@ -117,14 +158,25 @@ function UserManagement() {
                     </div>
                     <div>
                       <label style={labelStyle}>Slack User ID</label>
-                      <input value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} style={inputStyle} placeholder="U0123ABCD" />
+                      <input
+                        value={editing.slack_user_id || ''}
+                        onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))}
+                        style={inputStyle}
+                        placeholder="U0123ABCD"
+                      />
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                    <button onClick={() => handleUpdateUser(user)} style={btnPrimary}>儲存</button>
+                    <button onClick={() => handleUpdateUser(user)} disabled={saving} style={btnPrimary}>
+                      {saving ? '儲存中...' : '儲存'}
+                    </button>
                     <button onClick={() => setEditing(null)} style={btnSecondary}>取消</button>
                     <label style={{ fontSize: '14px', display: 'flex', alignItems: 'center', gap: '6px', cursor: 'pointer' }}>
-                      <input type="checkbox" checked={editing.is_active} onChange={e => setEditing(p => ({ ...p, is_active: e.target.checked }))} />
+                      <input
+                        type="checkbox"
+                        checked={editing.is_active}
+                        onChange={e => setEditing(p => ({ ...p, is_active: e.target.checked }))}
+                      />
                       帳號啟用
                     </label>
                   </div>
@@ -274,7 +326,6 @@ function FlowManagement() {
                 </button>
               </div>
 
-              {/* 審核步驟顯示 */}
               {flow.steps?.length > 0 && editSteps !== flow.id && (
                 <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
                   {flow.steps.sort((a, b) => a.step_order - b.step_order).map((step, i) => (
@@ -288,7 +339,6 @@ function FlowManagement() {
                 </div>
               )}
 
-              {/* 編輯步驟 */}
               {editSteps === flow.id && (
                 <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #f3f4f6' }}>
                   {steps.map((step, i) => (
@@ -310,10 +360,7 @@ function FlowManagement() {
                     </div>
                   ))}
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                    <button
-                      onClick={() => setSteps([...steps, { step_order: steps.length + 1, approver_id: '' }])}
-                      style={btnSecondary}
-                    >
+                    <button onClick={() => setSteps([...steps, { step_order: steps.length + 1, approver_id: '' }])} style={btnSecondary}>
                       + 新增關卡
                     </button>
                     <button onClick={() => handleSaveSteps(flow.id)} style={btnPrimary}>儲存</button>
@@ -335,24 +382,14 @@ function DelegateManagement() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
   const [showAdd, setShowAdd] = useState(false)
-  const [newDelegate, setNewDelegate] = useState({
-    original_approver_id: '',
-    delegate_user_id: '',
-    start_date: '',
-    end_date: ''
-  })
+  const [newDelegate, setNewDelegate] = useState({ original_approver_id: '', delegate_user_id: '', start_date: '', end_date: '' })
 
   useEffect(() => { fetchDelegates(); fetchUsers() }, [])
 
   async function fetchDelegates() {
     const { data } = await supabase
       .from('approval_delegates')
-      .select(`
-        *,
-        original:users!approval_delegates_original_approver_id_fkey(full_name),
-        delegate:users!approval_delegates_delegate_user_id_fkey(full_name),
-        creator:users!approval_delegates_created_by_fkey(full_name)
-      `)
+      .select(`*, original:users!approval_delegates_original_approver_id_fkey(full_name), delegate:users!approval_delegates_delegate_user_id_fkey(full_name)`)
       .order('created_at', { ascending: false })
     setDelegates(data || [])
     setLoading(false)
@@ -365,8 +402,7 @@ function DelegateManagement() {
 
   async function handleAdd() {
     if (!newDelegate.original_approver_id || !newDelegate.delegate_user_id || !newDelegate.start_date || !newDelegate.end_date) {
-      alert('請填寫所有欄位')
-      return
+      alert('請填寫所有欄位'); return
     }
     const { data: { user } } = await supabase.auth.getUser()
     await supabase.from('approval_delegates').insert({ ...newDelegate, created_by: user.id })
@@ -430,23 +466,13 @@ function DelegateManagement() {
                   <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
                     {d.original?.full_name} → 由 {d.delegate?.full_name} 代理
                   </div>
-                  <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                    {d.start_date} ～ {d.end_date}
-                  </div>
+                  <div style={{ fontSize: '13px', color: '#6b7280' }}>{d.start_date} ～ {d.end_date}</div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                  <span style={{
-                    backgroundColor: d.is_active ? '#D1FAE5' : '#F3F4F6',
-                    color: d.is_active ? '#10B981' : '#6B7280',
-                    padding: '4px 10px',
-                    borderRadius: '20px',
-                    fontSize: '12px'
-                  }}>
+                  <span style={{ backgroundColor: d.is_active ? '#D1FAE5' : '#F3F4F6', color: d.is_active ? '#10B981' : '#6B7280', padding: '4px 10px', borderRadius: '20px', fontSize: '12px' }}>
                     {d.is_active ? '啟用中' : '已停用'}
                   </span>
-                  <button onClick={() => toggleActive(d)} style={btnSecondary}>
-                    {d.is_active ? '停用' : '啟用'}
-                  </button>
+                  <button onClick={() => toggleActive(d)} style={btnSecondary}>{d.is_active ? '停用' : '啟用'}</button>
                 </div>
               </div>
             </div>
@@ -467,9 +493,7 @@ function NotificationTargets() {
   useEffect(() => { fetchTargets(); fetchUsers() }, [])
 
   async function fetchTargets() {
-    const { data } = await supabase
-      .from('notification_targets')
-      .select('*, user:users(full_name, email)')
+    const { data } = await supabase.from('notification_targets').select('*, user:users(full_name, email)')
     setTargets(data || [])
     setLoading(false)
   }
@@ -505,7 +529,6 @@ function NotificationTargets() {
       <p style={{ color: '#6b7280', fontSize: '14px', marginBottom: '20px' }}>
         假單核准後，除了申請人之外，以下人員也會收到 Slack 通知。
       </p>
-
       <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
         <select value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
           <option value="">選擇要加入的人員</option>
@@ -513,7 +536,6 @@ function NotificationTargets() {
         </select>
         <button onClick={handleAdd} style={btnPrimary}>新增</button>
       </div>
-
       {loading ? <p>載入中...</p> : (
         <div style={{ display: 'grid', gap: '8px' }}>
           {targets.map(target => (
@@ -524,9 +546,7 @@ function NotificationTargets() {
                   <div style={{ fontSize: '13px', color: '#6b7280' }}>{target.user?.email}</div>
                 </div>
                 <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => toggleTarget(target)} style={btnSecondary}>
-                    {target.is_active ? '停用' : '啟用'}
-                  </button>
+                  <button onClick={() => toggleTarget(target)} style={btnSecondary}>{target.is_active ? '停用' : '啟用'}</button>
                   <button onClick={() => handleRemove(target.id)} style={{ ...btnSecondary, color: '#EF4444' }}>移除</button>
                 </div>
               </div>
@@ -538,7 +558,7 @@ function NotificationTargets() {
   )
 }
 
-// ===== 主管代理自設（主管用）=====
+// ===== 我的代理設定 =====
 function MyDelegates({ userProfile }) {
   const [delegates, setDelegates] = useState([])
   const [users, setUsers] = useState([])
@@ -621,31 +641,92 @@ function MyDelegates({ userProfile }) {
           <div key={d.id} style={{ ...cardStyle, padding: '16px 20px', opacity: d.is_active ? 1 : 0.6 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <div>
-                <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
-                  代理人：{d.delegate?.full_name}
-                </div>
-                <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                  {d.start_date} ～ {d.end_date}
-                </div>
+                <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>代理人：{d.delegate?.full_name}</div>
+                <div style={{ fontSize: '13px', color: '#6b7280' }}>{d.start_date} ～ {d.end_date}</div>
               </div>
               <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <span style={{
-                  backgroundColor: d.is_active ? '#D1FAE5' : '#F3F4F6',
-                  color: d.is_active ? '#10B981' : '#6B7280',
-                  padding: '4px 10px',
-                  borderRadius: '20px',
-                  fontSize: '12px'
-                }}>
+                <span style={{ backgroundColor: d.is_active ? '#D1FAE5' : '#F3F4F6', color: d.is_active ? '#10B981' : '#6B7280', padding: '4px 10px', borderRadius: '20px', fontSize: '12px' }}>
                   {d.is_active ? '啟用中' : '已停用'}
                 </span>
-                <button onClick={() => toggleActive(d)} style={btnSecondary}>
-                  {d.is_active ? '停用' : '啟用'}
-                </button>
+                <button onClick={() => toggleActive(d)} style={btnSecondary}>{d.is_active ? '停用' : '啟用'}</button>
               </div>
             </div>
           </div>
         ))}
       </div>
+    </div>
+  )
+}
+
+// ===== 修改密碼 =====
+function ChangePassword() {
+  const [form, setForm] = useState({ current: '', newPass: '', confirm: '' })
+  const [saving, setSaving] = useState(false)
+  const [message, setMessage] = useState('')
+
+  async function handleSubmit(e) {
+    e.preventDefault()
+    if (form.newPass !== form.confirm) {
+      setMessage('error:新密碼與確認密碼不符')
+      return
+    }
+    if (form.newPass.length < 6) {
+      setMessage('error:密碼長度至少 6 位')
+      return
+    }
+    setSaving(true)
+    const { error } = await supabase.auth.updateUser({ password: form.newPass })
+    if (error) {
+      setMessage('error:' + error.message)
+    } else {
+      setMessage('success:密碼修改成功！')
+      setForm({ current: '', newPass: '', confirm: '' })
+    }
+    setSaving(false)
+  }
+
+  return (
+    <div style={{ maxWidth: '400px' }}>
+      <h3 style={{ marginBottom: '20px', color: '#1f2937' }}>修改密碼</h3>
+      {message && (
+        <div style={{
+          backgroundColor: message.startsWith('error:') ? '#FEE2E2' : '#D1FAE5',
+          color: message.startsWith('error:') ? '#DC2626' : '#059669',
+          padding: '12px',
+          borderRadius: '8px',
+          marginBottom: '16px',
+          fontSize: '14px'
+        }}>
+          {message.replace(/^(error|success):/, '')}
+        </div>
+      )}
+      <form onSubmit={handleSubmit}>
+        <div style={{ marginBottom: '16px' }}>
+          <label style={labelStyle}>新密碼 *</label>
+          <input
+            type="password"
+            value={form.newPass}
+            onChange={e => setForm(p => ({ ...p, newPass: e.target.value }))}
+            style={inputStyle}
+            placeholder="請輸入新密碼（至少 6 位）"
+            required
+          />
+        </div>
+        <div style={{ marginBottom: '24px' }}>
+          <label style={labelStyle}>確認新密碼 *</label>
+          <input
+            type="password"
+            value={form.confirm}
+            onChange={e => setForm(p => ({ ...p, confirm: e.target.value }))}
+            style={inputStyle}
+            placeholder="請再次輸入新密碼"
+            required
+          />
+        </div>
+        <button type="submit" disabled={saving} style={btnPrimary}>
+          {saving ? '修改中...' : '確認修改'}
+        </button>
+      </form>
     </div>
   )
 }
@@ -666,12 +747,12 @@ function AdminPanel({ userProfile }) {
   if (isSupervisor || isAdmin) {
     tabs.push({ path: '/admin/my-delegates', label: '我的代理' })
   }
+  tabs.push({ path: '/admin/change-password', label: '修改密碼' })
 
   return (
     <div>
       <h2 style={{ marginBottom: '20px', color: '#1f2937', fontSize: '22px' }}>管理後台</h2>
-
-      <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', borderBottom: '2px solid #e5e7eb', paddingBottom: '0' }}>
+      <div style={{ display: 'flex', gap: '4px', marginBottom: '24px', borderBottom: '2px solid #e5e7eb', flexWrap: 'wrap' }}>
         {tabs.map(tab => (
           <Link
             key={tab.path}
@@ -700,7 +781,10 @@ function AdminPanel({ userProfile }) {
             <Route path="notifications" element={<NotificationTargets />} />
           </>
         )}
-        <Route path="my-delegates" element={<MyDelegates userProfile={userProfile} />} />
+        {(isSupervisor || isAdmin) && (
+          <Route path="my-delegates" element={<MyDelegates userProfile={userProfile} />} />
+        )}
+        <Route path="change-password" element={<ChangePassword />} />
       </Routes>
     </div>
   )
