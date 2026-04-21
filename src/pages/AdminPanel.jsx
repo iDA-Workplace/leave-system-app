@@ -6,21 +6,30 @@ import { invokeFunction } from '../lib/api'
 // ===== 員工管理 =====
 function UserManagement() {
   const [users, setUsers] = useState([])
+  const [flows, setFlows] = useState([])
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee' })
+  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee', default_flow_id: '' })
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { fetchUsers() }, [])
+  useEffect(() => { fetchUsers(); fetchFlows() }, [])
 
   async function fetchUsers() {
     const { data } = await supabase
       .from('users')
-      .select('*')
+      .select('*, default_flow:approval_flows(name)')
       .order('full_name')
     setUsers(data || [])
     setLoading(false)
+  }
+
+  async function fetchFlows() {
+    const { data } = await supabase
+      .from('approval_flows')
+      .select('id, name')
+      .eq('is_active', true)
+    setFlows(data || [])
   }
 
   async function handleAddUser() {
@@ -41,8 +50,14 @@ function UserManagement() {
       setSaving(false)
       return
     }
+
+    // 設定預設流程
+    if (newUser.default_flow_id && data?.user?.id) {
+      await supabase.from('users').update({ default_flow_id: newUser.default_flow_id }).eq('id', data.user.id)
+    }
+
     alert('員工新增成功！預設密碼為 Welcome@123')
-    setNewUser({ email: '', full_name: '', role: 'employee' })
+    setNewUser({ email: '', full_name: '', role: 'employee', default_flow_id: '' })
     setShowAdd(false)
     setSaving(false)
     setTimeout(() => fetchUsers(), 1000)
@@ -63,6 +78,10 @@ function UserManagement() {
       setSaving(false)
       return
     }
+
+    // 更新預設流程
+    await supabase.from('users').update({ default_flow_id: editing.default_flow_id || null }).eq('id', user.id)
+
     setEditing(null)
     setSaving(false)
     fetchUsers()
@@ -100,6 +119,13 @@ function UserManagement() {
                 <option value="admin">管理員</option>
               </select>
             </div>
+            <div>
+              <label style={labelStyle}>審核流程</label>
+              <select value={newUser.default_flow_id} onChange={e => setNewUser(p => ({ ...p, default_flow_id: e.target.value }))} style={inputStyle}>
+                <option value="">請選擇審核流程</option>
+                {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+              </select>
+            </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
             <button onClick={handleAddUser} disabled={saving} style={btnPrimary}>{saving ? '新增中...' : '新增'}</button>
@@ -114,7 +140,7 @@ function UserManagement() {
             <div key={user.id} style={{ ...cardStyle, padding: '16px 20px' }}>
               {editing?.id === user.id ? (
                 <div>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                     <div>
                       <label style={labelStyle}>姓名</label>
                       <input value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} style={inputStyle} />
@@ -125,6 +151,13 @@ function UserManagement() {
                         <option value="employee">員工</option>
                         <option value="supervisor">主管</option>
                         <option value="admin">管理員</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label style={labelStyle}>審核流程</label>
+                      <select value={editing.default_flow_id || ''} onChange={e => setEditing(p => ({ ...p, default_flow_id: e.target.value }))} style={inputStyle}>
+                        <option value="">請選擇審核流程</option>
+                        {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
                       </select>
                     </div>
                     <div>
@@ -159,8 +192,14 @@ function UserManagement() {
                       )}
                     </div>
                     <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                      {user.email}{user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
+                      {user.email}
+                      {user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
                     </div>
+                    {user.default_flow?.name && (
+                      <div style={{ fontSize: '12px', color: '#4F46E5', marginTop: '2px' }}>
+                        審核流程：{user.default_flow.name}
+                      </div>
+                    )}
                   </div>
                   <button onClick={() => setEditing({ ...user })} style={btnSecondary}>編輯</button>
                 </div>
