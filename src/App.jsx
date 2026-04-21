@@ -34,9 +34,10 @@ function App() {
   async function fetchProfile(userId) {
   const { data } = await supabase
     .from('users')
-    .select('*, default_flow:approval_flows(id, name)')
+    .select('*')
     .eq('id', userId)
     .single()
+  console.log('userProfile data:', data)
   setUserProfile(data)
   setLoading(false)
 }
