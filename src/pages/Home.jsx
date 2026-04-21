@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
-import { format, startOfWeek, endOfWeek } from 'date-fns'
+import { format, startOfWeek, addDays } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 
 function Home() {
@@ -9,7 +9,7 @@ function Home() {
 
   const today = new Date()
   const weekStart = startOfWeek(today, { weekStartsOn: 1 })
-  const weekEnd = endOfWeek(today, { weekStartsOn: 1 })
+const weekEnd = addDays(weekStart, 4)
 
   useEffect(() => {
     fetchWeekLeaves()
