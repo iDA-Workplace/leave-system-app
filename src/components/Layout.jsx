@@ -1,9 +1,58 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
+import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 
 function Layout({ children, userProfile }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const [pendingCount, setPendingCount] = useState(0)
+
+  useEffect(() => {
+    if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin') {
+      fetchPendingCount()
+    }
+  }, [userProfile])
+
+  async function fetchPendingCount() {
+    const today = new Date().toISOString().split('T')[0]
+
+    const { data: flowSteps } = await supabase
+      .from('approval_flow_steps')
+      .select('flow_id, step_order')
+      .eq('approver_id', userProfile.id)
+
+    const { data: delegateFor } = await supabase
+      .from('approval_delegates')
+      .select('original_approver_id')
+      .eq('delegate_user_id', userProfile.id)
+      .eq('is_active', true)
+      .lte('start_date', today)
+      .gte('end_date', today)
+
+    const originalApproverIds = delegateFor?.map(d => d.original_approver_id) || []
+    let delegateSteps = []
+    if (originalApproverIds.length > 0) {
+      const { data } = await supabase
+        .from('approval_flow_steps')
+        .select('flow_id, step_order')
+        .in('approver_id', originalApproverIds)
+      delegateSteps = data || []
+    }
+
+    const allSteps = [...(flowSteps || []), ...delegateSteps]
+    if (allSteps.length === 0) { setPendingCount(0); return }
+
+    const { data: requests } = await supabase
+      .from('leave_requests')
+      .select('id, flow_id, current_step')
+      .eq('status', 'pending')
+
+    const count = (requests || []).filter(req =>
+      allSteps.some(step => step.flow_id === req.flow_id && step.step_order === req.current_step)
+    ).length
+
+    setPendingCount(count)
+  }
 
   async function handleLogout() {
     await supabase.auth.signOut()
@@ -17,7 +66,7 @@ function Layout({ children, userProfile }) {
   ]
 
   if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin') {
-    navItems.push({ path: '/approval', label: '審核假單' })
+    navItems.push({ path: '/approval', label: '審核假單', badge: pendingCount })
   }
 
   navItems.push({ path: '/admin', label: '管理後台' })
@@ -34,9 +83,7 @@ function Layout({ children, userProfile }) {
         boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-          <span style={{ color: 'white', fontWeight: 'bold', fontSize: '18px' }}>
-            請假系統
-          </span>
+          <span style={{ color: 'white', fontWeight: 'bold', fontSize: '18px' }}>請假系統</span>
           {navItems.map(item => (
             <Link
               key={item.path}
@@ -47,27 +94,38 @@ function Layout({ children, userProfile }) {
                 fontSize: '14px',
                 fontWeight: location.pathname === item.path ? '600' : '400',
                 borderBottom: location.pathname === item.path ? '2px solid white' : 'none',
-                paddingBottom: '4px'
+                paddingBottom: '4px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
               }}
             >
               {item.label}
+              {item.badge > 0 && (
+                <span style={{
+                  backgroundColor: '#EF4444',
+                  color: 'white',
+                  borderRadius: '20px',
+                  padding: '1px 7px',
+                  fontSize: '11px',
+                  fontWeight: '600',
+                  lineHeight: '1.6'
+                }}>
+                  {item.badge}
+                </span>
+              )}
             </Link>
           ))}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px' }}>
-            {userProfile?.full_name}
-          </span>
+          <span style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px' }}>{userProfile?.full_name}</span>
           <button
             onClick={handleLogout}
             style={{
               backgroundColor: 'rgba(255,255,255,0.2)',
-              color: 'white',
-              border: 'none',
-              padding: '6px 14px',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontSize: '14px'
+              color: 'white', border: 'none',
+              padding: '6px 14px', borderRadius: '6px',
+              cursor: 'pointer', fontSize: '14px'
             }}
           >
             登出

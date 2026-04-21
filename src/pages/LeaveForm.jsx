@@ -5,7 +5,7 @@ import { supabase } from '../lib/supabase'
 const TIME_OPTIONS = []
 for (let h = 8; h <= 18; h++) {
   for (let m = 0; m < 60; m += 30) {
-    if (h === 18 && m > 0) break
+    if (h === 18 && m > 30) break
     const hh = String(h).padStart(2, '0')
     const mm = String(m).padStart(2, '0')
     TIME_OPTIONS.push(`${hh}:${mm}`)
@@ -234,10 +234,10 @@ function LeaveForm({ userProfile }) {
           )}
 
           {isMultiDay && (
-            <div style={{ marginBottom: '20px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '10px 14px', borderRadius: '8px', fontSize: '14px' }}>
-              📅 跨天請假：09:00 ～ 18:00（整天）
-            </div>
-          )}
+  <div style={{ marginBottom: '20px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '10px 14px', borderRadius: '8px', fontSize: '14px' }}>
+    📅 跨天請假（整天）
+  </div>
+)}
 
           <div style={{ marginBottom: '20px' }}>
             <label style={labelStyle}>工作代理人</label>
