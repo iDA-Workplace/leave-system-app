@@ -57,9 +57,7 @@ function App() {
         <Route path="/leave/new" element={<LeaveForm userProfile={userProfile} />} />
         <Route path="/leave/my" element={<MyLeaves userProfile={userProfile} />} />
         <Route path="/approval" element={<ApprovalList userProfile={userProfile} />} />
-        {userProfile?.role === 'admin' && (
-          <Route path="/admin/*" element={<AdminPanel userProfile={userProfile} />} />
-        )}
+        <Route path="/admin/*" element={<AdminPanel userProfile={userProfile} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

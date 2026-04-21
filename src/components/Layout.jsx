@@ -20,9 +20,7 @@ function Layout({ children, userProfile }) {
     navItems.push({ path: '/approval', label: '審核假單' })
   }
 
-  if (userProfile?.role === 'admin') {
-    navItems.push({ path: '/admin', label: '管理後台' })
-  }
+  navItems.push({ path: '/admin', label: '管理後台' })
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>

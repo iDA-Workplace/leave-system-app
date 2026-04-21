@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { invokeFunction } from '../lib/api'
 
 // ===== 員工管理 =====
-function UserManagement() {
+function UserManagement({ isAdmin }) {
   const [users, setUsers] = useState([])
   const [flows, setFlows] = useState([])
   const [loading, setLoading] = useState(true)
@@ -33,10 +33,7 @@ function UserManagement() {
   }
 
   async function handleAddUser() {
-    if (!newUser.email || !newUser.full_name) {
-      alert('請填寫姓名和 Email')
-      return
-    }
+    if (!newUser.email || !newUser.full_name) { alert('請填寫姓名和 Email'); return }
     setSaving(true)
     const { data, error } = await invokeFunction('manage-users', {
       action: 'create',
@@ -45,17 +42,10 @@ function UserManagement() {
       role: newUser.role,
       password: 'Welcome@123'
     })
-    if (error || data?.error) {
-      alert('新增失敗：' + (data?.error || error.message))
-      setSaving(false)
-      return
-    }
-
-    // 設定預設流程
+    if (error || data?.error) { alert('新增失敗：' + (data?.error || error.message)); setSaving(false); return }
     if (newUser.default_flow_id && data?.user?.id) {
       await supabase.from('users').update({ default_flow_id: newUser.default_flow_id }).eq('id', data.user.id)
     }
-
     alert('員工新增成功！預設密碼為 Welcome@123')
     setNewUser({ email: '', full_name: '', role: 'employee', default_flow_id: '' })
     setShowAdd(false)
@@ -73,15 +63,8 @@ function UserManagement() {
       slack_user_id: editing.slack_user_id,
       is_active: editing.is_active
     })
-    if (error || data?.error) {
-      alert('更新失敗：' + (data?.error || error.message))
-      setSaving(false)
-      return
-    }
-
-    // 更新預設流程
+    if (error || data?.error) { alert('更新失敗：' + (data?.error || error.message)); setSaving(false); return }
     await supabase.from('users').update({ default_flow_id: editing.default_flow_id || null }).eq('id', user.id)
-
     setEditing(null)
     setSaving(false)
     fetchUsers()
@@ -93,10 +76,10 @@ function UserManagement() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h3 style={{ margin: 0, color: '#1f2937' }}>員工帳號管理</h3>
-        <button onClick={() => setShowAdd(!showAdd)} style={btnPrimary}>+ 新增員工</button>
+        {isAdmin && <button onClick={() => setShowAdd(!showAdd)} style={btnPrimary}>+ 新增員工</button>}
       </div>
 
-      {showAdd && (
+      {isAdmin && showAdd && (
         <div style={cardStyle}>
           <h4 style={{ marginTop: 0, color: '#1f2937' }}>新增員工</h4>
           <p style={{ fontSize: '13px', color: '#6b7280', marginBottom: '16px' }}>
@@ -138,7 +121,7 @@ function UserManagement() {
         <div style={{ display: 'grid', gap: '8px' }}>
           {users.map(user => (
             <div key={user.id} style={{ ...cardStyle, padding: '16px 20px' }}>
-              {editing?.id === user.id ? (
+              {isAdmin && editing?.id === user.id ? (
                 <div>
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
                     <div>
@@ -187,21 +170,16 @@ function UserManagement() {
                       }}>
                         {roleMap[user.role]}
                       </span>
-                      {!user.is_active && (
-                        <span style={{ marginLeft: '8px', backgroundColor: '#FEE2E2', color: '#EF4444', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>停用</span>
-                      )}
+                      {!user.is_active && <span style={{ marginLeft: '8px', backgroundColor: '#FEE2E2', color: '#EF4444', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>停用</span>}
                     </div>
                     <div style={{ fontSize: '13px', color: '#6b7280' }}>
-                      {user.email}
-                      {user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
+                      {user.email}{user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
                     </div>
                     {user.default_flow?.name && (
-                      <div style={{ fontSize: '12px', color: '#4F46E5', marginTop: '2px' }}>
-                        審核流程：{user.default_flow.name}
-                      </div>
+                      <div style={{ fontSize: '12px', color: '#4F46E5', marginTop: '2px' }}>審核流程：{user.default_flow.name}</div>
                     )}
                   </div>
-                  <button onClick={() => setEditing({ ...user })} style={btnSecondary}>編輯</button>
+                  {isAdmin && <button onClick={() => setEditing({ ...user })} style={btnSecondary}>編輯</button>}
                 </div>
               )}
             </div>
@@ -213,7 +191,7 @@ function UserManagement() {
 }
 
 // ===== 審核流程管理 =====
-function FlowManagement() {
+function FlowManagement({ isAdmin }) {
   const [flows, setFlows] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -234,11 +212,7 @@ function FlowManagement() {
   }
 
   async function fetchUsers() {
-    const { data } = await supabase
-      .from('users')
-      .select('id, full_name, role')
-      .eq('is_active', true)
-      .in('role', ['supervisor', 'admin'])
+    const { data } = await supabase.from('users').select('id, full_name, role').eq('is_active', true).in('role', ['supervisor', 'admin'])
     setUsers(data || [])
   }
 
@@ -254,7 +228,7 @@ function FlowManagement() {
   }
 
   async function handleDeleteFlow(flowId) {
-    if (!window.confirm('確定要刪除這個流程嗎？刪除後無法復原。')) return
+    if (!window.confirm('確定要刪除這個流程嗎？')) return
     await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
     await supabase.from('approval_flows').delete().eq('id', flowId)
     fetchFlows()
@@ -264,11 +238,7 @@ function FlowManagement() {
     await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
     for (const step of steps) {
       if (step.approver_id) {
-        await supabase.from('approval_flow_steps').insert({
-          flow_id: flowId,
-          step_order: step.step_order,
-          approver_id: step.approver_id
-        })
+        await supabase.from('approval_flow_steps').insert({ flow_id: flowId, step_order: step.step_order, approver_id: step.approver_id })
       }
     }
     setEditSteps(null)
@@ -279,10 +249,10 @@ function FlowManagement() {
     <div>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
         <h3 style={{ margin: 0, color: '#1f2937' }}>審核流程管理</h3>
-        <button onClick={() => setShowAdd(!showAdd)} style={btnPrimary}>+ 新增流程</button>
+        {isAdmin && <button onClick={() => setShowAdd(!showAdd)} style={btnPrimary}>+ 新增流程</button>}
       </div>
 
-      {showAdd && (
+      {isAdmin && showAdd && (
         <div style={cardStyle}>
           <h4 style={{ marginTop: 0 }}>新增審核流程</h4>
           <div style={{ display: 'grid', gap: '12px', marginBottom: '12px' }}>
@@ -318,13 +288,15 @@ function FlowManagement() {
                   </div>
                   {flow.description && <div style={{ fontSize: '13px', color: '#6b7280' }}>{flow.description}</div>}
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => {
-                    setEditSteps(flow.id)
-                    setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
-                  }} style={btnSecondary}>設定審核人</button>
-                  <button onClick={() => handleDeleteFlow(flow.id)} style={{ ...btnSecondary, color: '#EF4444' }}>刪除</button>
-                </div>
+                {isAdmin && (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => {
+                      setEditSteps(flow.id)
+                      setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
+                    }} style={btnSecondary}>設定審核人</button>
+                    <button onClick={() => handleDeleteFlow(flow.id)} style={{ ...btnSecondary, color: '#EF4444' }}>刪除</button>
+                  </div>
+                )}
               </div>
 
               {flow.steps?.length > 0 && editSteps !== flow.id && (
@@ -340,7 +312,7 @@ function FlowManagement() {
                 </div>
               )}
 
-              {editSteps === flow.id && (
+              {isAdmin && editSteps === flow.id && (
                 <div style={{ marginTop: '12px', paddingTop: '12px', borderTop: '1px solid #f3f4f6' }}>
                   {steps.map((step, i) => (
                     <div key={i} style={{ display: 'flex', gap: '8px', marginBottom: '8px', alignItems: 'center' }}>
@@ -371,9 +343,8 @@ function FlowManagement() {
   )
 }
 
-
-// ===== 代理設定 =====
-function DelegateManagement() {
+// ===== 代理審核設定 =====
+function DelegateManagement({ userProfile, isAdmin, isSupervisor }) {
   const [delegates, setDelegates] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -383,10 +354,16 @@ function DelegateManagement() {
   useEffect(() => { fetchDelegates(); fetchUsers() }, [])
 
   async function fetchDelegates() {
-    const { data } = await supabase
+    let query = supabase
       .from('approval_delegates')
       .select(`*, original:users!approval_delegates_original_approver_id_fkey(full_name), delegate:users!approval_delegates_delegate_user_id_fkey(full_name)`)
       .order('created_at', { ascending: false })
+
+    if (isSupervisor && !isAdmin) {
+      query = query.eq('original_approver_id', userProfile.id)
+    }
+
+    const { data } = await query
     setDelegates(data || [])
     setLoading(false)
   }
@@ -397,11 +374,18 @@ function DelegateManagement() {
   }
 
   async function handleAdd() {
-    if (!newDelegate.original_approver_id || !newDelegate.delegate_user_id || !newDelegate.start_date || !newDelegate.end_date) {
+    if (!newDelegate.delegate_user_id || !newDelegate.start_date || !newDelegate.end_date) {
       alert('請填寫所有欄位'); return
     }
-    const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('approval_delegates').insert({ ...newDelegate, created_by: user.id })
+    const originalId = isAdmin && !isSupervisor ? newDelegate.original_approver_id : userProfile.id
+    if (!originalId) { alert('請選擇被代理的主管'); return }
+    await supabase.from('approval_delegates').insert({
+      original_approver_id: originalId,
+      delegate_user_id: newDelegate.delegate_user_id,
+      start_date: newDelegate.start_date,
+      end_date: newDelegate.end_date,
+      created_by: userProfile.id
+    })
     setNewDelegate({ original_approver_id: '', delegate_user_id: '', start_date: '', end_date: '' })
     setShowAdd(false)
     fetchDelegates()
@@ -423,18 +407,20 @@ function DelegateManagement() {
         <div style={cardStyle}>
           <h4 style={{ marginTop: 0 }}>新增代理設定</h4>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-            <div>
-              <label style={labelStyle}>被代理的主管 *</label>
-              <select value={newDelegate.original_approver_id} onChange={e => setNewDelegate(p => ({ ...p, original_approver_id: e.target.value }))} style={inputStyle}>
-                <option value="">請選擇</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select>
-            </div>
+            {isAdmin && (
+              <div>
+                <label style={labelStyle}>被代理的主管 *</label>
+                <select value={newDelegate.original_approver_id} onChange={e => setNewDelegate(p => ({ ...p, original_approver_id: e.target.value }))} style={inputStyle}>
+                  <option value="">請選擇</option>
+                  {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                </select>
+              </div>
+            )}
             <div>
               <label style={labelStyle}>代理人 *</label>
               <select value={newDelegate.delegate_user_id} onChange={e => setNewDelegate(p => ({ ...p, delegate_user_id: e.target.value }))} style={inputStyle}>
                 <option value="">請選擇</option>
-                {users.filter(u => u.id !== newDelegate.original_approver_id).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                {users.filter(u => u.id !== (isAdmin ? newDelegate.original_approver_id : userProfile.id)).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
               </select>
             </div>
             <div>
@@ -478,7 +464,7 @@ function DelegateManagement() {
 }
 
 // ===== 通知對象設定 =====
-function NotificationTargets() {
+function NotificationTargets({ isAdmin }) {
   const [targets, setTargets] = useState([])
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(true)
@@ -521,13 +507,17 @@ function NotificationTargets() {
     <div>
       <h3 style={{ marginBottom: '8px', color: '#1f2937' }}>核准通知對象</h3>
       <p style={{ color: '#6b7280', fontSize: '14px', marginBottom: '20px' }}>假單核准後，除了申請人之外，以下人員也會收到 Slack 通知。</p>
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
-        <select value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
-          <option value="">選擇要加入的人員</option>
-          {availableUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}（{u.email}）</option>)}
-        </select>
-        <button onClick={handleAdd} style={btnPrimary}>新增</button>
-      </div>
+
+      {isAdmin && (
+        <div style={{ display: 'flex', gap: '8px', marginBottom: '20px' }}>
+          <select value={selectedUserId} onChange={e => setSelectedUserId(e.target.value)} style={{ ...inputStyle, flex: 1 }}>
+            <option value="">選擇要加入的人員</option>
+            {availableUsers.map(u => <option key={u.id} value={u.id}>{u.full_name}（{u.email}）</option>)}
+          </select>
+          <button onClick={handleAdd} style={btnPrimary}>新增</button>
+        </div>
+      )}
+
       {loading ? <p>載入中...</p> : (
         <div style={{ display: 'grid', gap: '8px' }}>
           {targets.map(target => (
@@ -537,115 +527,17 @@ function NotificationTargets() {
                   <div style={{ fontWeight: '600', color: '#1f2937' }}>{target.user?.full_name}</div>
                   <div style={{ fontSize: '13px', color: '#6b7280' }}>{target.user?.email}</div>
                 </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button onClick={() => toggleTarget(target)} style={btnSecondary}>{target.is_active ? '停用' : '啟用'}</button>
-                  <button onClick={() => handleRemove(target.id)} style={{ ...btnSecondary, color: '#EF4444' }}>移除</button>
-                </div>
+                {isAdmin && (
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    <button onClick={() => toggleTarget(target)} style={btnSecondary}>{target.is_active ? '停用' : '啟用'}</button>
+                    <button onClick={() => handleRemove(target.id)} style={{ ...btnSecondary, color: '#EF4444' }}>移除</button>
+                  </div>
+                )}
               </div>
             </div>
           ))}
         </div>
       )}
-    </div>
-  )
-}
-
-// ===== 我的代理設定 =====
-function MyDelegates({ userProfile }) {
-  const [delegates, setDelegates] = useState([])
-  const [users, setUsers] = useState([])
-  const [showAdd, setShowAdd] = useState(false)
-  const [newDelegate, setNewDelegate] = useState({ delegate_user_id: '', start_date: '', end_date: '' })
-
-  useEffect(() => { fetchMyDelegates(); fetchUsers() }, [])
-
-  async function fetchMyDelegates() {
-    const { data } = await supabase
-      .from('approval_delegates')
-      .select('*, delegate:users!approval_delegates_delegate_user_id_fkey(full_name)')
-      .eq('original_approver_id', userProfile.id)
-      .order('created_at', { ascending: false })
-    setDelegates(data || [])
-  }
-
-  async function fetchUsers() {
-    const { data } = await supabase.from('users').select('id, full_name').eq('is_active', true).neq('id', userProfile.id)
-    setUsers(data || [])
-  }
-
-  async function handleAdd() {
-    if (!newDelegate.delegate_user_id || !newDelegate.start_date || !newDelegate.end_date) {
-      alert('請填寫所有欄位'); return
-    }
-    await supabase.from('approval_delegates').insert({
-      original_approver_id: userProfile.id,
-      delegate_user_id: newDelegate.delegate_user_id,
-      start_date: newDelegate.start_date,
-      end_date: newDelegate.end_date,
-      created_by: userProfile.id
-    })
-    setNewDelegate({ delegate_user_id: '', start_date: '', end_date: '' })
-    setShowAdd(false)
-    fetchMyDelegates()
-  }
-
-  async function toggleActive(delegate) {
-    await supabase.from('approval_delegates').update({ is_active: !delegate.is_active }).eq('id', delegate.id)
-    fetchMyDelegates()
-  }
-
-  return (
-    <div>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
-        <h3 style={{ margin: 0, color: '#1f2937' }}>我的代理設定</h3>
-        <button onClick={() => setShowAdd(!showAdd)} style={btnPrimary}>+ 設定代理人</button>
-      </div>
-
-      {showAdd && (
-        <div style={cardStyle}>
-          <h4 style={{ marginTop: 0 }}>設定代理人</h4>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-            <div>
-              <label style={labelStyle}>代理人 *</label>
-              <select value={newDelegate.delegate_user_id} onChange={e => setNewDelegate(p => ({ ...p, delegate_user_id: e.target.value }))} style={inputStyle}>
-                <option value="">請選擇</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </select>
-            </div>
-            <div>
-              <label style={labelStyle}>開始日期 *</label>
-              <input type="date" value={newDelegate.start_date} onChange={e => setNewDelegate(p => ({ ...p, start_date: e.target.value }))} style={inputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>結束日期 *</label>
-              <input type="date" value={newDelegate.end_date} onChange={e => setNewDelegate(p => ({ ...p, end_date: e.target.value }))} style={inputStyle} min={newDelegate.start_date} />
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: '8px' }}>
-            <button onClick={handleAdd} style={btnPrimary}>新增</button>
-            <button onClick={() => setShowAdd(false)} style={btnSecondary}>取消</button>
-          </div>
-        </div>
-      )}
-
-      <div style={{ display: 'grid', gap: '8px' }}>
-        {delegates.map(d => (
-          <div key={d.id} style={{ ...cardStyle, padding: '16px 20px', opacity: d.is_active ? 1 : 0.6 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <div>
-                <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>代理人：{d.delegate?.full_name}</div>
-                <div style={{ fontSize: '13px', color: '#6b7280' }}>{d.start_date} ～ {d.end_date}</div>
-              </div>
-              <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-                <span style={{ backgroundColor: d.is_active ? '#D1FAE5' : '#F3F4F6', color: d.is_active ? '#10B981' : '#6B7280', padding: '4px 10px', borderRadius: '20px', fontSize: '12px' }}>
-                  {d.is_active ? '啟用中' : '已停用'}
-                </span>
-                <button onClick={() => toggleActive(d)} style={btnSecondary}>{d.is_active ? '停用' : '啟用'}</button>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   )
 }
@@ -658,20 +550,12 @@ function ChangePassword() {
 
   async function handleSubmit(e) {
     e.preventDefault()
-    if (form.newPass !== form.confirm) {
-      setMessage('error:新密碼與確認密碼不符'); return
-    }
-    if (form.newPass.length < 6) {
-      setMessage('error:密碼長度至少 6 位'); return
-    }
+    if (form.newPass !== form.confirm) { setMessage('error:新密碼與確認密碼不符'); return }
+    if (form.newPass.length < 6) { setMessage('error:密碼長度至少 6 位'); return }
     setSaving(true)
     const { error } = await supabase.auth.updateUser({ password: form.newPass })
-    if (error) {
-      setMessage('error:' + error.message)
-    } else {
-      setMessage('success:密碼修改成功！')
-      setForm({ newPass: '', confirm: '' })
-    }
+    if (error) { setMessage('error:' + error.message) }
+    else { setMessage('success:密碼修改成功！'); setForm({ newPass: '', confirm: '' }) }
     setSaving(false)
   }
 
@@ -708,17 +592,16 @@ function AdminPanel({ userProfile }) {
   const isAdmin = userProfile?.role === 'admin'
   const isSupervisor = userProfile?.role === 'supervisor'
 
-  const tabs = []
-  if (isAdmin) {
-    tabs.push({ path: '/admin', label: '員工管理' })
-    tabs.push({ path: '/admin/flows', label: '審核流程' })
-    tabs.push({ path: '/admin/delegates', label: '代理設定' })
-    tabs.push({ path: '/admin/notifications', label: '通知對象' })
+  const tabs = [
+    { path: '/admin', label: '員工管理' },
+    { path: '/admin/flows', label: '審核流程' },
+    { path: '/admin/notifications', label: '通知對象' },
+    { path: '/admin/change-password', label: '修改密碼' },
+  ]
+
+  if (isAdmin || isSupervisor) {
+    tabs.splice(3, 0, { path: '/admin/delegates', label: '代理審核設定' })
   }
-  if (isSupervisor || isAdmin) {
-    tabs.push({ path: '/admin/my-delegates', label: '我的代理' })
-  }
-  tabs.push({ path: '/admin/change-password', label: '修改密碼' })
 
   return (
     <div>
@@ -737,18 +620,13 @@ function AdminPanel({ userProfile }) {
       </div>
 
       <Routes>
-        {isAdmin && (
-          <>
-            <Route index element={<UserManagement />} />
-            <Route path="flows" element={<FlowManagement />} />
-            <Route path="delegates" element={<DelegateManagement />} />
-            <Route path="notifications" element={<NotificationTargets />} />
-          </>
-        )}
-        {(isSupervisor || isAdmin) && (
-          <Route path="my-delegates" element={<MyDelegates userProfile={userProfile} />} />
-        )}
+        <Route index element={<UserManagement isAdmin={isAdmin} />} />
+        <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />
+        <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />
         <Route path="change-password" element={<ChangePassword />} />
+        {(isAdmin || isSupervisor) && (
+          <Route path="delegates" element={<DelegateManagement userProfile={userProfile} isAdmin={isAdmin} isSupervisor={isSupervisor} />} />
+        )}
       </Routes>
     </div>
   )
