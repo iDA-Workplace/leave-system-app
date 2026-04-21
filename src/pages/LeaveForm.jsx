@@ -17,7 +17,9 @@ function LeaveForm({ userProfile }) {
 
   useEffect(() => {
     fetchLeaveTypes()
-    if (userProfile?.default_flow_id) fetchFlowSteps(userProfile.default_flow_id)
+    if (userProfile?.default_flow_id) {
+      fetchFlowSteps(userProfile.default_flow_id)
+    }
   }, [userProfile])
 
   async function fetchLeaveTypes() {
@@ -31,10 +33,7 @@ function LeaveForm({ userProfile }) {
   async function fetchFlowSteps(flowId) {
     const { data } = await supabase
       .from('approval_flow_steps')
-      .select(`
-        step_order,
-        approver:users!approval_flow_steps_approver_id_fkey(full_name)
-      `)
+      .select('step_order, approver:users!approval_flow_steps_approver_id_fkey(full_name)')
       .eq('flow_id', flowId)
       .order('step_order')
     setFlowSteps(data || [])
@@ -103,7 +102,10 @@ function LeaveForm({ userProfile }) {
       </p>
       <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
         <button
-          onClick={() => { setSuccess(false); setForm({ leave_type_id: '', start_date: '', end_date: '', reason: '' }) }}
+          onClick={() => {
+            setSuccess(false)
+            setForm({ leave_type_id: '', start_date: '', end_date: '', reason: '' })
+          }}
           style={{ padding: '10px 20px', backgroundColor: '#4F46E5', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
         >
           再請一張
@@ -127,10 +129,14 @@ function LeaveForm({ userProfile }) {
 
           <div style={{ marginBottom: '20px' }}>
             <label style={labelStyle}>申請人</label>
-            <input type="text" value={userProfile?.full_name || ''} disabled style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }} />
+            <input
+              type="text"
+              value={userProfile?.full_name || ''}
+              disabled
+              style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }}
+            />
           </div>
 
-          {/* 審核流程顯示 */}
           {flowSteps.length > 0 && (
             <div style={{ marginBottom: '20px' }}>
               <label style={labelStyle}>審核流程</label>
@@ -178,7 +184,12 @@ function LeaveForm({ userProfile }) {
 
           <div style={{ marginBottom: '20px' }}>
             <label style={labelStyle}>假別 *</label>
-            <select value={form.leave_type_id} onChange={e => setForm(prev => ({ ...prev, leave_type_id: e.target.value }))} required style={inputStyle}>
+            <select
+              value={form.leave_type_id}
+              onChange={e => setForm(prev => ({ ...prev, leave_type_id: e.target.value }))}
+              required
+              style={inputStyle}
+            >
               <option value="">請選擇假別</option>
               {leaveTypes.map(lt => (
                 <option key={lt.id} value={lt.id}>{lt.name}</option>
@@ -188,4 +199,78 @@ function LeaveForm({ userProfile }) {
 
           <div style={{ marginBottom: '20px' }}>
             <label style={labelStyle}>開始日期 *</label>
-            <input type="date" value={form.start_date} onChange={e => setForm(prev => ({ ...prev, start_date: e.target.value }
+            <input
+              type="date"
+              value={form.start_date}
+              onChange={e => setForm(prev => ({ ...prev, start_date: e.target.value }))}
+              required
+              style={inputStyle}
+            />
+          </div>
+
+          <div style={{ marginBottom: '20px' }}>
+            <label style={labelStyle}>結束日期 *</label>
+            <input
+              type="date"
+              value={form.end_date}
+              onChange={e => setForm(prev => ({ ...prev, end_date: e.target.value }))}
+              required
+              min={form.start_date}
+              style={inputStyle}
+            />
+          </div>
+
+          <div style={{ marginBottom: '28px' }}>
+            <label style={labelStyle}>請假原因 *</label>
+            <textarea
+              value={form.reason}
+              onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))}
+              required
+              rows={4}
+              style={{ ...inputStyle, resize: 'vertical' }}
+              placeholder="請簡述請假原因"
+            />
+          </div>
+
+          <button
+            type="submit"
+            disabled={loading || !userProfile?.default_flow_id}
+            style={{
+              width: '100%',
+              padding: '12px',
+              backgroundColor: loading || !userProfile?.default_flow_id ? '#a5b4fc' : '#4F46E5',
+              color: 'white',
+              border: 'none',
+              borderRadius: '8px',
+              fontSize: '16px',
+              fontWeight: '600',
+              cursor: loading || !userProfile?.default_flow_id ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {loading ? '送出中...' : '送出申請'}
+          </button>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+const labelStyle = {
+  display: 'block',
+  marginBottom: '6px',
+  fontSize: '14px',
+  fontWeight: '500',
+  color: '#374151'
+}
+
+const inputStyle = {
+  width: '100%',
+  padding: '10px 12px',
+  border: '1px solid #e5e7eb',
+  borderRadius: '8px',
+  fontSize: '14px',
+  boxSizing: 'border-box',
+  outline: 'none'
+}
+
+export default LeaveForm
