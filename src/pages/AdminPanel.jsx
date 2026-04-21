@@ -213,12 +213,14 @@ function FlowManagement() {
     setShowAdd(false)
     fetchFlows()
   }
-async function handleDeleteFlow(flowId) {
-  if (!window.confirm('確定要刪除這個流程嗎？')) return
-  await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
-  await supabase.from('approval_flows').delete().eq('id', flowId)
-  fetchFlows()
-}
+
+  async function handleDeleteFlow(flowId) {
+    if (!window.confirm('確定要刪除這個流程嗎？刪除後無法復原。')) return
+    await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
+    await supabase.from('approval_flows').delete().eq('id', flowId)
+    fetchFlows()
+  }
+
   async function handleSaveSteps(flowId) {
     await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
     for (const step of steps) {
@@ -277,10 +279,13 @@ async function handleDeleteFlow(flowId) {
                   </div>
                   {flow.description && <div style={{ fontSize: '13px', color: '#6b7280' }}>{flow.description}</div>}
                 </div>
-                <button onClick={() => {
-                  setEditSteps(flow.id)
-                  setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
-                }} style={btnSecondary}>設定審核人</button><button onClick={() => handleDeleteFlow(flow.id)} style={{ ...btnSecondary, color: '#EF4444' }}>刪除</button>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button onClick={() => {
+                    setEditSteps(flow.id)
+                    setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
+                  }} style={btnSecondary}>設定審核人</button>
+                  <button onClick={() => handleDeleteFlow(flow.id)} style={{ ...btnSecondary, color: '#EF4444' }}>刪除</button>
+                </div>
               </div>
 
               {flow.steps?.length > 0 && editSteps !== flow.id && (
@@ -326,6 +331,7 @@ async function handleDeleteFlow(flowId) {
     </div>
   )
 }
+
 
 // ===== 代理設定 =====
 function DelegateManagement() {
