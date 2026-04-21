@@ -5,6 +5,7 @@ import { supabase } from '../lib/supabase'
 function LeaveForm({ userProfile }) {
   const navigate = useNavigate()
   const [leaveTypes, setLeaveTypes] = useState([])
+  const [flowSteps, setFlowSteps] = useState([])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [form, setForm] = useState({
@@ -16,7 +17,8 @@ function LeaveForm({ userProfile }) {
 
   useEffect(() => {
     fetchLeaveTypes()
-  }, [])
+    if (userProfile?.default_flow_id) fetchFlowSteps(userProfile.default_flow_id)
+  }, [userProfile])
 
   async function fetchLeaveTypes() {
     const { data } = await supabase
@@ -24,6 +26,18 @@ function LeaveForm({ userProfile }) {
       .select('*')
       .eq('is_active', true)
     setLeaveTypes(data || [])
+  }
+
+  async function fetchFlowSteps(flowId) {
+    const { data } = await supabase
+      .from('approval_flow_steps')
+      .select(`
+        step_order,
+        approver:users!approval_flow_steps_approver_id_fkey(full_name)
+      `)
+      .eq('flow_id', flowId)
+      .order('step_order')
+    setFlowSteps(data || [])
   }
 
   async function handleSubmit(e) {
@@ -116,6 +130,52 @@ function LeaveForm({ userProfile }) {
             <input type="text" value={userProfile?.full_name || ''} disabled style={{ ...inputStyle, backgroundColor: '#f9fafb', color: '#6b7280' }} />
           </div>
 
+          {/* 審核流程顯示 */}
+          {flowSteps.length > 0 && (
+            <div style={{ marginBottom: '20px' }}>
+              <label style={labelStyle}>審核流程</label>
+              <div style={{
+                backgroundColor: '#f9fafb',
+                border: '1px solid #e5e7eb',
+                borderRadius: '8px',
+                padding: '12px 16px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                flexWrap: 'wrap'
+              }}>
+                {flowSteps.map((step, i) => (
+                  <div key={step.step_order} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {i > 0 && <span style={{ color: '#9ca3af' }}>→</span>}
+                    <span style={{
+                      backgroundColor: '#EEF2FF',
+                      color: '#4F46E5',
+                      padding: '4px 12px',
+                      borderRadius: '20px',
+                      fontSize: '13px',
+                      fontWeight: '500'
+                    }}>
+                      第{step.step_order}關：{step.approver?.full_name}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!userProfile?.default_flow_id && (
+            <div style={{
+              backgroundColor: '#FEF3C7',
+              color: '#D97706',
+              padding: '12px',
+              borderRadius: '8px',
+              marginBottom: '20px',
+              fontSize: '13px'
+            }}>
+              ⚠️ 您尚未被指定審核流程，請聯繫管理員設定後再送出假單。
+            </div>
+          )}
+
           <div style={{ marginBottom: '20px' }}>
             <label style={labelStyle}>假別 *</label>
             <select value={form.leave_type_id} onChange={e => setForm(prev => ({ ...prev, leave_type_id: e.target.value }))} required style={inputStyle}>
@@ -128,35 +188,4 @@ function LeaveForm({ userProfile }) {
 
           <div style={{ marginBottom: '20px' }}>
             <label style={labelStyle}>開始日期 *</label>
-            <input type="date" value={form.start_date} onChange={e => setForm(prev => ({ ...prev, start_date: e.target.value }))} required style={inputStyle} />
-          </div>
-
-          <div style={{ marginBottom: '20px' }}>
-            <label style={labelStyle}>結束日期 *</label>
-            <input type="date" value={form.end_date} onChange={e => setForm(prev => ({ ...prev, end_date: e.target.value }))} required min={form.start_date} style={inputStyle} />
-          </div>
-
-          <div style={{ marginBottom: '28px' }}>
-            <label style={labelStyle}>請假原因 *</label>
-            <textarea value={form.reason} onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))} required rows={4} style={{ ...inputStyle, resize: 'vertical' }} placeholder="請簡述請假原因" />
-          </div>
-
-          <button type="submit" disabled={loading} style={{
-            width: '100%', padding: '12px',
-            backgroundColor: loading ? '#a5b4fc' : '#4F46E5',
-            color: 'white', border: 'none', borderRadius: '8px',
-            fontSize: '16px', fontWeight: '600',
-            cursor: loading ? 'not-allowed' : 'pointer'
-          }}>
-            {loading ? '送出中...' : '送出申請'}
-          </button>
-        </form>
-      </div>
-    </div>
-  )
-}
-
-const labelStyle = { display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#374151' }
-const inputStyle = { width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box', outline: 'none' }
-
-export default LeaveForm
+            <input type="date" value={form.start_date} onChange={e => setForm(prev => ({ ...prev, start_date: e.target.value }
