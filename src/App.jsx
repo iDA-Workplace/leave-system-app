@@ -32,14 +32,14 @@ function App() {
   }, [])
 
   async function fetchProfile(userId) {
-    const { data } = await supabase
-      .from('users')
-      .select('*')
-      .eq('id', userId)
-      .single()
-    setUserProfile(data)
-    setLoading(false)
-  }
+  const { data } = await supabase
+    .from('users')
+    .select('*, default_flow:approval_flows(id, name)')
+    .eq('id', userId)
+    .single()
+  setUserProfile(data)
+  setLoading(false)
+}
 
   if (loading) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
