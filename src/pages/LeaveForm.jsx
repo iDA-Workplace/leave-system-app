@@ -123,13 +123,27 @@ function LeaveForm({ userProfile }) {
       return
     }
 
-    await supabase.functions.invoke('send-slack-notification', {
-      body: { type: 'new_request', request_id: data.id }
-    })
+    // 檢查這個流程有沒有審核步驟
+const { data: steps } = await supabase
+  .from('approval_flow_steps')
+  .select('id')
+  .eq('flow_id', userProfile.default_flow_id)
 
-    setSuccess(true)
-    setLoading(false)
-  }
+if (!steps || steps.length === 0) {
+  // 沒有審核步驟，直接自動核准
+  await supabase
+    .from('leave_requests')
+    .update({ status: 'approved' })
+    .eq('id', data.id)
+} else {
+  // 有審核步驟，發 Slack 通知給審核人
+  await supabase.functions.invoke('send-slack-notification', {
+    body: { type: 'new_request', request_id: data.id }
+  })
+}
+
+setSuccess(true)
+setLoading(false)
 
   if (success) return (
     <div style={{
