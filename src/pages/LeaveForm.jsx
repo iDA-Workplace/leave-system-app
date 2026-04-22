@@ -124,26 +124,25 @@ function LeaveForm({ userProfile }) {
     }
 
     // 檢查這個流程有沒有審核步驟
-const { data: steps } = await supabase
-  .from('approval_flow_steps')
-  .select('id')
-  .eq('flow_id', userProfile.default_flow_id)
+    const { data: steps } = await supabase
+      .from('approval_flow_steps')
+      .select('id')
+      .eq('flow_id', userProfile.default_flow_id)
 
-if (!steps || steps.length === 0) {
-  // 沒有審核步驟，直接自動核准
-  await supabase
-    .from('leave_requests')
-    .update({ status: 'approved' })
-    .eq('id', data.id)
-} else {
-  // 有審核步驟，發 Slack 通知給審核人
-  await supabase.functions.invoke('send-slack-notification', {
-    body: { type: 'new_request', request_id: data.id }
-  })
-}
+    if (!steps || steps.length === 0) {
+      await supabase
+        .from('leave_requests')
+        .update({ status: 'approved' })
+        .eq('id', data.id)
+    } else {
+      await supabase.functions.invoke('send-slack-notification', {
+        body: { type: 'new_request', request_id: data.id }
+      })
+    }
 
-setSuccess(true)
-setLoading(false)
+    setSuccess(true)
+    setLoading(false)
+  }
 
   if (success) return (
     <div style={{
@@ -156,7 +155,10 @@ setLoading(false)
       <p style={{ color: '#6b7280', marginBottom: '24px', fontSize: '14px' }}>已通知審核人，請等候審核結果。</p>
       <div style={{ display: 'flex', gap: '12px', justifyContent: 'center' }}>
         <button
-          onClick={() => { setSuccess(false); setForm({ leave_type_id: '', start_date: '', end_date: '', start_time: '09:00', end_time: '18:00', proxy_user_id: '', reason: '' }) }}
+          onClick={() => {
+            setSuccess(false)
+            setForm({ leave_type_id: '', start_date: '', end_date: '', start_time: '09:00', end_time: '18:00', proxy_user_id: '', reason: '' })
+          }}
           style={{ padding: '10px 20px', backgroundColor: '#4F46E5', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
         >再請一張</button>
         <button
@@ -239,7 +241,7 @@ setLoading(false)
                   )}
                 </div>
               )}
-              {hours === 0 && form.start_time && form.end_time && form.end_time <= form.start_time && (
+              {hours === 0 && form.end_time <= form.start_time && (
                 <div style={{ marginTop: '10px', backgroundColor: '#FEE2E2', color: '#EF4444', padding: '10px 14px', borderRadius: '8px', fontSize: '13px' }}>
                   ⚠️ 結束時間不能早於或等於開始時間
                 </div>
@@ -248,10 +250,10 @@ setLoading(false)
           )}
 
           {isMultiDay && (
-  <div style={{ marginBottom: '20px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '10px 14px', borderRadius: '8px', fontSize: '14px' }}>
-    📅 跨天請假（整天）
-  </div>
-)}
+            <div style={{ marginBottom: '20px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '10px 14px', borderRadius: '8px', fontSize: '14px' }}>
+              📅 跨天請假（整天）
+            </div>
+          )}
 
           <div style={{ marginBottom: '20px' }}>
             <label style={labelStyle}>工作代理人</label>
