@@ -60,10 +60,11 @@ function Layout({ children, userProfile }) {
   }
 
   const navItems = [
-    { path: '/', label: '首頁' },
-    { path: '/leave/new', label: '申請請假' },
-    { path: '/leave/my', label: '我的假單' },
-  ]
+  { path: '/', label: '首頁' },
+  { path: '/calendar', label: '請假行事曆' },
+  { path: '/leave/new', label: '申請請假' },
+  { path: '/leave/my', label: '我的假單' },
+]
 
   if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin') {
     navItems.push({ path: '/approval', label: '審核假單', badge: pendingCount })
