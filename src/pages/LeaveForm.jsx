@@ -28,11 +28,34 @@ function calcHours(start, end) {
   return Math.max(0, total / 60)
 }
 
+function countWorkdays(startDate, endDate) {
+  let count = 0
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  const current = new Date(start)
+  while (current <= end) {
+    const day = current.getDay()
+    if (day !== 0 && day !== 6) count++
+    current.setDate(current.getDate() + 1)
+  }
+  return count
+}
+
+function formatDuration(totalHours) {
+  if (totalHours === 0) return '0'
+  const days = Math.floor(totalHours / 8)
+  const hours = totalHours % 8
+  if (days > 0 && hours > 0) return `${days} 天 ${hours} 小時`
+  if (days > 0) return `${days} 天`
+  return `${hours} 小時`
+}
+
 function LeaveForm({ userProfile }) {
   const navigate = useNavigate()
   const [leaveTypes, setLeaveTypes] = useState([])
   const [flowSteps, setFlowSteps] = useState([])
   const [colleagues, setColleagues] = useState([])
+  const [leaveStats, setLeaveStats] = useState([])
   const [loading, setLoading] = useState(false)
   const [success, setSuccess] = useState(false)
   const [form, setForm] = useState({
@@ -51,6 +74,7 @@ function LeaveForm({ userProfile }) {
   useEffect(() => {
     fetchLeaveTypes()
     fetchColleagues()
+    fetchLeaveStats()
     if (userProfile?.default_flow_id) fetchFlowSteps(userProfile.default_flow_id)
   }, [userProfile])
 
@@ -76,6 +100,43 @@ function LeaveForm({ userProfile }) {
       .neq('id', userProfile.id)
       .order('full_name')
     setColleagues(data || [])
+  }
+
+  async function fetchLeaveStats() {
+    const year = new Date().getFullYear()
+    const { data } = await supabase
+      .from('leave_requests')
+      .select(`
+        *,
+        leave_type:leave_types(name, color)
+      `)
+      .eq('requester_id', userProfile.id)
+      .eq('status', 'approved')
+      .gte('start_date', `${year}-01-01`)
+      .lte('start_date', `${year}-12-31`)
+
+    if (!data) return
+
+    // 統計每個假別的時數
+    const statsMap = {}
+    for (const leave of data) {
+      const typeName = leave.leave_type?.name || '其他'
+      const typeColor = leave.leave_type?.color || '#4F46E5'
+      if (!statsMap[typeName]) {
+        statsMap[typeName] = { name: typeName, color: typeColor, totalHours: 0 }
+      }
+
+      if (leave.hours) {
+        // 有記錄時數（非跨天）
+        statsMap[typeName].totalHours += Number(leave.hours)
+      } else {
+        // 跨天，用工作日計算（每天8小時）
+        const workdays = countWorkdays(leave.start_date, leave.end_date)
+        statsMap[typeName].totalHours += workdays * 8
+      }
+    }
+
+    setLeaveStats(Object.values(statsMap))
   }
 
   async function handleSubmit(e) {
@@ -123,17 +184,13 @@ function LeaveForm({ userProfile }) {
       return
     }
 
-    // 檢查這個流程有沒有審核步驟
     const { data: steps } = await supabase
       .from('approval_flow_steps')
       .select('id')
       .eq('flow_id', userProfile.default_flow_id)
 
     if (!steps || steps.length === 0) {
-      await supabase
-        .from('leave_requests')
-        .update({ status: 'approved' })
-        .eq('id', data.id)
+      await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', data.id)
     } else {
       await supabase.functions.invoke('send-slack-notification', {
         body: { type: 'new_request', request_id: data.id }
@@ -158,6 +215,7 @@ function LeaveForm({ userProfile }) {
           onClick={() => {
             setSuccess(false)
             setForm({ leave_type_id: '', start_date: '', end_date: '', start_time: '09:00', end_time: '18:00', proxy_user_id: '', reason: '' })
+            fetchLeaveStats()
           }}
           style={{ padding: '10px 20px', backgroundColor: '#4F46E5', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontSize: '14px' }}
         >再請一張</button>
@@ -172,6 +230,36 @@ function LeaveForm({ userProfile }) {
   return (
     <div style={{ maxWidth: '560px', margin: '0 auto' }}>
       <h2 style={{ marginBottom: '24px', color: '#1f2937', fontSize: '22px' }}>申請請假</h2>
+
+      {/* 今年請假統計 */}
+      <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '20px 24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)', marginBottom: '20px' }}>
+        <div style={{ fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '14px' }}>
+          📊 {new Date().getFullYear()} 年請假統計
+        </div>
+        {leaveStats.length === 0 ? (
+          <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0 }}>今年尚無請假記錄</p>
+        ) : (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '10px' }}>
+            {leaveStats.map(stat => (
+              <div key={stat.name} style={{
+                backgroundColor: stat.color + '12',
+                border: `1px solid ${stat.color}30`,
+                borderRadius: '8px',
+                padding: '10px 14px'
+              }}>
+                <div style={{ fontSize: '12px', color: stat.color, fontWeight: '500', marginBottom: '4px' }}>
+                  {stat.name}
+                </div>
+                <div style={{ fontSize: '18px', fontWeight: '600', color: '#1f2937' }}>
+                  {formatDuration(stat.totalHours)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* 請假表單 */}
       <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '32px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
         <form onSubmit={handleSubmit}>
 
