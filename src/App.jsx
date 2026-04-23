@@ -10,6 +10,7 @@ import ApprovalList from './pages/ApprovalList'
 import AdminPanel from './pages/AdminPanel'
 import Layout from './components/Layout'
 import LeaveCalendar from './pages/Calendar'
+import PastLeaves from './pages/PastLeaves'
 
 function App() {
   const [session, setSession] = useState(null)
@@ -56,6 +57,7 @@ function App() {
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/calendar" element={<LeaveCalendar />} />
+        <Route path="/past-leaves" element={<PastLeaves />} />
         <Route path="/leave/new" element={<LeaveForm userProfile={userProfile} />} />
         <Route path="/leave/my" element={<MyLeaves userProfile={userProfile} />} />
         <Route path="/approval" element={<ApprovalList userProfile={userProfile} />} />
