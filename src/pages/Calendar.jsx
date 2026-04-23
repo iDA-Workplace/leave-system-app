@@ -28,14 +28,28 @@ function LeaveCalendar() {
       .eq('status', 'approved')
       .order('start_date')
 
-    const events = (data || []).map(leave => ({
-      id: leave.id,
-      title: leave.requester?.full_name + ' (' + leave.leave_type?.name + ')',
-      start: new Date(leave.start_date + 'T00:00:00'),
-      end: new Date(leave.end_date + 'T23:59:59'),
-      color: leave.leave_type?.color || '#4F46E5',
-      resource: leave
-    }))
+    const events = (data || []).map(leave => {
+      const isAllDay = !leave.hours || leave.hours >= 8 || leave.end_date > leave.start_date
+
+      let start, end
+      if (isAllDay) {
+        start = new Date(leave.start_date + 'T00:00:00')
+        end = new Date(leave.end_date + 'T23:59:59')
+      } else {
+        start = new Date(leave.start_date + 'T' + (leave.start_time || '09:00') + ':00')
+        end = new Date(leave.start_date + 'T' + (leave.end_time || '18:00') + ':00')
+      }
+
+      return {
+        id: leave.id,
+        title: leave.requester?.full_name + ' (' + leave.leave_type?.name + ')',
+        start,
+        end,
+        allDay: isAllDay,
+        color: leave.leave_type?.color || '#4F46E5',
+        resource: leave
+      }
+    })
 
     setEvents(events)
     setLoading(false)
@@ -53,15 +67,12 @@ function LeaveCalendar() {
   })
 
   const dayPropGetter = (date) => {
-    const today = new Date()
     const weekStart = moment().startOf('isoWeek').toDate()
-    const weekEnd = moment().endOf('isoWeek').subtract(2, 'days').toDate()
+    const weekEnd = moment().startOf('isoWeek').add(4, 'days').toDate()
     const isThisWeek = date >= weekStart && date <= weekEnd
 
     if (isThisWeek) {
-      return {
-        style: { backgroundColor: '#EEF2FF' }
-      }
+      return { style: { backgroundColor: '#EEF2FF' } }
     }
     return {}
   }
@@ -77,7 +88,9 @@ function LeaveCalendar() {
     date: '日期',
     time: '時間',
     event: '假單',
-    noEventsInRange: '這段時間沒有人請假'
+    noEventsInRange: '這段時間沒有人請假',
+    allDay: '整天',
+    showMore: total => `+${total} 更多`
   }
 
   return (
@@ -86,9 +99,19 @@ function LeaveCalendar() {
 
       {loading ? <p style={{ color: '#6b7280' }}>載入中...</p> : (
         <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-          <div style={{ marginBottom: '12px', display: 'flex', gap: '8px', alignItems: 'center' }}>
-            <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: '#EEF2FF', border: '1px solid #c7d2fe' }}></div>
-            <span style={{ fontSize: '13px', color: '#6b7280' }}>本週</span>
+          <div style={{ marginBottom: '12px', display: 'flex', gap: '16px', alignItems: 'center' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: '#EEF2FF', border: '1px solid #c7d2fe' }}></div>
+              <span style={{ fontSize: '13px', color: '#6b7280' }}>本週</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: '#4F46E5' }}></div>
+              <span style={{ fontSize: '13px', color: '#6b7280' }}>整天假</span>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <div style={{ width: '12px', height: '4px', borderRadius: '2px', backgroundColor: '#4F46E5' }}></div>
+              <span style={{ fontSize: '13px', color: '#6b7280' }}>半天/時段假</span>
+            </div>
           </div>
 
           <Calendar
@@ -106,13 +129,10 @@ function LeaveCalendar() {
             popup
           />
 
-          {/* 點擊假單顯示詳情 */}
           {selected && (
             <div style={{
-              marginTop: '20px',
-              padding: '16px 20px',
-              backgroundColor: '#f9fafb',
-              borderRadius: '10px',
+              marginTop: '20px', padding: '16px 20px',
+              backgroundColor: '#f9fafb', borderRadius: '10px',
               border: '1px solid #e5e7eb'
             }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
@@ -124,7 +144,9 @@ function LeaveCalendar() {
               <div style={{ fontSize: '14px', color: '#6b7280', display: 'grid', gap: '4px' }}>
                 <div>假別：{selected.leave_type?.name}</div>
                 <div>日期：{selected.start_date} ～ {selected.end_date}</div>
-                {selected.hours && <div>時數：{selected.hours} 小時</div>}
+                {selected.start_time && selected.hours < 8 && (
+                  <div>時段：{selected.start_time} ～ {selected.end_time}（{selected.hours} 小時）</div>
+                )}
                 {selected.proxy?.full_name && <div>工作代理人：{selected.proxy.full_name}</div>}
                 <div>原因：{selected.reason}</div>
               </div>

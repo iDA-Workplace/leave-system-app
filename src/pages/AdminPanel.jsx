@@ -70,7 +70,7 @@ function UserManagement({ isAdmin }) {
     fetchUsers()
   }
 
-  const roleMap = { employee: '員工', supervisor: '主管', admin: '管理員' }
+  const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor: '主管', admin: '管理員' }
 
   return (
     <div>
@@ -98,8 +98,9 @@ function UserManagement({ isAdmin }) {
               <label style={labelStyle}>角色 *</label>
               <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
                 <option value="employee">員工</option>
-                <option value="supervisor">主管</option>
-                <option value="admin">管理員</option>
+<option value="deputy_supervisor">副主管</option>
+<option value="supervisor">主管</option>
+<option value="admin">管理員</option>
               </select>
             </div>
             <div>
@@ -132,8 +133,11 @@ function UserManagement({ isAdmin }) {
                       <label style={labelStyle}>角色</label>
                       <select value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
                         <option value="employee">員工</option>
-                        <option value="supervisor">主管</option>
-                        <option value="admin">管理員</option>
+<option value="deputy_supervisor">副主管</option>
+<option value="supervisor">主管</option>
+<option value="admin">管理員</option>
+                        
+                        
                       </select>
                     </div>
                     <div>
@@ -164,8 +168,8 @@ function UserManagement({ isAdmin }) {
                       {user.full_name}
                       <span style={{
                         marginLeft: '8px',
-                        backgroundColor: user.role === 'admin' ? '#EEF2FF' : user.role === 'supervisor' ? '#FEF3C7' : '#F3F4F6',
-                        color: user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706' : '#6B7280',
+                        backgroundColor: user.role === 'admin' ? '#EEF2FF' : user.role === 'supervisor' ? '#FEF3C7' : user.role === 'deputy_supervisor' ? '#FEF3C7' : '#F3F4F6',
+color: user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706' : user.role === 'deputy_supervisor' ? '#D97706' : '#6B7280',
                         padding: '2px 8px', borderRadius: '4px', fontSize: '12px'
                       }}>
                         {roleMap[user.role]}
@@ -198,6 +202,8 @@ function FlowManagement({ isAdmin }) {
   const [showAdd, setShowAdd] = useState(false)
   const [newFlow, setNewFlow] = useState({ name: '', description: '', is_default: false })
   const [editSteps, setEditSteps] = useState(null)
+  const [editName, setEditName] = useState(null)
+  const [newName, setNewName] = useState('')
   const [steps, setSteps] = useState([])
 
   useEffect(() => { fetchFlows(); fetchUsers() }, [])
@@ -227,10 +233,28 @@ function FlowManagement({ isAdmin }) {
     fetchFlows()
   }
 
+  async function handleRenameFlow(flowId) {
+    if (!newName.trim()) { alert('請填寫流程名稱'); return }
+    await supabase.from('approval_flows').update({ name: newName.trim() }).eq('id', flowId)
+    setEditName(null)
+    setNewName('')
+    fetchFlows()
+  }
+
+  async function handleArchiveFlow(flowId, isActive) {
+    const action = isActive ? '封存' : '啟用'
+    if (!window.confirm(`確定要${action}這個流程嗎？`)) return
+    await supabase.from('approval_flows').update({ is_active: !isActive }).eq('id', flowId)
+    fetchFlows()
+  }
+
   async function handleDeleteFlow(flowId) {
-    if (!window.confirm('確定要刪除這個流程嗎？')) return
-    await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
-    await supabase.from('approval_flows').delete().eq('id', flowId)
+    if (!window.confirm('確定要刪除這個流程嗎？此操作無法復原。')) return
+    const { error } = await supabase.from('approval_flows').delete().eq('id', flowId)
+    if (error) {
+      alert('此流程有假單記錄，無法直接刪除。建議使用「封存」功能將其停用。')
+      return
+    }
     fetchFlows()
   }
 
@@ -238,7 +262,9 @@ function FlowManagement({ isAdmin }) {
     await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
     for (const step of steps) {
       if (step.approver_id) {
-        await supabase.from('approval_flow_steps').insert({ flow_id: flowId, step_order: step.step_order, approver_id: step.approver_id })
+        await supabase.from('approval_flow_steps').insert({
+          flow_id: flowId, step_order: step.step_order, approver_id: step.approver_id
+        })
       }
     }
     setEditSteps(null)
@@ -279,21 +305,39 @@ function FlowManagement({ isAdmin }) {
       {loading ? <p>載入中...</p> : (
         <div style={{ display: 'grid', gap: '12px' }}>
           {flows.map(flow => (
-            <div key={flow.id} style={cardStyle}>
+            <div key={flow.id} style={{ ...cardStyle, opacity: flow.is_active ? 1 : 0.6 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                <div>
-                  <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
-                    {flow.name}
-                    {flow.is_default && <span style={{ marginLeft: '8px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>預設</span>}
-                  </div>
+                <div style={{ flex: 1 }}>
+                  {editName === flow.id ? (
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                      <input
+                        value={newName}
+                        onChange={e => setNewName(e.target.value)}
+                        style={{ ...inputStyle, width: 'auto', flex: 1 }}
+                        autoFocus
+                      />
+                      <button onClick={() => handleRenameFlow(flow.id)} style={btnPrimary}>儲存</button>
+                      <button onClick={() => { setEditName(null); setNewName('') }} style={btnSecondary}>取消</button>
+                    </div>
+                  ) : (
+                    <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
+                      {flow.name}
+                      {flow.is_default && <span style={{ marginLeft: '8px', backgroundColor: '#EEF2FF', color: '#4F46E5', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>預設</span>}
+                      {!flow.is_active && <span style={{ marginLeft: '8px', backgroundColor: '#F3F4F6', color: '#6B7280', padding: '2px 8px', borderRadius: '4px', fontSize: '12px' }}>已封存</span>}
+                    </div>
+                  )}
                   {flow.description && <div style={{ fontSize: '13px', color: '#6b7280' }}>{flow.description}</div>}
                 </div>
-                {isAdmin && (
-                  <div style={{ display: 'flex', gap: '8px' }}>
+                {isAdmin && editName !== flow.id && (
+                  <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                     <button onClick={() => {
                       setEditSteps(flow.id)
                       setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
                     }} style={btnSecondary}>設定審核人</button>
+                    <button onClick={() => { setEditName(flow.id); setNewName(flow.name) }} style={btnSecondary}>重新命名</button>
+                    <button onClick={() => handleArchiveFlow(flow.id, flow.is_active)} style={{ ...btnSecondary, color: '#F59E0B' }}>
+                      {flow.is_active ? '封存' : '啟用'}
+                    </button>
                     <button onClick={() => handleDeleteFlow(flow.id)} style={{ ...btnSecondary, color: '#EF4444' }}>刪除</button>
                   </div>
                 )}

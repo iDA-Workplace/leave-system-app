@@ -5,7 +5,8 @@ const statusMap = {
   pending: { label: '審核中', color: '#F59E0B', bg: '#FEF3C7' },
   approved: { label: '已核准', color: '#10B981', bg: '#D1FAE5' },
   rejected: { label: '已拒絕', color: '#EF4444', bg: '#FEE2E2' },
-  returned: { label: '已退回', color: '#6B7280', bg: '#F3F4F6' }
+  returned: { label: '已退回', color: '#6B7280', bg: '#F3F4F6' },
+  withdrawn: { label: '已收回', color: '#8B5CF6', bg: '#EDE9FE' }
 }
 
 function MyLeaves({ userProfile }) {
@@ -36,6 +37,15 @@ function MyLeaves({ userProfile }) {
     setLoading(false)
   }
 
+  async function handleWithdraw(leave) {
+    if (!window.confirm('確定要收回這張假單嗎？收回後需要重新送出。')) return
+    await supabase
+      .from('leave_requests')
+      .update({ status: 'withdrawn' })
+      .eq('id', leave.id)
+    fetchMyLeaves()
+  }
+
   async function handleResubmit(leave) {
     const { data, error } = await supabase
       .from('leave_requests')
@@ -45,6 +55,10 @@ function MyLeaves({ userProfile }) {
         flow_id: leave.flow_id,
         start_date: leave.start_date,
         end_date: leave.end_date,
+        start_time: leave.start_time,
+        end_time: leave.end_time,
+        hours: leave.hours,
+        proxy_user_id: leave.proxy_user_id,
         reason: leave.reason,
         status: 'pending',
         current_step: 1
@@ -69,11 +83,8 @@ function MyLeaves({ userProfile }) {
 
       {leaves.length === 0 ? (
         <div style={{
-          backgroundColor: 'white',
-          borderRadius: '12px',
-          padding: '48px',
-          textAlign: 'center',
-          color: '#6b7280',
+          backgroundColor: 'white', borderRadius: '12px', padding: '48px',
+          textAlign: 'center', color: '#6b7280',
           boxShadow: '0 1px 4px rgba(0,0,0,0.06)'
         }}>
           尚無請假記錄
@@ -87,11 +98,8 @@ function MyLeaves({ userProfile }) {
                 key={leave.id}
                 onClick={() => setSelected(selected?.id === leave.id ? null : leave)}
                 style={{
-                  backgroundColor: 'white',
-                  borderRadius: '12px',
-                  padding: '16px 20px',
-                  boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-                  cursor: 'pointer',
+                  backgroundColor: 'white', borderRadius: '12px', padding: '16px 20px',
+                  boxShadow: '0 1px 4px rgba(0,0,0,0.06)', cursor: 'pointer',
                   borderLeft: '4px solid ' + (leave.leave_type?.color || '#4F46E5')
                 }}
               >
@@ -102,6 +110,7 @@ function MyLeaves({ userProfile }) {
                     </div>
                     <div style={{ fontSize: '13px', color: '#6b7280' }}>
                       {leave.start_date} ～ {leave.end_date}
+                      {leave.hours && ` ｜ ${leave.hours} 小時`}
                     </div>
                     <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
                       申請時間：{new Date(leave.created_at).toLocaleString('zh-TW')}
@@ -109,26 +118,31 @@ function MyLeaves({ userProfile }) {
                   </div>
                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
                     <span style={{
-                      backgroundColor: status.bg,
-                      color: status.color,
-                      padding: '4px 12px',
-                      borderRadius: '20px',
-                      fontSize: '12px',
-                      fontWeight: '500'
+                      backgroundColor: status.bg, color: status.color,
+                      padding: '4px 12px', borderRadius: '20px',
+                      fontSize: '12px', fontWeight: '500'
                     }}>
                       {status.label}
                     </span>
-                    {leave.status === 'returned' && (
+                    {leave.status === 'pending' && (
+                      <button
+                        onClick={e => { e.stopPropagation(); handleWithdraw(leave) }}
+                        style={{
+                          padding: '4px 12px', backgroundColor: '#FEF3C7',
+                          color: '#D97706', border: '1px solid #FCD34D',
+                          borderRadius: '6px', fontSize: '12px', cursor: 'pointer'
+                        }}
+                      >
+                        收回假單
+                      </button>
+                    )}
+                    {(leave.status === 'returned' || leave.status === 'withdrawn') && (
                       <button
                         onClick={e => { e.stopPropagation(); handleResubmit(leave) }}
                         style={{
-                          padding: '4px 12px',
-                          backgroundColor: '#4F46E5',
-                          color: 'white',
-                          border: 'none',
-                          borderRadius: '6px',
-                          fontSize: '12px',
-                          cursor: 'pointer'
+                          padding: '4px 12px', backgroundColor: '#4F46E5',
+                          color: 'white', border: 'none',
+                          borderRadius: '6px', fontSize: '12px', cursor: 'pointer'
                         }}
                       >
                         重新送出
@@ -138,16 +152,18 @@ function MyLeaves({ userProfile }) {
                 </div>
 
                 {selected?.id === leave.id && (
-                  <div style={{
-                    marginTop: '16px',
-                    paddingTop: '16px',
-                    borderTop: '1px solid #f3f4f6'
-                  }}>
+                  <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
                     <div style={{ marginBottom: '8px' }}>
                       <span style={{ fontSize: '13px', color: '#6b7280' }}>請假原因：</span>
                       <span style={{ fontSize: '13px', color: '#374151' }}>{leave.reason}</span>
                     </div>
-                    {leave.status === 'returned' && leave.returned_reason && (
+                    {leave.start_time && (
+                      <div style={{ marginBottom: '8px' }}>
+                        <span style={{ fontSize: '13px', color: '#6b7280' }}>請假時段：</span>
+                        <span style={{ fontSize: '13px', color: '#374151' }}>{leave.start_time} ～ {leave.end_time}</span>
+                      </div>
+                    )}
+                    {(leave.status === 'returned' || leave.status === 'withdrawn') && leave.returned_reason && (
                       <div style={{ marginBottom: '8px' }}>
                         <span style={{ fontSize: '13px', color: '#6b7280' }}>退回原因：</span>
                         <span style={{ fontSize: '13px', color: '#EF4444' }}>{leave.returned_reason}</span>
@@ -158,18 +174,13 @@ function MyLeaves({ userProfile }) {
                         <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '8px' }}>審核記錄：</div>
                         {leave.approvals.map(approval => (
                           <div key={approval.id} style={{
-                            display: 'flex',
-                            gap: '8px',
-                            alignItems: 'flex-start',
-                            marginBottom: '6px',
-                            fontSize: '13px'
+                            display: 'flex', gap: '8px', alignItems: 'flex-start',
+                            marginBottom: '6px', fontSize: '13px'
                           }}>
                             <span style={{
                               backgroundColor: approval.action === 'approved' ? '#D1FAE5' : '#FEE2E2',
                               color: approval.action === 'approved' ? '#10B981' : '#EF4444',
-                              padding: '2px 8px',
-                              borderRadius: '4px',
-                              flexShrink: 0
+                              padding: '2px 8px', borderRadius: '4px', flexShrink: 0
                             }}>
                               {approval.action === 'approved' ? '核准' : '拒絕'}
                             </span>
