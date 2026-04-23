@@ -17,7 +17,8 @@ function LeaveCalendar() {
   }, [])
 
   async function fetchLeaves() {
-    const { data } = await supabase
+    console.log('fetchLeaves called')
+    const { data, error } = await supabase
       .from('leave_requests')
       .select(`
         *,
@@ -28,7 +29,9 @@ function LeaveCalendar() {
       .eq('status', 'approved')
       .order('start_date')
 
-    const events = (data || []).map(leave => {
+    console.log('calendar data:', data, 'error:', error)
+
+    const mappedEvents = (data || []).map(leave => {
       const isAllDay = !leave.hours || leave.hours >= 8 || leave.end_date > leave.start_date
 
       let start, end
@@ -51,8 +54,7 @@ function LeaveCalendar() {
       }
     })
 
-    console.log('calendar data:', data)
-    setEvents(events)
+    setEvents(mappedEvents)
     setLoading(false)
   }
 
@@ -71,7 +73,6 @@ function LeaveCalendar() {
     const weekStart = moment().startOf('isoWeek').toDate()
     const weekEnd = moment().startOf('isoWeek').add(4, 'days').toDate()
     const isThisWeek = date >= weekStart && date <= weekEnd
-
     if (isThisWeek) {
       return { style: { backgroundColor: '#EEF2FF' } }
     }
