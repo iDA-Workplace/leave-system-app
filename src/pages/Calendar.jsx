@@ -36,12 +36,17 @@ function LeaveCalendar() {
 
       let start, end
       if (isAllDay) {
-        start = new Date(leave.start_date + 'T00:00:00')
-        end = new Date(leave.end_date + 'T23:59:59')
-      } else {
-        start = new Date(leave.start_date + 'T' + (leave.start_time || '09:00') + ':00')
-        end = new Date(leave.start_date + 'T' + (leave.end_time || '18:00') + ':00')
-      }
+  const [sy, sm, sd] = leave.start_date.split('-').map(Number)
+  const [ey, em, ed] = leave.end_date.split('-').map(Number)
+  start = new Date(sy, sm - 1, sd, 0, 0, 0)
+  end = new Date(ey, em - 1, ed, 23, 59, 59)
+} else {
+  const [sy, sm, sd] = leave.start_date.split('-').map(Number)
+  const [sh, smin] = (leave.start_time || '09:00').split(':').map(Number)
+  const [eh, emin] = (leave.end_time || '18:00').split(':').map(Number)
+  start = new Date(sy, sm - 1, sd, sh, smin, 0)
+  end = new Date(sy, sm - 1, sd, eh, emin, 0)
+}
 
       return {
         id: leave.id,
