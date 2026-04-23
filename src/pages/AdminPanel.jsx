@@ -209,13 +209,19 @@ function FlowManagement({ isAdmin }) {
   useEffect(() => { fetchFlows(); fetchUsers() }, [])
 
   async function fetchFlows() {
-    const { data } = await supabase
-      .from('approval_flows')
-      .select(`*, steps:approval_flow_steps(*, approver:users!approval_flow_steps_approver_id_fkey(full_name))`)
-      .order('created_at')
-    setFlows(data || [])
-    setLoading(false)
+  let query = supabase
+    .from('approval_flows')
+    .select(`*, steps:approval_flow_steps(*, approver:users!approval_flow_steps_approver_id_fkey(full_name))`)
+    .order('created_at')
+
+  if (!isAdmin) {
+    query = query.eq('is_active', true)
   }
+
+  const { data } = await query
+  setFlows(data || [])
+  setLoading(false)
+}
 
   async function fetchUsers() {
     const { data } = await supabase.from('users').select('id, full_name, role').eq('is_active', true).in('role', ['supervisor', 'admin'])

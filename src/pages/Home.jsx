@@ -3,11 +3,12 @@ import { supabase } from '../lib/supabase'
 import { format, startOfWeek, addDays } from 'date-fns'
 import { zhTW } from 'date-fns/locale'
 
-function Home() {
+function Home({ userProfile }) {
   const [weekLeaves, setWeekLeaves] = useState([])
   const [loading, setLoading] = useState(true)
   const [hiddenIds, setHiddenIds] = useState(() => {
-    const saved = localStorage.getItem('hiddenLeaveIds')
+    const key = `hiddenLeaveIds_${userProfile?.id}`
+    const saved = localStorage.getItem(key)
     return saved ? JSON.parse(saved) : []
   })
   const [showHidden, setShowHidden] = useState(false)
@@ -23,7 +24,8 @@ function Home() {
   }, [])
 
   useEffect(() => {
-    localStorage.setItem('hiddenLeaveIds', JSON.stringify(hiddenIds))
+    const key = `hiddenLeaveIds_${userProfile?.id}`
+    localStorage.setItem(key, JSON.stringify(hiddenIds))
   }, [hiddenIds])
 
   async function fetchWeekLeaves() {
