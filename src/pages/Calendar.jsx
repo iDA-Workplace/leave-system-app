@@ -51,6 +51,7 @@ function LeaveCalendar() {
       }
     })
 
+    console.log('calendar data:', data)
     setEvents(events)
     setLoading(false)
   }
