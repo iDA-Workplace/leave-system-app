@@ -62,6 +62,7 @@ function Layout({ children, userProfile }) {
   const navItems = [
   { path: '/', label: '首頁' },
   { path: '/calendar', label: '請假行事曆' },
+  { path: '/past-leaves', label: '過往假期' },
   { path: '/leave/new', label: '申請請假' },
   { path: '/leave/my', label: '我的假單' },
 ]
