@@ -17,7 +17,7 @@ function LeaveCalendar() {
   }, [])
 
   async function fetchLeaves() {
-    console.log('fetchLeaves called')
+    
     const { data, error } = await supabase
       .from('leave_requests')
       .select(`
@@ -29,7 +29,7 @@ function LeaveCalendar() {
       .eq('status', 'approved')
       .order('start_date')
 
-    console.log('calendar data:', data, 'error:', error)
+    
 
     const mappedEvents = (data || []).map(leave => {
       const isAllDay = !leave.hours || leave.hours >= 8 || leave.end_date > leave.start_date

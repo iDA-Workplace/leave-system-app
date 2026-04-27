@@ -6,11 +6,7 @@ import { zhTW } from 'date-fns/locale'
 function Home({ userProfile }) {
   const [weekLeaves, setWeekLeaves] = useState([])
   const [loading, setLoading] = useState(true)
-  const [hiddenIds, setHiddenIds] = useState(() => {
-    const key = `hiddenLeaveIds_${userProfile?.id}`
-    const saved = localStorage.getItem(key)
-    return saved ? JSON.parse(saved) : []
-  })
+  const [hiddenIds, setHiddenIds] = useState([])
   const [showHidden, setShowHidden] = useState(false)
 
   const today = new Date()
@@ -21,12 +17,8 @@ function Home({ userProfile }) {
 
   useEffect(() => {
     fetchWeekLeaves()
+    fetchHiddenIds()
   }, [])
-
-  useEffect(() => {
-    const key = `hiddenLeaveIds_${userProfile?.id}`
-    localStorage.setItem(key, JSON.stringify(hiddenIds))
-  }, [hiddenIds])
 
   async function fetchWeekLeaves() {
     const { data, error } = await supabase
@@ -46,10 +38,30 @@ function Home({ userProfile }) {
     setLoading(false)
   }
 
-  function toggleHide(id) {
-    setHiddenIds(prev =>
-      prev.includes(id) ? prev.filter(i => i !== id) : [...prev, id]
-    )
+  async function fetchHiddenIds() {
+    const { data } = await supabase
+      .from('user_preferences')
+      .select('hidden_leave_ids')
+      .eq('user_id', userProfile.id)
+      .single()
+
+    if (data) setHiddenIds(data.hidden_leave_ids || [])
+  }
+
+  async function toggleHide(id) {
+    const newHiddenIds = hiddenIds.includes(id)
+      ? hiddenIds.filter(i => i !== id)
+      : [...hiddenIds, id]
+
+    setHiddenIds(newHiddenIds)
+
+    await supabase
+      .from('user_preferences')
+      .upsert({
+        user_id: userProfile.id,
+        hidden_leave_ids: newHiddenIds,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'user_id' })
   }
 
   const visibleLeaves = weekLeaves.filter(l => !hiddenIds.includes(l.id))
