@@ -1,11 +1,58 @@
 import { useState, useEffect } from 'react'
-import { Calendar, momentLocalizer } from 'react-big-calendar'
+import { Calendar, momentLocalizer, Navigate } from 'react-big-calendar'
 import moment from 'moment'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import { supabase } from '../lib/supabase'
 
 moment.locale('zh-tw')
 const localizer = momentLocalizer(moment)
+
+function CustomToolbar({ date, view, onNavigate, onView }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
+      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+        <button onClick={() => onNavigate(Navigate.TODAY)} style={toolbarBtn}>今天</button>
+        <button onClick={() => onNavigate(Navigate.PREVIOUS)} style={toolbarBtn}>
+          {view === 'month' ? '上個月' : '上一週'}
+        </button>
+        <button onClick={() => onNavigate(Navigate.NEXT)} style={toolbarBtn}>
+          {view === 'month' ? '下個月' : '下一週'}
+        </button>
+        <span style={{ fontWeight: '600', color: '#1f2937', fontSize: '16px' }}>
+          {view === 'month'
+            ? moment(date).format('YYYY 年 MM 月')
+            : `${moment(date).startOf('isoWeek').format('MM/DD')} ～ ${moment(date).endOf('isoWeek').format('MM/DD')}`
+          }
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: '8px' }}>
+        <button
+          onClick={() => onView('month')}
+          style={{ ...toolbarBtn, backgroundColor: view === 'month' ? '#4F46E5' : '#f3f4f6', color: view === 'month' ? 'white' : '#374151' }}
+        >
+          月
+        </button>
+        <button
+          onClick={() => onView('week')}
+          style={{ ...toolbarBtn, backgroundColor: view === 'week' ? '#4F46E5' : '#f3f4f6', color: view === 'week' ? 'white' : '#374151' }}
+        >
+          週
+        </button>
+      </div>
+    </div>
+  )
+}
+
+const toolbarBtn = {
+  padding: '6px 14px',
+  backgroundColor: '#f3f4f6',
+  color: '#374151',
+  border: 'none',
+  borderRadius: '8px',
+  cursor: 'pointer',
+  fontSize: '13px',
+  fontWeight: '500'
+}
 
 function LeaveCalendar() {
   const [events, setEvents] = useState([])
@@ -17,7 +64,6 @@ function LeaveCalendar() {
   }, [])
 
   async function fetchLeaves() {
-    
     const { data, error } = await supabase
       .from('leave_requests')
       .select(`
@@ -29,24 +75,22 @@ function LeaveCalendar() {
       .eq('status', 'approved')
       .order('start_date')
 
-    
-
     const mappedEvents = (data || []).map(leave => {
       const isAllDay = !leave.hours || leave.hours >= 8 || leave.end_date > leave.start_date
 
       let start, end
       if (isAllDay) {
-  const [sy, sm, sd] = leave.start_date.split('-').map(Number)
-  const [ey, em, ed] = leave.end_date.split('-').map(Number)
-  start = new Date(sy, sm - 1, sd, 0, 0, 0)
-  end = new Date(ey, em - 1, ed, 23, 59, 59)
-} else {
-  const [sy, sm, sd] = leave.start_date.split('-').map(Number)
-  const [sh, smin] = (leave.start_time || '09:00').split(':').map(Number)
-  const [eh, emin] = (leave.end_time || '18:00').split(':').map(Number)
-  start = new Date(sy, sm - 1, sd, sh, smin, 0)
-  end = new Date(sy, sm - 1, sd, eh, emin, 0)
-}
+        const [sy, sm, sd] = leave.start_date.split('-').map(Number)
+        const [ey, em, ed] = leave.end_date.split('-').map(Number)
+        start = new Date(sy, sm - 1, sd, 0, 0, 0)
+        end = new Date(ey, em - 1, ed, 23, 59, 59)
+      } else {
+        const [sy, sm, sd] = leave.start_date.split('-').map(Number)
+        const [sh, smin] = (leave.start_time || '09:00').split(':').map(Number)
+        const [eh, emin] = (leave.end_time || '18:00').split(':').map(Number)
+        start = new Date(sy, sm - 1, sd, sh, smin, 0)
+        end = new Date(sy, sm - 1, sd, eh, emin, 0)
+      }
 
       return {
         id: leave.id,
@@ -133,6 +177,7 @@ function LeaveCalendar() {
             views={['month', 'week']}
             defaultView="month"
             onSelectEvent={event => setSelected(event.resource)}
+            components={{ toolbar: CustomToolbar }}
             popup
           />
 

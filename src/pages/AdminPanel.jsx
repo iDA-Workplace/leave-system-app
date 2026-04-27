@@ -597,6 +597,8 @@ function ChangePassword() {
   const [form, setForm] = useState({ newPass: '', confirm: '' })
   const [saving, setSaving] = useState(false)
   const [message, setMessage] = useState('')
+  const [showNewPass, setShowNewPass] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -624,13 +626,59 @@ function ChangePassword() {
       <form onSubmit={handleSubmit}>
         <div style={{ marginBottom: '16px' }}>
           <label style={labelStyle}>新密碼 *</label>
-          <input type="password" value={form.newPass} onChange={e => setForm(p => ({ ...p, newPass: e.target.value }))} style={inputStyle} placeholder="請輸入新密碼（至少 6 位）" required />
+          <div style={{ position: 'relative' }}>
+            <input
+              type={showNewPass ? 'text' : 'password'}
+              value={form.newPass}
+              onChange={e => setForm(p => ({ ...p, newPass: e.target.value }))}
+              style={{ ...inputStyle, paddingRight: '56px' }}
+              placeholder="請輸入新密碼（至少 6 位）"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowNewPass(!showNewPass)}
+              style={{
+                position: 'absolute', right: '12px', top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none', border: 'none',
+                cursor: 'pointer', color: '#9ca3af',
+                fontSize: '13px', padding: '0'
+              }}
+            >
+              {showNewPass ? '隱藏' : '顯示'}
+            </button>
+          </div>
         </div>
         <div style={{ marginBottom: '24px' }}>
           <label style={labelStyle}>確認新密碼 *</label>
-          <input type="password" value={form.confirm} onChange={e => setForm(p => ({ ...p, confirm: e.target.value }))} style={inputStyle} placeholder="請再次輸入新密碼" required />
+          <div style={{ position: 'relative' }}>
+            <input
+              type={showConfirm ? 'text' : 'password'}
+              value={form.confirm}
+              onChange={e => setForm(p => ({ ...p, confirm: e.target.value }))}
+              style={{ ...inputStyle, paddingRight: '56px' }}
+              placeholder="請再次輸入新密碼"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowConfirm(!showConfirm)}
+              style={{
+                position: 'absolute', right: '12px', top: '50%',
+                transform: 'translateY(-50%)',
+                background: 'none', border: 'none',
+                cursor: 'pointer', color: '#9ca3af',
+                fontSize: '13px', padding: '0'
+              }}
+            >
+              {showConfirm ? '隱藏' : '顯示'}
+            </button>
+          </div>
         </div>
-        <button type="submit" disabled={saving} style={btnPrimary}>{saving ? '修改中...' : '確認修改'}</button>
+        <button type="submit" disabled={saving} style={btnPrimary}>
+          {saving ? '修改中...' : '確認修改'}
+        </button>
       </form>
     </div>
   )

@@ -6,6 +6,7 @@ function Login() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -22,19 +23,12 @@ function Login() {
 
   return (
     <div style={{
-      minHeight: '100vh',
-      backgroundColor: '#f5f5f5',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center'
+      minHeight: '100vh', backgroundColor: '#f5f5f5',
+      display: 'flex', alignItems: 'center', justifyContent: 'center'
     }}>
       <div style={{
-        backgroundColor: 'white',
-        padding: '40px',
-        borderRadius: '12px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.1)',
-        width: '100%',
-        maxWidth: '400px'
+        backgroundColor: 'white', padding: '40px', borderRadius: '12px',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px'
       }}>
         <h1 style={{ textAlign: 'center', marginBottom: '8px', color: '#4F46E5', fontSize: '24px' }}>
           請假系統
@@ -45,12 +39,9 @@ function Login() {
 
         {error && (
           <div style={{
-            backgroundColor: '#FEE2E2',
-            color: '#DC2626',
-            padding: '12px',
-            borderRadius: '8px',
-            marginBottom: '16px',
-            fontSize: '14px'
+            backgroundColor: '#FEE2E2', color: '#DC2626',
+            padding: '12px', borderRadius: '8px',
+            marginBottom: '16px', fontSize: '14px'
           }}>
             {error}
           </div>
@@ -67,12 +58,9 @@ function Login() {
               onChange={e => setEmail(e.target.value)}
               required
               style={{
-                width: '100%',
-                padding: '10px 12px',
-                border: '1px solid #ddd',
-                borderRadius: '8px',
-                fontSize: '14px',
-                boxSizing: 'border-box'
+                width: '100%', padding: '10px 12px',
+                border: '1px solid #ddd', borderRadius: '8px',
+                fontSize: '14px', boxSizing: 'border-box'
               }}
               placeholder="請輸入電子郵件"
             />
@@ -82,35 +70,43 @@ function Login() {
             <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500' }}>
               密碼
             </label>
-            <input
-              type="password"
-              value={password}
-              onChange={e => setPassword(e.target.value)}
-              required
-              style={{
-                width: '100%',
-                padding: '10px 12px',
-                border: '1px solid #ddd',
-                borderRadius: '8px',
-                fontSize: '14px',
-                boxSizing: 'border-box'
-              }}
-              placeholder="請輸入密碼"
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                style={{
+                  width: '100%', padding: '10px 44px 10px 12px',
+                  border: '1px solid #ddd', borderRadius: '8px',
+                  fontSize: '14px', boxSizing: 'border-box'
+                }}
+                placeholder="請輸入密碼"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(!showPassword)}
+                style={{
+                  position: 'absolute', right: '12px', top: '50%',
+                  transform: 'translateY(-50%)',
+                  background: 'none', border: 'none',
+                  cursor: 'pointer', color: '#9ca3af',
+                  fontSize: '13px', padding: '0'
+                }}
+              >
+                {showPassword ? '隱藏' : '顯示'}
+              </button>
+            </div>
           </div>
 
           <button
             type="submit"
             disabled={loading}
             style={{
-              width: '100%',
-              padding: '12px',
+              width: '100%', padding: '12px',
               backgroundColor: loading ? '#a5b4fc' : '#4F46E5',
-              color: 'white',
-              border: 'none',
-              borderRadius: '8px',
-              fontSize: '16px',
-              fontWeight: '600',
+              color: 'white', border: 'none', borderRadius: '8px',
+              fontSize: '16px', fontWeight: '600',
               cursor: loading ? 'not-allowed' : 'pointer'
             }}
           >
