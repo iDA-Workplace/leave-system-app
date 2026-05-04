@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { Routes, Route, Link, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { invokeFunction } from '../lib/api'
+import ExportReport from './ExportReport'
 
 // ===== 員工管理 =====
 function UserManagement({ isAdmin }) {
@@ -700,6 +701,9 @@ function AdminPanel({ userProfile }) {
   if (isAdmin || isSupervisor) {
     tabs.splice(3, 0, { path: '/admin/delegates', label: '代理審核設定' })
   }
+  if (isAdmin) {
+  tabs.push({ path: '/admin/export', label: '匯出報表' })
+}
 
   return (
     <div>
@@ -725,6 +729,9 @@ function AdminPanel({ userProfile }) {
         {(isAdmin || isSupervisor) && (
           <Route path="delegates" element={<DelegateManagement userProfile={userProfile} isAdmin={isAdmin} isSupervisor={isSupervisor} />} />
         )}
+        {isAdmin && (
+  <Route path="export" element={<ExportReport />} />
+)}
       </Routes>
     </div>
   )
