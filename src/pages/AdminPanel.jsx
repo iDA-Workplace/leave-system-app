@@ -65,13 +65,16 @@ function UserManagement({ isAdmin }) {
       is_active: editing.is_active
     })
     if (error || data?.error) { alert('更新失敗：' + (data?.error || error.message)); setSaving(false); return }
-    await supabase.from('users').update({ default_flow_id: editing.default_flow_id || null }).eq('id', user.id)
+    await supabase.from('users').update({
+  default_flow_id: editing.default_flow_id || null,
+  hire_date: editing.hire_date || null
+}).eq('id', user.id)
     setEditing(null)
     setSaving(false)
     fetchUsers()
   }
 
-  const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor: '主管', admin: '管理員' }
+  const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor: '主管', admin: '管理員', boss: '老闆' }
 
   return (
     <div>
@@ -102,6 +105,7 @@ function UserManagement({ isAdmin }) {
 <option value="deputy_supervisor">副主管</option>
 <option value="supervisor">主管</option>
 <option value="admin">管理員</option>
+<option value="boss">老闆</option>
               </select>
             </div>
             <div>
@@ -150,6 +154,15 @@ function UserManagement({ isAdmin }) {
                     </div>
                     <div>
                       <label style={labelStyle}>Slack User ID</label>
+                      <div>
+  <label style={labelStyle}>入職日期</label>
+  <input
+    type="date"
+    value={editing.hire_date || ''}
+    onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))}
+    style={inputStyle}
+  />
+</div>
                       <input value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} style={inputStyle} placeholder="U0123ABCD" />
                     </div>
                   </div>
@@ -169,8 +182,8 @@ function UserManagement({ isAdmin }) {
                       {user.full_name}
                       <span style={{
                         marginLeft: '8px',
-                        backgroundColor: user.role === 'admin' ? '#EEF2FF' : user.role === 'supervisor' ? '#FEF3C7' : user.role === 'deputy_supervisor' ? '#FEF3C7' : '#F3F4F6',
-color: user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706' : user.role === 'deputy_supervisor' ? '#D97706' : '#6B7280',
+                        backgroundColor: user.role === 'boss' ? '#FDF2F8' : user.role === 'admin' ? '#EEF2FF' : user.role === 'supervisor' ? '#FEF3C7' : user.role === 'deputy_supervisor' ? '#FEF3C7' : '#F3F4F6',
+color: user.role === 'boss' ? '#9D174D' : user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706' : user.role === 'deputy_supervisor' ? '#D97706' : '#6B7280',
                         padding: '2px 8px', borderRadius: '4px', fontSize: '12px'
                       }}>
                         {roleMap[user.role]}
@@ -184,6 +197,11 @@ color: user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706
                       <div style={{ fontSize: '12px', color: '#4F46E5', marginTop: '2px' }}>審核流程：{user.default_flow.name}</div>
                     )}
                   </div>
+                  {user.hire_date && (isAdmin || userProfile?.role === 'boss') && (
+  <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
+    入職日期：{user.hire_date}
+  </div>
+)}
                   {isAdmin && <button onClick={() => setEditing({ ...user })} style={btnSecondary}>編輯</button>}
                 </div>
               )}
@@ -688,8 +706,9 @@ function ChangePassword() {
 // ===== AdminPanel 主元件 =====
 function AdminPanel({ userProfile }) {
   const location = useLocation()
-  const isAdmin = userProfile?.role === 'admin'
-  const isSupervisor = userProfile?.role === 'supervisor'
+  
+  const isAdmin = userProfile?.role === 'admin' || userProfile?.role === 'boss'
+const isSupervisor = userProfile?.role === 'supervisor'
 
   const tabs = [
     { path: '/admin', label: '員工管理' },

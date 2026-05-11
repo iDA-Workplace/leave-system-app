@@ -8,8 +8,8 @@ function Layout({ children, userProfile }) {
   const [pendingCount, setPendingCount] = useState(0)
 
   useEffect(() => {
-    if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin') {
-      fetchPendingCount()
+    if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin' || userProfile?.role === 'boss') {
+  fetchPendingCount()
 
       // 即時監聽假單狀態變更
       const subscription = supabase
@@ -83,9 +83,9 @@ function Layout({ children, userProfile }) {
     { path: '/leave/my', label: '我的假單' },
   ]
 
-  if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin') {
-    navItems.push({ path: '/approval', label: '審核假單', badge: pendingCount })
-  }
+  if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin' || userProfile?.role === 'boss') {
+  navItems.push({ path: '/approval', label: '審核假單', badge: pendingCount })
+}
 
   navItems.push({ path: '/admin', label: '管理後台' })
 

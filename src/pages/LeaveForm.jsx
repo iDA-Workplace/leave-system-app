@@ -53,6 +53,7 @@ function formatDuration(totalHours) {
 function LeaveForm({ userProfile }) {
   const navigate = useNavigate()
   const [leaveTypes, setLeaveTypes] = useState([])
+  const [annualLeave, setAnnualLeave] = useState(null)
   const [flowSteps, setFlowSteps] = useState([])
   const [colleagues, setColleagues] = useState([])
   const [leaveStats, setLeaveStats] = useState([])
@@ -103,41 +104,55 @@ function LeaveForm({ userProfile }) {
   }
 
   async function fetchLeaveStats() {
-    const year = new Date().getFullYear()
-    const { data } = await supabase
-      .from('leave_requests')
-      .select(`
-        *,
-        leave_type:leave_types(name, color)
-      `)
-      .eq('requester_id', userProfile.id)
-      .eq('status', 'approved')
-      .gte('start_date', `${year}-01-01`)
-      .lte('start_date', `${year}-12-31`)
+  const year = new Date().getFullYear()
+  
+  // 取得請假統計
+  const { data } = await supabase
+    .from('leave_requests')
+    .select(`*, leave_type:leave_types(name, color)`)
+    .eq('requester_id', userProfile.id)
+    .eq('status', 'approved')
+    .gte('start_date', `${year}-01-01`)
+    .lte('start_date', `${year}-12-31`)
 
-    if (!data) return
+  if (!data) return
 
-    // 統計每個假別的時數
-    const statsMap = {}
-    for (const leave of data) {
-      const typeName = leave.leave_type?.name || '其他'
-      const typeColor = leave.leave_type?.color || '#4F46E5'
-      if (!statsMap[typeName]) {
-        statsMap[typeName] = { name: typeName, color: typeColor, totalHours: 0 }
-      }
-
-      if (leave.hours) {
-        // 有記錄時數（非跨天）
-        statsMap[typeName].totalHours += Number(leave.hours)
-      } else {
-        // 跨天，用工作日計算（每天8小時）
-        const workdays = countWorkdays(leave.start_date, leave.end_date)
-        statsMap[typeName].totalHours += workdays * 8
-      }
+  const statsMap = {}
+  for (const leave of data) {
+    const typeName = leave.leave_type?.name || '其他'
+    const typeColor = leave.leave_type?.color || '#4F46E5'
+    if (!statsMap[typeName]) {
+      statsMap[typeName] = { name: typeName, color: typeColor, totalHours: 0 }
     }
-
-    setLeaveStats(Object.values(statsMap))
+    if (leave.hours) {
+      statsMap[typeName].totalHours += Number(leave.hours)
+    } else {
+      const workdays = countWorkdays(leave.start_date, leave.end_date)
+      statsMap[typeName].totalHours += workdays * 8
+    }
   }
+
+  setLeaveStats(Object.values(statsMap))
+
+  // 取得年資和剩餘特休
+  const { data: summary } = await supabase
+    .from('annual_leave_summary')
+    .select('*')
+    .eq('user_id', userProfile.id)
+    .single()
+
+  if (summary) {
+    const usedDays = summary.used_days || 0
+    const entitledDays = summary.entitled_days || 0
+    const remainingDays = entitledDays - usedDays
+    setAnnualLeave({
+      entitled: entitledDays,
+      used: usedDays,
+      remaining: remainingDays,
+      yearsOfService: summary.years_of_service
+    })
+  }
+}
 
   async function handleSubmit(e) {
     e.preventDefault()
@@ -236,6 +251,27 @@ function LeaveForm({ userProfile }) {
         <div style={{ fontSize: '14px', fontWeight: '500', color: '#374151', marginBottom: '14px' }}>
           📊 {new Date().getFullYear()} 年請假統計
         </div>
+        {annualLeave && (
+  <div style={{
+    display: 'flex', gap: '12px', marginBottom: '16px',
+    padding: '12px 16px', backgroundColor: '#EEF2FF',
+    borderRadius: '8px', alignItems: 'center',
+    flexWrap: 'wrap'
+  }}>
+    <div style={{ fontSize: '13px', color: '#4F46E5' }}>
+      年資：<strong>{annualLeave.yearsOfService} 年</strong>
+    </div>
+    <div style={{ fontSize: '13px', color: '#4F46E5' }}>
+      今年特休：<strong>{annualLeave.entitled} 天</strong>
+    </div>
+    <div style={{ fontSize: '13px', color: '#4F46E5' }}>
+      已使用：<strong>{annualLeave.used} 天</strong>
+    </div>
+    <div style={{ fontSize: '13px', color: annualLeave.remaining <= 0 ? '#EF4444' : '#10B981', fontWeight: '600' }}>
+      剩餘：<strong>{annualLeave.remaining} 天</strong>
+    </div>
+  </div>
+)}
         {leaveStats.length === 0 ? (
           <p style={{ fontSize: '13px', color: '#9ca3af', margin: 0 }}>今年尚無請假記錄</p>
         ) : (
