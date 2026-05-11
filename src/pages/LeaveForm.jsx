@@ -146,11 +146,13 @@ function LeaveForm({ userProfile }) {
     const entitledDays = summary.entitled_days || 0
     const remainingDays = entitledDays - usedDays
     setAnnualLeave({
-      entitled: entitledDays,
-      used: usedDays,
-      remaining: remainingDays,
-      yearsOfService: summary.years_of_service
-    })
+  entitled: entitledDays,
+  used: usedDays,
+  remaining: remainingDays,
+  serviceYears: summary.service_years || 0,
+  serviceMonths: summary.service_months || 0,
+  serviceDays: summary.service_days || 0
+})
   }
 }
 
@@ -259,8 +261,13 @@ function LeaveForm({ userProfile }) {
     flexWrap: 'wrap'
   }}>
     <div style={{ fontSize: '13px', color: '#4F46E5' }}>
-      年資：<strong>{annualLeave.yearsOfService} 年</strong>
-    </div>
+  年資：<strong>
+    {annualLeave.serviceYears > 0 ? `${annualLeave.serviceYears}年` : ''}
+    {annualLeave.serviceMonths > 0 ? `${annualLeave.serviceMonths}個月` : ''}
+    {annualLeave.serviceDays > 0 ? `${annualLeave.serviceDays}天` : ''}
+    {annualLeave.serviceYears === 0 && annualLeave.serviceMonths === 0 && annualLeave.serviceDays === 0 ? '未滿1天' : ''}
+  </strong>
+</div>
     <div style={{ fontSize: '13px', color: '#4F46E5' }}>
       今年特休：<strong>{annualLeave.entitled} 天</strong>
     </div>
