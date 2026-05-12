@@ -5,16 +5,17 @@ import { invokeFunction } from '../lib/api'
 import ExportReport from './ExportReport'
 
 // ===== 員工管理 =====
-function UserManagement({ isAdmin }) {
+function UserManagement({ isAdmin, userProfile }) {
   const [users, setUsers] = useState([])
   const [flows, setFlows] = useState([])
+  const [annualLeaveMap, setAnnualLeaveMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee', default_flow_id: '' })
+  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '' })
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
 
-  useEffect(() => { fetchUsers(); fetchFlows() }, [])
+  useEffect(() => { fetchUsers(); fetchFlows(); fetchAnnualLeave() }, [])
 
   async function fetchUsers() {
     const { data } = await supabase
@@ -33,6 +34,16 @@ function UserManagement({ isAdmin }) {
     setFlows(data || [])
   }
 
+  async function fetchAnnualLeave() {
+    const { data } = await supabase
+      .from('annual_leave_summary')
+      .select('*')
+    setAnnualLeaveMap(data?.reduce((acc, item) => {
+      acc[item.user_id] = item
+      return acc
+    }, {}) || {})
+  }
+
   async function handleAddUser() {
     if (!newUser.email || !newUser.full_name) { alert('請填寫姓名和 Email'); return }
     setSaving(true)
@@ -41,17 +52,18 @@ function UserManagement({ isAdmin }) {
       email: newUser.email,
       full_name: newUser.full_name,
       role: newUser.role,
-      password: 'Welcome@123'
+      password: 'Welcome@123',
+      hire_date: newUser.hire_date || null
     })
     if (error || data?.error) { alert('新增失敗：' + (data?.error || error.message)); setSaving(false); return }
     if (newUser.default_flow_id && data?.user?.id) {
       await supabase.from('users').update({ default_flow_id: newUser.default_flow_id }).eq('id', data.user.id)
     }
     alert('員工新增成功！預設密碼為 Welcome@123')
-    setNewUser({ email: '', full_name: '', role: 'employee', default_flow_id: '' })
+    setNewUser({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '' })
     setShowAdd(false)
     setSaving(false)
-    setTimeout(() => fetchUsers(), 1000)
+    setTimeout(() => { fetchUsers(); fetchAnnualLeave() }, 1000)
   }
 
   async function handleUpdateUser(user) {
@@ -62,16 +74,15 @@ function UserManagement({ isAdmin }) {
       full_name: editing.full_name,
       role: editing.role,
       slack_user_id: editing.slack_user_id,
-      is_active: editing.is_active
+      is_active: editing.is_active,
+      hire_date: editing.hire_date || null
     })
     if (error || data?.error) { alert('更新失敗：' + (data?.error || error.message)); setSaving(false); return }
-    await supabase.from('users').update({
-  default_flow_id: editing.default_flow_id || null,
-  hire_date: editing.hire_date || null
-}).eq('id', user.id)
+    await supabase.from('users').update({ default_flow_id: editing.default_flow_id || null }).eq('id', user.id)
     setEditing(null)
     setSaving(false)
     fetchUsers()
+    fetchAnnualLeave()
   }
 
   const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor: '主管', admin: '管理員', boss: '老闆' }
@@ -102,10 +113,10 @@ function UserManagement({ isAdmin }) {
               <label style={labelStyle}>角色 *</label>
               <select value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
                 <option value="employee">員工</option>
-<option value="deputy_supervisor">副主管</option>
-<option value="supervisor">主管</option>
-<option value="admin">管理員</option>
-<option value="boss">老闆</option>
+                <option value="deputy_supervisor">副主管</option>
+                <option value="supervisor">主管</option>
+                <option value="admin">管理員</option>
+                <option value="boss">老闆</option>
               </select>
             </div>
             <div>
@@ -114,6 +125,10 @@ function UserManagement({ isAdmin }) {
                 <option value="">請選擇審核流程</option>
                 {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
               </select>
+            </div>
+            <div>
+              <label style={labelStyle}>入職日期</label>
+              <input type="date" value={newUser.hire_date} onChange={e => setNewUser(p => ({ ...p, hire_date: e.target.value }))} style={inputStyle} />
             </div>
           </div>
           <div style={{ display: 'flex', gap: '8px' }}>
@@ -138,11 +153,10 @@ function UserManagement({ isAdmin }) {
                       <label style={labelStyle}>角色</label>
                       <select value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))} style={inputStyle}>
                         <option value="employee">員工</option>
-<option value="deputy_supervisor">副主管</option>
-<option value="supervisor">主管</option>
-<option value="admin">管理員</option>
-                        
-                        
+                        <option value="deputy_supervisor">副主管</option>
+                        <option value="supervisor">主管</option>
+                        <option value="admin">管理員</option>
+                        <option value="boss">老闆</option>
                       </select>
                     </div>
                     <div>
@@ -154,16 +168,11 @@ function UserManagement({ isAdmin }) {
                     </div>
                     <div>
                       <label style={labelStyle}>Slack User ID</label>
-                      <div>
-  <label style={labelStyle}>入職日期</label>
-  <input
-    type="date"
-    value={editing.hire_date || ''}
-    onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))}
-    style={inputStyle}
-  />
-</div>
                       <input value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} style={inputStyle} placeholder="U0123ABCD" />
+                    </div>
+                    <div>
+                      <label style={labelStyle}>入職日期</label>
+                      <input type="date" value={editing.hire_date || ''} onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))} style={inputStyle} />
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
@@ -183,7 +192,7 @@ function UserManagement({ isAdmin }) {
                       <span style={{
                         marginLeft: '8px',
                         backgroundColor: user.role === 'boss' ? '#FDF2F8' : user.role === 'admin' ? '#EEF2FF' : user.role === 'supervisor' ? '#FEF3C7' : user.role === 'deputy_supervisor' ? '#FEF3C7' : '#F3F4F6',
-color: user.role === 'boss' ? '#9D174D' : user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706' : user.role === 'deputy_supervisor' ? '#D97706' : '#6B7280',
+                        color: user.role === 'boss' ? '#9D174D' : user.role === 'admin' ? '#4F46E5' : user.role === 'supervisor' ? '#D97706' : user.role === 'deputy_supervisor' ? '#D97706' : '#6B7280',
                         padding: '2px 8px', borderRadius: '4px', fontSize: '12px'
                       }}>
                         {roleMap[user.role]}
@@ -196,12 +205,26 @@ color: user.role === 'boss' ? '#9D174D' : user.role === 'admin' ? '#4F46E5' : us
                     {user.default_flow?.name && (
                       <div style={{ fontSize: '12px', color: '#4F46E5', marginTop: '2px' }}>審核流程：{user.default_flow.name}</div>
                     )}
+                    {(isAdmin || userProfile?.role === 'boss') && user.hire_date && (
+                      <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px', display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
+                        <span>入職：{user.hire_date}</span>
+                        {annualLeaveMap[user.id] && (
+                          <>
+                            <span>
+                              年資：
+                              {annualLeaveMap[user.id].service_years > 0 ? `${annualLeaveMap[user.id].service_years}年` : ''}
+                              {annualLeaveMap[user.id].service_months > 0 ? `${annualLeaveMap[user.id].service_months}個月` : ''}
+                              {annualLeaveMap[user.id].service_days > 0 ? `${annualLeaveMap[user.id].service_days}天` : ''}
+                            </span>
+                            <span>今年特休：{annualLeaveMap[user.id].entitled_days} 天</span>
+                            <span style={{ color: (annualLeaveMap[user.id].entitled_days - annualLeaveMap[user.id].used_days) <= 0 ? '#EF4444' : '#10B981' }}>
+                              剩餘：{annualLeaveMap[user.id].entitled_days - annualLeaveMap[user.id].used_days} 天
+                            </span>
+                          </>
+                        )}
+                      </div>
+                    )}
                   </div>
-                  {user.hire_date && (isAdmin || userProfile?.role === 'boss') && (
-  <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '2px' }}>
-    入職日期：{user.hire_date}
-  </div>
-)}
                   {isAdmin && <button onClick={() => setEditing({ ...user })} style={btnSecondary}>編輯</button>}
                 </div>
               )}
@@ -710,12 +733,18 @@ function AdminPanel({ userProfile }) {
   const isAdmin = userProfile?.role === 'admin' || userProfile?.role === 'boss'
 const isSupervisor = userProfile?.role === 'supervisor'
 
-  const tabs = [
-    { path: '/admin', label: '員工管理' },
-    { path: '/admin/flows', label: '審核流程' },
-    { path: '/admin/notifications', label: '通知對象' },
-    { path: '/admin/change-password', label: '修改密碼' },
-  ]
+  const tabs = []
+
+if (isAdmin) {
+  tabs.push({ path: '/admin', label: '員工管理' })
+  tabs.push({ path: '/admin/flows', label: '審核流程' })
+  tabs.push({ path: '/admin/notifications', label: '通知對象' })
+} else {
+  tabs.push({ path: '/admin/flows', label: '審核流程' })
+  tabs.push({ path: '/admin/notifications', label: '通知對象' })
+}
+
+tabs.push({ path: '/admin/change-password', label: '修改密碼' })
 
   if (isAdmin || isSupervisor) {
     tabs.splice(3, 0, { path: '/admin/delegates', label: '代理審核設定' })
@@ -741,17 +770,21 @@ const isSupervisor = userProfile?.role === 'supervisor'
       </div>
 
       <Routes>
-        <Route index element={<UserManagement isAdmin={isAdmin} />} />
-        <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />
-        <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />
-        <Route path="change-password" element={<ChangePassword />} />
-        {(isAdmin || isSupervisor) && (
-          <Route path="delegates" element={<DelegateManagement userProfile={userProfile} isAdmin={isAdmin} isSupervisor={isSupervisor} />} />
-        )}
-        {isAdmin && (
-  <Route path="export" element={<ExportReport />} />
-)}
-      </Routes>
+  <Route index element={
+    isAdmin
+      ? <UserManagement isAdmin={isAdmin} userProfile={userProfile} />
+      : <ChangePassword />
+  } />
+  <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />
+  <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />
+  <Route path="change-password" element={<ChangePassword />} />
+  {(isAdmin || isSupervisor) && (
+    <Route path="delegates" element={<DelegateManagement userProfile={userProfile} isAdmin={isAdmin} isSupervisor={isSupervisor} />} />
+  )}
+  {isAdmin && (
+    <Route path="export" element={<ExportReport />} />
+  )}
+</Routes>
     </div>
   )
 }
