@@ -76,12 +76,13 @@ function Layout({ children, userProfile }) {
   }
 
   const navItems = [
-    { path: '/', label: '首頁' },
-    { path: '/calendar', label: '請假行事曆' },
-    { path: '/past-leaves', label: '過往假期' },
-    { path: '/leave/new', label: '申請請假' },
-    { path: '/leave/my', label: '我的假單' },
-  ]
+  { path: '/', label: '首頁' },
+  { path: '/calendar', label: '請假行事曆' },
+  { path: '/past-leaves', label: '過往假期' },
+  { path: '/leave/new', label: '申請請假' },
+  { path: '/leave/my', label: '我的假單' },
+  { path: '/review', label: '年度考核' },
+]
 
   if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin' || userProfile?.role === 'boss') {
   navItems.push({ path: '/approval', label: '審核假單', badge: pendingCount })
