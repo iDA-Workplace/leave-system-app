@@ -22,7 +22,7 @@ function MyReview({ userProfile }) {
         supervisor:users!annual_review_participants_supervisor_id_fkey(full_name)
       `)
       .eq('user_id', userProfile.id)
-      .order('created_at', { ascending: false })
+      .order('id', { ascending: false })
     console.log('my reviews:', data)setReviews(data || [])
     setLoading(false)
   }
