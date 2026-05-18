@@ -23,7 +23,7 @@ function MyReview({ userProfile }) {
       `)
       .eq('user_id', userProfile.id)
       .order('created_at', { ascending: false })
-    setReviews(data || [])
+    console.log('my reviews:', data)setReviews(data || [])
     setLoading(false)
   }
 
