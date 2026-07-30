@@ -1,0 +1,233 @@
+/*
+  Phase 3 Design System — Design Tokens
+  Source of truth: docs/design/phase3-design-system.md
+  Only System Tokens (--sys-*) should be consumed by components.
+  Reference tokens (--ref-*) exist only so the two theme blocks below can be
+  regenerated from the tonal palette without hunting for hex values inline.
+*/
+
+:root {
+  /* ---- Reference: Primary (Indigo, seed #4F46E5) ---- */
+  --ref-primary-10: #0d0c27;
+  --ref-primary-20: #1b174f;
+  --ref-primary-30: #1c1584;
+  --ref-primary-40: #251daf;
+  --ref-primary-80: #aba7f1;
+  --ref-primary-90: #dedeee;
+  --ref-primary-100: #ffffff;
+
+  /* ---- Reference: Secondary (muted indigo) ---- */
+  --ref-secondary-30: #403f5a;
+  --ref-secondary-40: #565478;
+  --ref-secondary-80: #c4c3d5;
+  --ref-secondary-90: #e4e3e8;
+
+  /* ---- Reference: Tertiary (amber accent) ---- */
+  --ref-tertiary-30: #6f502a;
+  --ref-tertiary-40: #946b38;
+  --ref-tertiary-80: #e3cfb5;
+  --ref-tertiary-90: #ebe6e0;
+
+  /* ---- Reference: Error ---- */
+  --ref-error-30: #7e251b;
+  --ref-error-40: #a83124;
+  --ref-error-80: #edb1ab;
+  --ref-error-90: #ede0de;
+
+  /* ---- Reference: Neutral / Neutral Variant ---- */
+  --ref-neutral-4: #0b0b0c;
+  --ref-neutral-6: #0f0f10;
+  --ref-neutral-10: #18181b;
+  --ref-neutral-12: #1d1d20;
+  --ref-neutral-17: #28282b;
+  --ref-neutral-22: #333336;
+  --ref-neutral-90: #e5e5e6;
+  --ref-neutral-92: #e9e9ea;
+  --ref-neutral-94: #eeeeef;
+  --ref-neutral-96: #f2f2f3;
+  --ref-neutral-98: #fafafa;
+  --ref-neutral-100: #ffffff;
+  --ref-neutral-variant-30: #444356;
+  --ref-neutral-variant-50: #72708f;
+  --ref-neutral-variant-60: #8e8da5;
+  --ref-neutral-variant-80: #c7c6d2;
+  --ref-neutral-variant-90: #e4e4e7;
+
+  /* ================= System Tokens: Light (default) ================= */
+  --sys-color-primary: var(--ref-primary-40);
+  --sys-color-on-primary: var(--ref-primary-100);
+  --sys-color-primary-container: var(--ref-primary-90);
+  --sys-color-on-primary-container: var(--ref-primary-10);
+
+  --sys-color-secondary: var(--ref-secondary-40);
+  --sys-color-secondary-container: var(--ref-secondary-90);
+  --sys-color-on-secondary-container: var(--ref-secondary-30);
+
+  --sys-color-tertiary: var(--ref-tertiary-40);
+  --sys-color-tertiary-container: var(--ref-tertiary-90);
+  --sys-color-on-tertiary-container: var(--ref-tertiary-30);
+
+  --sys-color-error: var(--ref-error-40);
+  --sys-color-on-error: var(--ref-primary-100);
+  --sys-color-error-container: var(--ref-error-90);
+  --sys-color-on-error-container: var(--ref-error-30);
+
+  --sys-color-background: var(--ref-neutral-98);
+  --sys-color-surface: var(--ref-neutral-98);
+  --sys-color-on-surface: var(--ref-neutral-10);
+  --sys-color-surface-variant: var(--ref-neutral-variant-90);
+  --sys-color-on-surface-variant: var(--ref-neutral-variant-30);
+
+  --sys-color-outline: var(--ref-neutral-variant-50);
+  --sys-color-outline-variant: var(--ref-neutral-variant-80);
+
+  --sys-color-surface-container-lowest: var(--ref-neutral-100);
+  --sys-color-surface-container-low: var(--ref-neutral-96);
+  --sys-color-surface-container: var(--ref-neutral-94);
+  --sys-color-surface-container-high: var(--ref-neutral-92);
+  --sys-color-surface-container-highest: var(--ref-neutral-90);
+
+  --sys-color-inverse-surface: var(--ref-neutral-20, #313135);
+  --sys-color-inverse-on-surface: var(--ref-neutral-96);
+  --sys-color-inverse-primary: var(--ref-primary-80);
+
+  --sys-color-success: #2e7d32;
+  --sys-color-on-success-container: #0d3d10;
+  --sys-color-success-container: #dcefdd;
+  --sys-color-warning: #b45309;
+  --sys-color-warning-container: #fef3c7;
+  --sys-color-on-warning-container: #5c3403;
+
+  --sys-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.08), 0 1px 3px rgba(0, 0, 0, 0.06);
+  --sys-elevation-2: 0 2px 6px rgba(0, 0, 0, 0.1), 0 1px 2px rgba(0, 0, 0, 0.08);
+  --sys-elevation-3: 0 4px 12px rgba(0, 0, 0, 0.14), 0 2px 4px rgba(0, 0, 0, 0.1);
+  --sys-scrim: rgba(0, 0, 0, 0.4);
+
+  /* ---- State layer opacities ---- */
+  --state-hover: 0.08;
+  --state-focus: 0.12;
+  --state-pressed: 0.12;
+  --state-dragged: 0.16;
+  --state-disabled-container: 0.12;
+  --state-disabled-content: 0.38;
+
+  /* ---- Shape ---- */
+  --shape-corner-small: 8px;
+  --shape-corner-medium: 12px;
+  --shape-corner-large: 16px;
+  --shape-corner-full: 999px;
+
+  /* ---- Spacing (4px base) ---- */
+  --space-025: 2px;
+  --space-050: 4px;
+  --space-100: 8px;
+  --space-150: 12px;
+  --space-200: 16px;
+  --space-300: 24px;
+  --space-400: 32px;
+  --space-500: 40px;
+  --space-600: 48px;
+  --space-800: 64px;
+
+  /* ---- Typography ---- */
+  --font-family-base: 'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', 'Inter', sans-serif;
+
+  --type-display-large-size: 57px;
+  --type-display-large-line: 64px;
+  --type-headline-large-size: 32px;
+  --type-headline-large-line: 40px;
+  --type-headline-small-size: 24px;
+  --type-headline-small-line: 32px;
+  --type-title-large-size: 22px;
+  --type-title-large-line: 28px;
+  --type-title-medium-size: 16px;
+  --type-title-medium-line: 24px;
+  --type-title-small-size: 14px;
+  --type-title-small-line: 20px;
+  --type-body-large-size: 16px;
+  --type-body-large-line: 24px;
+  --type-body-medium-size: 14px;
+  --type-body-medium-line: 20px;
+  --type-body-small-size: 12px;
+  --type-body-small-line: 16px;
+  --type-label-large-size: 14px;
+  --type-label-large-line: 20px;
+  --type-label-medium-size: 12px;
+  --type-label-medium-line: 16px;
+  --type-label-small-size: 11px;
+  --type-label-small-line: 16px;
+
+  /* ---- Legacy content surface ----
+     Existing page components (Home/LeaveForm/MyLeaves/...) still hard-code
+     light-mode colors inline and haven't been retrofitted to system tokens
+     yet (separate follow-up, page by page). These two are intentionally
+     NOT overridden in the dark block below, so the content area stays a
+     stable light "paper" card while the shell/chrome around it goes dark,
+     instead of rendering illegible dark-gray-on-near-black text. */
+  --legacy-surface: #ffffff;
+  --legacy-on-surface: #1f2937;
+
+  /* ---- Layout ---- */
+  --shell-rail-collapsed: 72px;
+  --shell-rail-expanded: 240px;
+  --shell-app-bar-height: 64px;
+  --shell-app-bar-height-compact: 56px;
+  --shell-bottom-nav-height: 64px;
+  --shell-content-max-width: 1440px;
+
+  color-scheme: light;
+}
+
+/* ================= System Tokens: Dark ================= */
+:root[data-theme='dark'] {
+  --sys-color-primary: var(--ref-primary-80);
+  --sys-color-on-primary: var(--ref-primary-20);
+  --sys-color-primary-container: var(--ref-primary-30);
+  --sys-color-on-primary-container: var(--ref-primary-90);
+
+  --sys-color-secondary: var(--ref-secondary-80);
+  --sys-color-secondary-container: var(--ref-secondary-30);
+  --sys-color-on-secondary-container: var(--ref-secondary-90);
+
+  --sys-color-tertiary: var(--ref-tertiary-80);
+  --sys-color-tertiary-container: var(--ref-tertiary-30);
+  --sys-color-on-tertiary-container: var(--ref-tertiary-90);
+
+  --sys-color-error: var(--ref-error-80);
+  --sys-color-on-error: var(--ref-error-30);
+  --sys-color-error-container: var(--ref-error-30);
+  --sys-color-on-error-container: var(--ref-error-90);
+
+  --sys-color-background: var(--ref-neutral-6);
+  --sys-color-surface: var(--ref-neutral-6);
+  --sys-color-on-surface: var(--ref-neutral-90);
+  --sys-color-surface-variant: var(--ref-neutral-variant-30);
+  --sys-color-on-surface-variant: var(--ref-neutral-variant-80);
+
+  --sys-color-outline: var(--ref-neutral-variant-60);
+  --sys-color-outline-variant: var(--ref-neutral-variant-30);
+
+  --sys-color-surface-container-lowest: var(--ref-neutral-4);
+  --sys-color-surface-container-low: var(--ref-neutral-10);
+  --sys-color-surface-container: var(--ref-neutral-12);
+  --sys-color-surface-container-high: var(--ref-neutral-17);
+  --sys-color-surface-container-highest: var(--ref-neutral-22);
+
+  --sys-color-inverse-surface: var(--ref-neutral-90);
+  --sys-color-inverse-on-surface: var(--ref-neutral-20, #313135);
+  --sys-color-inverse-primary: var(--ref-primary-40);
+
+  --sys-color-success: #86d491;
+  --sys-color-on-success-container: #c9ecca;
+  --sys-color-success-container: #17401b;
+  --sys-color-warning: #ffb95c;
+  --sys-color-warning-container: #4a2c04;
+  --sys-color-on-warning-container: #ffddab;
+
+  --sys-elevation-1: 0 1px 2px rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.24);
+  --sys-elevation-2: 0 2px 6px rgba(0, 0, 0, 0.36), 0 1px 2px rgba(0, 0, 0, 0.3);
+  --sys-elevation-3: 0 4px 12px rgba(0, 0, 0, 0.44), 0 2px 4px rgba(0, 0, 0, 0.36);
+  --sys-scrim: rgba(0, 0, 0, 0.6);
+
+  color-scheme: dark;
+}

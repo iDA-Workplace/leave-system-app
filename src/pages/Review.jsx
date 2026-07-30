@@ -23,7 +23,8 @@ function MyReview({ userProfile }) {
       `)
       .eq('user_id', userProfile.id)
       .order('id', { ascending: false })
-    console.log('my reviews:', data)setReviews(data || [])
+    console.log('my reviews:', data)
+    setReviews(data || [])
     setLoading(false)
   }
 
@@ -32,7 +33,8 @@ function MyReview({ userProfile }) {
       .from('review_template_questions')
       .select('*')
       .eq('template_id', templateId)
-      .order('order_index')console.log('templateId:', templateId, 'questions:', qs)
+      .order('order_index')
+    console.log('templateId:', templateId, 'questions:', qs)
 
     const { data: rs } = await supabase
       .from('review_responses')

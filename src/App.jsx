@@ -56,7 +56,7 @@ function App() {
   return (
     <Layout userProfile={userProfile}>
       <Routes>
-        <Route path="/" element={<Home />} />
+        <Route path="/" element={<Home userProfile={userProfile} />} />
         <Route path="/calendar" element={<LeaveCalendar />} />
         <Route path="/past-leaves" element={<PastLeaves />} />
         <Route path="/review/*" element={<Review userProfile={userProfile} />} />
