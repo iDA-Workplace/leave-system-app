@@ -108,6 +108,13 @@ export const MoreIcon = (props) => (
   </Icon>
 )
 
+export const SearchIcon = (props) => (
+  <Icon {...props}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="M20.5 20.5l-4-4" />
+  </Icon>
+)
+
 export const BellIcon = (props) => (
   <Icon {...props}>
     <path d="M6 10a6 6 0 1 1 12 0c0 4.5 1.5 5.5 1.5 5.5h-15S6 14.5 6 10Z" />

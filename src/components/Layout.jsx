@@ -5,9 +5,17 @@ import { useTheme } from '../context/ThemeContext'
 import {
   DashboardIcon, AddNoteIcon, ListIcon, HistoryIcon, CalendarIcon,
   ApprovalIcon, ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
-  BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon,
+  BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon, SearchIcon,
 } from './icons'
 import './AppShell.css'
+
+const ROLE_BADGE_LABELS = {
+  employee: 'EMPLOYEE',
+  deputy_supervisor: 'DEPUTY',
+  supervisor: 'SUPERVISOR',
+  admin: 'ADMIN',
+  boss: 'BOSS',
+}
 
 const RAIL_EXPANDED_KEY = 'leave-system-rail-expanded'
 
@@ -27,7 +35,6 @@ function buildNavItems(userProfile, pendingCount) {
     { path: '/leave/new', label: '申請請假', icon: AddNoteIcon },
     { path: '/leave/my', label: '我的假單', icon: ListIcon },
     { path: '/past-leaves', label: '過往假期', icon: HistoryIcon },
-    { path: '/calendar', label: '團隊行事曆', icon: CalendarIcon },
   ]
 
   if (APPROVER_ROLES.includes(userProfile?.role)) {
@@ -35,6 +42,7 @@ function buildNavItems(userProfile, pendingCount) {
   }
 
   items.push({ path: '/review', label: '年度考核', icon: ReviewIcon })
+  items.push({ path: '/calendar', label: '團隊行事曆', icon: CalendarIcon })
   items.push({ path: '/admin', label: '管理後台', icon: AdminIcon })
   items.push({ path: '/settings', label: '個人設定', icon: SettingsIcon })
 
@@ -62,8 +70,11 @@ function Layout({ children, userProfile }) {
   const [avatarMenuOpen, setAvatarMenuOpen] = useState(false)
   const [themeMenuOpen, setThemeMenuOpen] = useState(false)
   const [moreSheetOpen, setMoreSheetOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
   const avatarMenuRef = useRef(null)
   const themeMenuRef = useRef(null)
+  const searchRef = useRef(null)
 
   useEffect(() => {
     if (APPROVER_ROLES.includes(userProfile?.role)) {
@@ -93,6 +104,9 @@ function Layout({ children, userProfile }) {
       }
       if (themeMenuRef.current && !themeMenuRef.current.contains(e.target)) {
         setThemeMenuOpen(false)
+      }
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setSearchOpen(false)
       }
     }
     document.addEventListener('mousedown', handleClickOutside)
@@ -154,9 +168,27 @@ function Layout({ children, userProfile }) {
   }
 
   const navItems = buildNavItems(userProfile, pendingCount)
-  const activeItem = navItems.find(item => isItemActive(item, location.pathname))
   const bottomNavItems = navItems.slice(0, 3)
   const moreItems = navItems.slice(3)
+
+  const searchMatches = searchQuery.trim()
+    ? navItems.filter(item => item.label.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : []
+
+  function handleSearchSubmit(e) {
+    e.preventDefault()
+    if (searchMatches.length > 0) {
+      navigate(searchMatches[0].path)
+      setSearchQuery('')
+      setSearchOpen(false)
+    }
+  }
+
+  function handleSearchSelect(path) {
+    navigate(path)
+    setSearchQuery('')
+    setSearchOpen(false)
+  }
 
   const themeOptions = [
     { value: 'light', label: '淺色', icon: SunIcon },
@@ -169,9 +201,30 @@ function Layout({ children, userProfile }) {
       <a href="#main-content" className="skip-link">跳到主要內容</a>
 
       <header className="app-bar">
-        <div className="app-bar__brand">
-          <span className="app-bar__title">{activeItem?.label || '請假系統'}</span>
-        </div>
+        <form className="app-bar__search" ref={searchRef} onSubmit={handleSearchSubmit}>
+          <SearchIcon size={18} className="app-bar__search-icon" />
+          <input
+            type="search"
+            className="app-bar__search-input"
+            placeholder="搜尋功能..."
+            value={searchQuery}
+            onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+            onFocus={() => setSearchOpen(true)}
+            aria-label="搜尋功能"
+          />
+          {searchOpen && searchMatches.length > 0 && (
+            <ul className="app-bar__search-results" role="listbox">
+              {searchMatches.map(item => (
+                <li key={item.path}>
+                  <button type="button" onClick={() => handleSearchSelect(item.path)}>
+                    <item.icon size={18} />
+                    {item.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </form>
         <div className="app-bar__actions">
           <div className="avatar-menu" ref={themeMenuRef}>
             <button
@@ -216,13 +269,17 @@ function Layout({ children, userProfile }) {
           <div className="avatar-menu" ref={avatarMenuRef}>
             <button
               type="button"
-              className="avatar"
+              className="app-bar__identity"
               aria-label="使用者選單"
               aria-haspopup="menu"
               aria-expanded={avatarMenuOpen}
               onClick={() => setAvatarMenuOpen(o => !o)}
             >
-              {initials(userProfile?.full_name)}
+              {ROLE_BADGE_LABELS[userProfile?.role] && (
+                <span className="app-bar__role-badge">{ROLE_BADGE_LABELS[userProfile.role]}</span>
+              )}
+              <span className="avatar">{initials(userProfile?.full_name)}</span>
+              <span className="app-bar__name">{userProfile?.full_name}</span>
             </button>
             {avatarMenuOpen && (
               <div className="avatar-menu__panel" role="menu">
@@ -242,6 +299,22 @@ function Layout({ children, userProfile }) {
 
       <div className="shell__body">
         <nav className={`rail${railExpanded ? ' rail--expanded' : ''}`} aria-label="主要導覽">
+          <div className="rail__brand">
+            {/* Placeholder wordmark until the real logo file can be added to
+                the repo (this session can't extract a pasted chat image to
+                disk) -- swap for <img src="/logo.png" .../> once it lands. */}
+            <span className="rail__brand-name">
+              <span className="rail__brand-name-full">iDA Workplace</span>
+              <span className="rail__brand-name-short">iDA</span>
+            </span>
+            <span className="rail__brand-caption">管理系統</span>
+          </div>
+
+          <Link to="/leave/new" className="rail__cta" title="請假申請">
+            <AddNoteIcon size={18} />
+            <span className="rail__cta-label">請假申請</span>
+          </Link>
+
           <div className="rail__toggle-row">
             <button
               type="button"

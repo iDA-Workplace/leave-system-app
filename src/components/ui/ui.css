@@ -5,7 +5,7 @@
 /* ---- Card (§7.5) ---- */
 .ui-card {
   background: var(--sys-color-surface-container-lowest);
-  border-radius: var(--shape-corner-medium);
+  border-radius: var(--shape-corner-large);
   box-shadow: var(--sys-elevation-1);
   padding: var(--space-300);
 }

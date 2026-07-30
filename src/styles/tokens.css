@@ -1,38 +1,46 @@
 /*
-  Phase 3 Design System — Design Tokens
-  Source of truth: docs/design/phase3-design-system.md
-  Only System Tokens (--sys-*) should be consumed by components.
-  Reference tokens (--ref-*) exist only so the two theme blocks below can be
-  regenerated from the tonal palette without hunting for hex values inline.
+  Design Tokens — originally generated from docs/design/phase3-design-system.md
+  (indigo seed), recolored to a red/coral brand palette to match the iDA
+  Workplace reference the user provided. Only System Tokens (--sys-*) should
+  be consumed by components. Reference tokens (--ref-*) exist so the two
+  theme blocks below can be regenerated from the tonal palette without
+  hunting for hex values inline.
 */
 
 :root {
-  /* ---- Reference: Primary (Indigo, seed #4F46E5) ---- */
-  --ref-primary-10: #0d0c27;
-  --ref-primary-20: #1b174f;
-  --ref-primary-30: #1c1584;
-  --ref-primary-40: #251daf;
-  --ref-primary-80: #aba7f1;
-  --ref-primary-90: #dedeee;
+  /* ---- Reference: Primary (Brand red/coral, seed ~#DC2626) ----
+     Matches the iDA Workplace reference (red accent buttons/badges/
+     progress bars). The reference uses one red for both brand actions
+     and destructive actions (its reject button is red-outlined, its
+     approve button is red-filled) so Error below intentionally reuses
+     this same ramp rather than a separate hue. */
+  --ref-primary-10: #7f1d1d;
+  --ref-primary-20: #991b1b;
+  --ref-primary-30: #b91c1c;
+  --ref-primary-40: #dc2626;
+  --ref-primary-80: #fca5a5;
+  --ref-primary-90: #fee2e2;
   --ref-primary-100: #ffffff;
 
-  /* ---- Reference: Secondary (muted indigo) ---- */
-  --ref-secondary-30: #403f5a;
-  --ref-secondary-40: #565478;
-  --ref-secondary-80: #c4c3d5;
-  --ref-secondary-90: #e4e3e8;
+  /* ---- Reference: Secondary (cool neutral blue-gray) ----
+     Independent of the brand red — used for the sidebar's "selected"
+     highlight, which the reference keeps a soft neutral, not red. */
+  --ref-secondary-30: #3f4759;
+  --ref-secondary-40: #59617a;
+  --ref-secondary-80: #c3c7d9;
+  --ref-secondary-90: #e9ebf5;
 
-  /* ---- Reference: Tertiary (amber accent) ---- */
+  /* ---- Reference: Tertiary (amber accent, unrelated to rebrand) ---- */
   --ref-tertiary-30: #6f502a;
   --ref-tertiary-40: #946b38;
   --ref-tertiary-80: #e3cfb5;
   --ref-tertiary-90: #ebe6e0;
 
-  /* ---- Reference: Error ---- */
-  --ref-error-30: #7e251b;
-  --ref-error-40: #a83124;
-  --ref-error-80: #edb1ab;
-  --ref-error-90: #ede0de;
+  /* ---- Reference: Error — reuses the Primary red ramp on purpose, see above ---- */
+  --ref-error-30: var(--ref-primary-30);
+  --ref-error-40: var(--ref-primary-40);
+  --ref-error-80: var(--ref-primary-80);
+  --ref-error-90: var(--ref-primary-90);
 
   /* ---- Reference: Neutral / Neutral Variant ---- */
   --ref-neutral-4: #0b0b0c;
@@ -156,16 +164,6 @@
   --type-label-medium-line: 16px;
   --type-label-small-size: 11px;
   --type-label-small-line: 16px;
-
-  /* ---- Legacy content surface ----
-     Existing page components (Home/LeaveForm/MyLeaves/...) still hard-code
-     light-mode colors inline and haven't been retrofitted to system tokens
-     yet (separate follow-up, page by page). These two are intentionally
-     NOT overridden in the dark block below, so the content area stays a
-     stable light "paper" card while the shell/chrome around it goes dark,
-     instead of rendering illegible dark-gray-on-near-black text. */
-  --legacy-surface: #ffffff;
-  --legacy-on-surface: #1f2937;
 
   /* ---- Layout ---- */
   --shell-rail-collapsed: 72px;
