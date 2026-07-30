@@ -1,0 +1,38 @@
+.past-leaves-list {
+  display: grid;
+  gap: var(--space-150);
+}
+
+.past-leave-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-200);
+}
+
+.past-leave-card__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.past-leave-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.past-leave-card__name {
+  font: 600 var(--type-body-large-size)/var(--type-body-large-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+  margin-bottom: 2px;
+}
+
+.past-leave-card__meta {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}

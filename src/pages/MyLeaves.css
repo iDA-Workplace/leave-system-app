@@ -1,0 +1,68 @@
+.my-leaves-list {
+  display: grid;
+  gap: var(--space-150);
+}
+
+.my-leave-card__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-200);
+}
+
+.my-leave-card__type {
+  font: 600 var(--type-body-large-size)/var(--type-body-large-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+  margin-bottom: 2px;
+}
+
+.my-leave-card__meta {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+
+.my-leave-card__timestamp {
+  font: var(--type-label-small-size)/var(--type-label-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  margin-top: var(--space-050);
+}
+
+.my-leave-card__actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-100);
+}
+
+.my-leave-card__detail {
+  margin-top: var(--space-200);
+  padding-top: var(--space-200);
+  border-top: 1px solid var(--sys-color-outline-variant);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-100);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
+.my-leave-card__detail-label {
+  color: var(--sys-color-on-surface-variant);
+}
+
+.my-leave-card__detail-error {
+  color: var(--sys-color-error);
+}
+
+.my-leave-card__approvals {
+  margin-top: var(--space-100);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-050);
+}
+
+.my-leave-card__approval-row {
+  display: flex;
+  gap: var(--space-100);
+  align-items: center;
+  font-size: var(--type-body-small-size);
+}

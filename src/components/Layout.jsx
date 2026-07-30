@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { useTheme } from '../context/ThemeContext'
 import {
   DashboardIcon, AddNoteIcon, ListIcon, HistoryIcon, CalendarIcon,
-  ApprovalIcon, ReviewIcon, AdminIcon, ChevronLeftIcon, MoreIcon,
+  ApprovalIcon, ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
   BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon,
 } from './icons'
 import './AppShell.css'
@@ -12,7 +12,6 @@ import './AppShell.css'
 const RAIL_EXPANDED_KEY = 'leave-system-rail-expanded'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'admin', 'boss']
-const ADMIN_ROLES = ['admin', 'boss']
 
 const ROLE_LABELS = {
   employee: '員工',
@@ -36,10 +35,8 @@ function buildNavItems(userProfile, pendingCount) {
   }
 
   items.push({ path: '/review', label: '年度考核', icon: ReviewIcon })
-
-  if (ADMIN_ROLES.includes(userProfile?.role)) {
-    items.push({ path: '/admin', label: '管理後台', icon: AdminIcon })
-  }
+  items.push({ path: '/admin', label: '管理後台', icon: AdminIcon })
+  items.push({ path: '/settings', label: '個人設定', icon: SettingsIcon })
 
   return items
 }

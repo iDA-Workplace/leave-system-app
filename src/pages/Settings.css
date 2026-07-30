@@ -1,0 +1,75 @@
+.settings-page {
+  max-width: 480px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-200);
+}
+
+.settings-section__title {
+  margin: 0 0 var(--space-200);
+  font: 600 var(--type-title-medium-size)/var(--type-title-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
+.settings-profile-row {
+  display: flex;
+  justify-content: space-between;
+  padding: var(--space-100) 0;
+  border-bottom: 1px solid var(--sys-color-outline-variant);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
+.settings-profile-label {
+  color: var(--sys-color-on-surface-variant);
+}
+
+.settings-hint {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  margin: var(--space-150) 0 0;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-200);
+}
+
+.settings-message {
+  padding: var(--space-150);
+  border-radius: var(--shape-corner-small);
+  margin-bottom: var(--space-200);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+}
+.settings-message--error {
+  background: var(--sys-color-error-container);
+  color: var(--sys-color-on-error-container);
+}
+.settings-message--success {
+  background: var(--sys-color-success-container);
+  color: var(--sys-color-on-success-container);
+}
+
+.settings-theme-options {
+  display: flex;
+  gap: var(--space-100);
+}
+
+.settings-theme-option {
+  flex: 1;
+  padding: var(--space-150);
+  border-radius: var(--shape-corner-small);
+  border: 1px solid var(--sys-color-outline);
+  background: var(--sys-color-surface-container-lowest);
+  color: var(--sys-color-on-surface);
+  cursor: pointer;
+  font: 500 var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+}
+
+.settings-theme-option--active {
+  border-color: var(--sys-color-primary);
+  background: var(--sys-color-primary-container);
+  color: var(--sys-color-on-primary-container);
+}

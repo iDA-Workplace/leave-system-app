@@ -1,11 +1,15 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import * as XLSX from 'xlsx'
+import { Button, Card, PageHeader, Select } from '../components/ui'
+import { useToast } from '../context/ToastContext'
+import './ExportReport.css'
 
 function ExportReport() {
   const [loading, setLoading] = useState(false)
   const [year, setYear] = useState(new Date().getFullYear())
   const [month, setMonth] = useState(0) // 0 = 全年
+  const { showToast } = useToast()
 
   const currentYear = new Date().getFullYear()
   const years = [currentYear - 1, currentYear, currentYear + 1]
@@ -49,7 +53,7 @@ function ExportReport() {
       .order('start_date')
 
     if (!data || data.length === 0) {
-      alert('這段時間沒有假單資料')
+      showToast('這段時間沒有假單資料', { tone: 'error' })
       setLoading(false)
       return
     }
@@ -82,7 +86,6 @@ function ExportReport() {
 
     const ws = XLSX.utils.json_to_sheet(rows)
 
-    // 設定欄寬
     ws['!cols'] = [
       { wch: 12 }, { wch: 25 }, { wch: 10 },
       { wch: 12 }, { wch: 12 }, { wch: 10 },
@@ -103,55 +106,29 @@ function ExportReport() {
   }
 
   return (
-    <div style={{ maxWidth: '500px' }}>
-      <h3 style={{ marginBottom: '20px', color: '#1f2937' }}>匯出請假報表</h3>
+    <div className="export-report-page">
+      <PageHeader title="匯出請假報表" />
 
-      <div style={{
-        backgroundColor: 'white', borderRadius: '12px',
-        padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)'
-      }}>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '24px' }}>
-          <div>
-            <label style={labelStyle}>年份</label>
-            <select value={year} onChange={e => setYear(Number(e.target.value))} style={inputStyle}>
-              {years.map(y => <option key={y} value={y}>{y} 年</option>)}
-            </select>
-          </div>
-          <div>
-            <label style={labelStyle}>月份</label>
-            <select value={month} onChange={e => setMonth(Number(e.target.value))} style={inputStyle}>
-              {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-            </select>
-          </div>
+      <Card>
+        <div className="export-report-grid">
+          <Select label="年份" value={year} onChange={e => setYear(Number(e.target.value))}>
+            {years.map(y => <option key={y} value={y}>{y} 年</option>)}
+          </Select>
+          <Select label="月份" value={month} onChange={e => setMonth(Number(e.target.value))}>
+            {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+          </Select>
         </div>
 
-        <div style={{
-          backgroundColor: '#f9fafb', borderRadius: '8px',
-          padding: '12px 16px', marginBottom: '20px',
-          fontSize: '13px', color: '#6b7280'
-        }}>
+        <div className="export-report-hint">
           匯出內容包含：申請人、假別、日期、時數、狀態、代理人、原因、審核記錄
         </div>
 
-        <button
-          onClick={handleExport}
-          disabled={loading}
-          style={{
-            width: '100%', padding: '12px',
-            backgroundColor: loading ? '#a5b4fc' : '#4F46E5',
-            color: 'white', border: 'none', borderRadius: '8px',
-            fontSize: '16px', fontWeight: '600',
-            cursor: loading ? 'not-allowed' : 'pointer'
-          }}
-        >
+        <Button block loading={loading} onClick={handleExport}>
           {loading ? '匯出中...' : '📥 匯出 Excel'}
-        </button>
-      </div>
+        </Button>
+      </Card>
     </div>
   )
 }
-
-const labelStyle = { display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500', color: '#374151' }
-const inputStyle = { width: '100%', padding: '10px 12px', border: '1px solid #e5e7eb', borderRadius: '8px', fontSize: '14px', boxSizing: 'border-box' }
 
 export default ExportReport

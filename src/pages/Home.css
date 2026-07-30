@@ -1,0 +1,51 @@
+.home-date-range {
+  color: var(--sys-color-on-surface-variant);
+  margin: 0 0 var(--space-300);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+}
+
+.home-leave-list {
+  display: grid;
+  gap: var(--space-150);
+}
+
+.home-leave-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-200);
+  padding: var(--space-150) var(--space-200);
+}
+
+.home-leave-card__avatar {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 700;
+  font-size: 16px;
+  flex-shrink: 0;
+}
+
+.home-leave-card__body {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-leave-card__name {
+  font: 600 var(--type-body-large-size)/var(--type-body-large-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+  margin-bottom: 2px;
+}
+
+.home-leave-card__meta {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+
+.home-hidden-label {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  margin: var(--space-100) 0 var(--space-050);
+}

@@ -12,6 +12,7 @@ import Layout from './components/Layout'
 import LeaveCalendar from './pages/Calendar'
 import PastLeaves from './pages/PastLeaves'
 import Review from './pages/Review'
+import Settings from './pages/Settings'
 
 function App() {
   const [session, setSession] = useState(null)
@@ -64,6 +65,7 @@ function App() {
         <Route path="/leave/my" element={<MyLeaves userProfile={userProfile} />} />
         <Route path="/approval" element={<ApprovalList userProfile={userProfile} />} />
         <Route path="/admin/*" element={<AdminPanel userProfile={userProfile} />} />
+        <Route path="/settings" element={<Settings userProfile={userProfile} />} />
         <Route path="*" element={<Navigate to="/" />} />
       </Routes>
     </Layout>

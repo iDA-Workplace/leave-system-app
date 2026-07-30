@@ -1,5 +1,15 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { Button, Card, Chip, EmptyState, PageHeader, Skeleton, Textarea } from '../components/ui'
+import { useToast } from '../context/ToastContext'
+import './ApprovalList.css'
+
+function urgencyDays(startDate) {
+  const start = new Date(startDate + 'T00:00:00')
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  return Math.round((start - today) / 86400000)
+}
 
 function ApprovalList({ userProfile }) {
   const [requests, setRequests] = useState([])
@@ -7,6 +17,7 @@ function ApprovalList({ userProfile }) {
   const [selected, setSelected] = useState(null)
   const [comment, setComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const { showToast } = useToast()
 
   useEffect(() => {
     fetchPendingRequests()
@@ -15,13 +26,11 @@ function ApprovalList({ userProfile }) {
   async function fetchPendingRequests() {
     const today = new Date().toISOString().split('T')[0]
 
-    // 找出這位主管負責審核的假單（含代理）
     const { data: flowSteps } = await supabase
       .from('approval_flow_steps')
       .select('flow_id, step_order')
       .eq('approver_id', userProfile.id)
 
-    // 找出這位主管是代理人的情況
     const { data: delegateFor } = await supabase
       .from('approval_delegates')
       .select('original_approver_id')
@@ -68,7 +77,6 @@ function ApprovalList({ userProfile }) {
       `)
       .eq('status', 'pending')
 
-    // 篩選出輪到這位主管審核的假單
     const filtered = (data || []).filter(req => {
       return allSteps.some(
         step => step.flow_id === req.flow_id && step.step_order === req.current_step
@@ -81,13 +89,12 @@ function ApprovalList({ userProfile }) {
 
   async function handleAction(request, action) {
     if (action === 'rejected' && !comment.trim()) {
-      alert('請填寫拒絕原因')
+      showToast('請填寫拒絕原因', { tone: 'error' })
       return
     }
 
     setSubmitting(true)
 
-    // 找出原始審核人（可能是代理）
     const today = new Date().toISOString().split('T')[0]
     const currentStep = request.flow.steps.find(
       s => s.step_order === request.current_step
@@ -103,7 +110,6 @@ function ApprovalList({ userProfile }) {
       .gte('end_date', today)
       .single()
 
-    // 寫入審核記錄
     await supabase.from('leave_approvals').insert({
       request_id: request.id,
       approver_id: userProfile.id,
@@ -114,7 +120,6 @@ function ApprovalList({ userProfile }) {
     })
 
     if (action === 'rejected') {
-      // 直接拒絕
       await supabase
         .from('leave_requests')
         .update({ status: 'rejected' })
@@ -124,11 +129,9 @@ function ApprovalList({ userProfile }) {
         body: { type: 'rejected', request_id: request.id }
       })
     } else {
-      // 檢查是否還有下一關
       const maxStep = Math.max(...request.flow.steps.map(s => s.step_order))
 
       if (request.current_step >= maxStep) {
-        // 最後一關，核准
         await supabase
           .from('leave_requests')
           .update({ status: 'approved' })
@@ -138,7 +141,6 @@ function ApprovalList({ userProfile }) {
           body: { type: 'approved', request_id: request.id }
         })
       } else {
-        // 進到下一關
         await supabase
           .from('leave_requests')
           .update({ current_step: request.current_step + 1 })
@@ -156,168 +158,73 @@ function ApprovalList({ userProfile }) {
     fetchPendingRequests()
   }
 
-  if (loading) return <p style={{ color: '#6b7280' }}>載入中...</p>
+  if (loading) return (
+    <div>
+      <PageHeader title="待審核假單" />
+      <div className="approval-list">
+        <Skeleton height="96px" />
+        <Skeleton height="96px" />
+      </div>
+    </div>
+  )
 
   return (
     <div>
-      <h2 style={{ marginBottom: '24px', color: '#1f2937', fontSize: '22px' }}>
-        待審核假單
-        {requests.length > 0 && (
-          <span style={{
-            marginLeft: '10px',
-            backgroundColor: '#EF4444',
-            color: 'white',
-            borderRadius: '20px',
-            padding: '2px 10px',
-            fontSize: '14px'
-          }}>
-            {requests.length}
-          </span>
-        )}
-      </h2>
+      <PageHeader
+        title="待審核假單"
+        badge={requests.length > 0 && <Chip tone="error">{requests.length}</Chip>}
+      />
 
       {requests.length === 0 ? (
-        <div style={{
-          backgroundColor: 'white',
-          borderRadius: '12px',
-          padding: '48px',
-          textAlign: 'center',
-          color: '#6b7280',
-          boxShadow: '0 1px 4px rgba(0,0,0,0.06)'
-        }}>
-          目前沒有待審核的假單 ✓
-        </div>
+        <Card><EmptyState icon="✓" title="目前沒有待審核的假單" /></Card>
       ) : (
-        <div style={{ display: 'grid', gap: '12px' }}>
-          {requests.map(request => (
-            <div key={request.id} style={{
-              backgroundColor: 'white',
-              borderRadius: '12px',
-              padding: '20px',
-              boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
-              borderLeft: `4px solid ${request.leave_type?.color || '#4F46E5'}`
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                <div>
-                  <div style={{ fontWeight: '600', color: '#1f2937', fontSize: '16px', marginBottom: '6px' }}>
-                    {request.requester?.full_name}
+        <div className="approval-list">
+          {requests.map(request => {
+            const days = urgencyDays(request.start_date)
+            const isUrgent = days >= 0 && days < 3
+            const isOpen = selected?.id === request.id
+            return (
+              <Card key={request.id} style={{ borderLeft: `4px solid ${request.leave_type?.color || 'var(--sys-color-primary)'}` }}>
+                <div className="approval-card__row">
+                  <div>
+                    <div className="approval-card__name">
+                      {request.requester?.full_name}
+                      {isUrgent && <Chip tone="error" className="approval-card__urgency">🔥 {days === 0 ? '今天開始' : `${days} 天後開始`}</Chip>}
+                    </div>
+                    <div className="approval-card__meta">
+                      {request.leave_type?.name}｜{request.start_date} ～ {request.end_date}
+                    </div>
+                    <div className="approval-card__reason">原因：{request.reason}</div>
+                    <div className="approval-card__timestamp">申請時間：{new Date(request.created_at).toLocaleString('zh-TW')}</div>
                   </div>
-                  <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '4px' }}>
-                    {request.leave_type?.name}｜{request.start_date} ～ {request.end_date}
-                  </div>
-                  <div style={{ fontSize: '13px', color: '#374151', marginBottom: '4px' }}>
-                    原因：{request.reason}
-                  </div>
-                  <div style={{ fontSize: '12px', color: '#9ca3af' }}>
-                    申請時間：{new Date(request.created_at).toLocaleString('zh-TW')}
-                  </div>
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    onClick={() => {
-                      setSelected(selected?.id === request.id ? null : request)
-                      setComment('')
-                    }}
-                    style={{
-                      padding: '8px 16px',
-                      backgroundColor: '#4F46E5',
-                      color: 'white',
-                      border: 'none',
-                      borderRadius: '8px',
-                      cursor: 'pointer',
-                      fontSize: '14px'
-                    }}
-                  >
+                  <Button onClick={() => { setSelected(isOpen ? null : request); setComment('') }}>
                     審核
-                  </button>
+                  </Button>
                 </div>
-              </div>
 
-              {/* 審核面板 */}
-              {selected?.id === request.id && (
-                <div style={{
-                  marginTop: '16px',
-                  paddingTop: '16px',
-                  borderTop: '1px solid #f3f4f6'
-                }}>
-                  <div style={{ marginBottom: '12px' }}>
-                    <label style={{
-                      display: 'block',
-                      marginBottom: '6px',
-                      fontSize: '14px',
-                      fontWeight: '500',
-                      color: '#374151'
-                    }}>
-                      備註／拒絕原因（拒絕時必填）
-                    </label>
-                    <textarea
+                {isOpen && (
+                  <div className="approval-card__panel">
+                    <Textarea
+                      label="備註／拒絕原因（拒絕時必填）"
                       value={comment}
                       onChange={e => setComment(e.target.value)}
                       rows={3}
-                      style={{
-                        width: '100%',
-                        padding: '10px 12px',
-                        border: '1px solid #e5e7eb',
-                        borderRadius: '8px',
-                        fontSize: '14px',
-                        boxSizing: 'border-box',
-                        resize: 'vertical'
-                      }}
                       placeholder="請輸入備註，若要拒絕請填寫原因"
                     />
+                    <div className="approval-card__panel-actions">
+                      <Button variant="filled" style={{ background: 'var(--sys-color-success)' }} disabled={submitting} onClick={() => handleAction(request, 'approved')}>
+                        ✓ 核准
+                      </Button>
+                      <Button variant="danger" disabled={submitting} onClick={() => handleAction(request, 'rejected')}>
+                        ✗ 拒絕
+                      </Button>
+                      <Button variant="text" onClick={() => { setSelected(null); setComment('') }}>取消</Button>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <button
-                      onClick={() => handleAction(request, 'approved')}
-                      disabled={submitting}
-                      style={{
-                        padding: '10px 24px',
-                        backgroundColor: submitting ? '#6ee7b7' : '#10B981',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: submitting ? 'not-allowed' : 'pointer',
-                        fontSize: '14px',
-                        fontWeight: '500'
-                      }}
-                    >
-                      ✓ 核准
-                    </button>
-                    <button
-                      onClick={() => handleAction(request, 'rejected')}
-                      disabled={submitting}
-                      style={{
-                        padding: '10px 24px',
-                        backgroundColor: submitting ? '#fca5a5' : '#EF4444',
-                        color: 'white',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: submitting ? 'not-allowed' : 'pointer',
-                        fontSize: '14px',
-                        fontWeight: '500'
-                      }}
-                    >
-                      ✗ 拒絕
-                    </button>
-                    <button
-                      onClick={() => { setSelected(null); setComment('') }}
-                      style={{
-                        padding: '10px 16px',
-                        backgroundColor: '#f3f4f6',
-                        color: '#374151',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        fontSize: '14px'
-                      }}
-                    >
-                      取消
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-          ))}
+                )}
+              </Card>
+            )
+          })}
         </div>
       )}
     </div>

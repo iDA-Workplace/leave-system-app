@@ -1,18 +1,24 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Skeleton } from '../components/ui'
+import { useToast } from '../context/ToastContext'
+import './MyLeaves.css'
 
 const statusMap = {
-  pending: { label: '審核中', color: '#F59E0B', bg: '#FEF3C7' },
-  approved: { label: '已核准', color: '#10B981', bg: '#D1FAE5' },
-  rejected: { label: '已拒絕', color: '#EF4444', bg: '#FEE2E2' },
-  returned: { label: '已退回', color: '#6B7280', bg: '#F3F4F6' },
-  withdrawn: { label: '已收回', color: '#8B5CF6', bg: '#EDE9FE' }
+  pending: { label: '審核中', tone: 'warning' },
+  approved: { label: '已核准', tone: 'success' },
+  rejected: { label: '已拒絕', tone: 'error' },
+  returned: { label: '已退回', tone: 'neutral' },
+  withdrawn: { label: '已收回', tone: 'info' }
 }
 
 function MyLeaves({ userProfile }) {
   const [leaves, setLeaves] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
+  const [withdrawTarget, setWithdrawTarget] = useState(null)
+  const [withdrawing, setWithdrawing] = useState(false)
+  const { showToast } = useToast()
 
   useEffect(() => {
     fetchMyLeaves()
@@ -37,12 +43,15 @@ function MyLeaves({ userProfile }) {
     setLoading(false)
   }
 
-  async function handleWithdraw(leave) {
-    if (!window.confirm('確定要收回這張假單嗎？收回後需要重新送出。')) return
+  async function confirmWithdraw() {
+    setWithdrawing(true)
     await supabase
       .from('leave_requests')
       .update({ status: 'withdrawn' })
-      .eq('id', leave.id)
+      .eq('id', withdrawTarget.id)
+    setWithdrawing(false)
+    setWithdrawTarget(null)
+    showToast('假單已收回')
     fetchMyLeaves()
   }
 
@@ -71,133 +80,115 @@ function MyLeaves({ userProfile }) {
         body: { type: 'new_request', request_id: data.id }
       })
       fetchMyLeaves()
-      alert('已重新送出！')
+      showToast('已重新送出！')
     }
   }
 
-  if (loading) return <p style={{ color: '#6b7280' }}>載入中...</p>
+  if (loading) return (
+    <div>
+      <PageHeader title="我的假單" />
+      <div className="my-leaves-list">
+        <Skeleton height="88px" />
+        <Skeleton height="88px" />
+        <Skeleton height="88px" />
+      </div>
+    </div>
+  )
 
   return (
     <div>
-      <h2 style={{ marginBottom: '24px', color: '#1f2937', fontSize: '22px' }}>我的假單</h2>
+      <PageHeader title="我的假單" />
 
       {leaves.length === 0 ? (
-        <div style={{
-          backgroundColor: 'white', borderRadius: '12px', padding: '48px',
-          textAlign: 'center', color: '#6b7280',
-          boxShadow: '0 1px 4px rgba(0,0,0,0.06)'
-        }}>
-          尚無請假記錄
-        </div>
+        <Card><EmptyState title="尚無請假記錄" /></Card>
       ) : (
-        <div style={{ display: 'grid', gap: '12px' }}>
+        <div className="my-leaves-list">
           {leaves.map(leave => {
             const status = statusMap[leave.status] || statusMap.pending
+            const isOpen = selected?.id === leave.id
             return (
-              <div
+              <Card
                 key={leave.id}
-                onClick={() => setSelected(selected?.id === leave.id ? null : leave)}
-                style={{
-                  backgroundColor: 'white', borderRadius: '12px', padding: '16px 20px',
-                  boxShadow: '0 1px 4px rgba(0,0,0,0.06)', cursor: 'pointer',
-                  borderLeft: '4px solid ' + (leave.leave_type?.color || '#4F46E5')
-                }}
+                className="my-leave-card"
+                style={{ borderLeft: `4px solid ${leave.leave_type?.color || 'var(--sys-color-primary)'}`, cursor: 'pointer' }}
+                onClick={() => setSelected(isOpen ? null : leave)}
               >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="my-leave-card__row">
                   <div>
-                    <div style={{ fontWeight: '600', color: '#1f2937', marginBottom: '4px' }}>
-                      {leave.leave_type?.name}
-                    </div>
-                    <div style={{ fontSize: '13px', color: '#6b7280' }}>
+                    <div className="my-leave-card__type">{leave.leave_type?.name}</div>
+                    <div className="my-leave-card__meta">
                       {leave.start_date} ～ {leave.end_date}
                       {leave.hours && ` ｜ ${leave.hours} 小時`}
                     </div>
-                    <div style={{ fontSize: '12px', color: '#9ca3af', marginTop: '4px' }}>
+                    <div className="my-leave-card__timestamp">
                       申請時間：{new Date(leave.created_at).toLocaleString('zh-TW')}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
-                    <span style={{
-                      backgroundColor: status.bg, color: status.color,
-                      padding: '4px 12px', borderRadius: '20px',
-                      fontSize: '12px', fontWeight: '500'
-                    }}>
-                      {status.label}
-                    </span>
+                  <div className="my-leave-card__actions">
+                    <Chip tone={status.tone}>{status.label}</Chip>
                     {leave.status === 'pending' && (
-                      <button
-                        onClick={e => { e.stopPropagation(); handleWithdraw(leave) }}
-                        style={{
-                          padding: '4px 12px', backgroundColor: '#FEF3C7',
-                          color: '#D97706', border: '1px solid #FCD34D',
-                          borderRadius: '6px', fontSize: '12px', cursor: 'pointer'
-                        }}
-                      >
+                      <Button variant="tonal" size="sm" onClick={e => { e.stopPropagation(); setWithdrawTarget(leave) }}>
                         收回假單
-                      </button>
+                      </Button>
                     )}
                     {(leave.status === 'returned' || leave.status === 'withdrawn') && (
-                      <button
-                        onClick={e => { e.stopPropagation(); handleResubmit(leave) }}
-                        style={{
-                          padding: '4px 12px', backgroundColor: '#4F46E5',
-                          color: 'white', border: 'none',
-                          borderRadius: '6px', fontSize: '12px', cursor: 'pointer'
-                        }}
-                      >
+                      <Button size="sm" onClick={e => { e.stopPropagation(); handleResubmit(leave) }}>
                         重新送出
-                      </button>
+                      </Button>
                     )}
                   </div>
                 </div>
 
-                {selected?.id === leave.id && (
-                  <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid #f3f4f6' }}>
-                    <div style={{ marginBottom: '8px' }}>
-                      <span style={{ fontSize: '13px', color: '#6b7280' }}>請假原因：</span>
-                      <span style={{ fontSize: '13px', color: '#374151' }}>{leave.reason}</span>
+                {isOpen && (
+                  <div className="my-leave-card__detail">
+                    <div className="my-leave-card__detail-row">
+                      <span className="my-leave-card__detail-label">請假原因：</span>
+                      <span>{leave.reason}</span>
                     </div>
                     {leave.start_time && (
-                      <div style={{ marginBottom: '8px' }}>
-                        <span style={{ fontSize: '13px', color: '#6b7280' }}>請假時段：</span>
-                        <span style={{ fontSize: '13px', color: '#374151' }}>{leave.start_time} ～ {leave.end_time}</span>
+                      <div className="my-leave-card__detail-row">
+                        <span className="my-leave-card__detail-label">請假時段：</span>
+                        <span>{leave.start_time} ～ {leave.end_time}</span>
                       </div>
                     )}
                     {(leave.status === 'returned' || leave.status === 'withdrawn') && leave.returned_reason && (
-                      <div style={{ marginBottom: '8px' }}>
-                        <span style={{ fontSize: '13px', color: '#6b7280' }}>退回原因：</span>
-                        <span style={{ fontSize: '13px', color: '#EF4444' }}>{leave.returned_reason}</span>
+                      <div className="my-leave-card__detail-row">
+                        <span className="my-leave-card__detail-label">退回原因：</span>
+                        <span className="my-leave-card__detail-error">{leave.returned_reason}</span>
                       </div>
                     )}
                     {leave.approvals?.length > 0 && (
-                      <div style={{ marginTop: '12px' }}>
-                        <div style={{ fontSize: '13px', color: '#6b7280', marginBottom: '8px' }}>審核記錄：</div>
+                      <div className="my-leave-card__approvals">
+                        <div className="my-leave-card__detail-label">審核記錄：</div>
                         {leave.approvals.map(approval => (
-                          <div key={approval.id} style={{
-                            display: 'flex', gap: '8px', alignItems: 'flex-start',
-                            marginBottom: '6px', fontSize: '13px'
-                          }}>
-                            <span style={{
-                              backgroundColor: approval.action === 'approved' ? '#D1FAE5' : '#FEE2E2',
-                              color: approval.action === 'approved' ? '#10B981' : '#EF4444',
-                              padding: '2px 8px', borderRadius: '4px', flexShrink: 0
-                            }}>
+                          <div key={approval.id} className="my-leave-card__approval-row">
+                            <Chip tone={approval.action === 'approved' ? 'success' : 'error'}>
                               {approval.action === 'approved' ? '核准' : '拒絕'}
-                            </span>
-                            <span style={{ color: '#374151' }}>{approval.approver?.full_name}</span>
-                            {approval.comment && (
-                              <span style={{ color: '#6b7280' }}>：{approval.comment}</span>
-                            )}
+                            </Chip>
+                            <span>{approval.approver?.full_name}</span>
+                            {approval.comment && <span className="my-leave-card__detail-label">：{approval.comment}</span>}
                           </div>
                         ))}
                       </div>
                     )}
                   </div>
                 )}
-              </div>
+              </Card>
             )
           })}
         </div>
+      )}
+
+      {withdrawTarget && (
+        <ConfirmDialog
+          title="收回假單"
+          description="確定要收回這張假單嗎？收回後需要重新送出。"
+          confirmLabel="收回"
+          danger
+          loading={withdrawing}
+          onConfirm={confirmWithdraw}
+          onCancel={() => setWithdrawTarget(null)}
+        />
       )}
     </div>
   )

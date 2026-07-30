@@ -1,0 +1,132 @@
+.calendar-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-200);
+  flex-wrap: wrap;
+  gap: var(--space-100);
+}
+
+.calendar-toolbar__nav {
+  display: flex;
+  gap: var(--space-100);
+  align-items: center;
+}
+
+.calendar-toolbar__label {
+  font: 600 var(--type-title-medium-size)/var(--type-title-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
+.calendar-toolbar__views {
+  display: flex;
+  gap: var(--space-100);
+}
+
+.calendar-legend {
+  margin-bottom: var(--space-150);
+  display: flex;
+  gap: var(--space-200);
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.calendar-legend__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-050);
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+
+.calendar-legend__swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  display: inline-block;
+}
+.calendar-legend__swatch--week {
+  background: var(--sys-color-primary-container);
+  border: 1px solid var(--sys-color-primary);
+}
+.calendar-legend__swatch--allday {
+  background: var(--sys-color-primary);
+}
+.calendar-legend__swatch--partial {
+  background: var(--sys-color-primary);
+  height: 4px;
+  align-self: center;
+}
+
+.calendar-detail {
+  margin-top: var(--space-200);
+  padding: var(--space-200);
+  background: var(--sys-color-surface-container);
+  border-radius: var(--shape-corner-small);
+  border: 1px solid var(--sys-color-outline-variant);
+}
+
+.calendar-detail__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-100);
+}
+
+.calendar-detail__name {
+  font: 600 var(--type-body-large-size)/var(--type-body-large-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
+.calendar-detail__close {
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--sys-color-on-surface-variant);
+  font-size: 18px;
+}
+
+.calendar-detail__body {
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  display: grid;
+  gap: var(--space-050);
+}
+
+/* ---- react-big-calendar dark-mode compatibility ----
+   The library ships its own light-mode stylesheet; we only override the
+   structural colors it exposes via class names so it doesn't look broken
+   in dark mode. A pixel-perfect custom calendar grid per the Phase 2 B6
+   wireframe is a separate, larger follow-up. */
+.calendar-card .rbc-calendar {
+  color: var(--sys-color-on-surface);
+}
+.calendar-card .rbc-off-range-bg {
+  background: var(--sys-color-surface-container);
+}
+.calendar-card .rbc-today {
+  background: var(--sys-color-primary-container);
+}
+.calendar-card .rbc-header,
+.calendar-card .rbc-month-row + .rbc-month-row,
+.calendar-card .rbc-day-bg + .rbc-day-bg,
+.calendar-card .rbc-month-view,
+.calendar-card .rbc-header + .rbc-header,
+.calendar-card .rbc-time-header-content,
+.calendar-card .rbc-time-content,
+.calendar-card .rbc-time-content > * + * > *,
+.calendar-card .rbc-timeslot-group,
+.calendar-card .rbc-agenda-view table.rbc-agenda-table {
+  border-color: var(--sys-color-outline-variant);
+}
+.calendar-card .rbc-off-range {
+  color: var(--sys-color-on-surface-variant);
+  opacity: var(--state-disabled-content);
+}
+.calendar-card .rbc-show-more {
+  background: transparent;
+  color: var(--sys-color-primary);
+}
+.calendar-card .calendar-day--this-week {
+  background: color-mix(in srgb, var(--sys-color-primary) 8%, transparent);
+}

@@ -1,5 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { Button, Card, TextField } from '../components/ui'
+import './Login.css'
 
 function Login() {
   const [email, setEmail] = useState('')
@@ -22,98 +24,46 @@ function Login() {
   }
 
   return (
-    <div style={{
-      minHeight: '100vh', backgroundColor: '#f5f5f5',
-      display: 'flex', alignItems: 'center', justifyContent: 'center'
-    }}>
-      <div style={{
-        backgroundColor: 'white', padding: '40px', borderRadius: '12px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px'
-      }}>
-        <h1 style={{ textAlign: 'center', marginBottom: '8px', color: '#4F46E5', fontSize: '24px' }}>
-          請假系統
-        </h1>
-        <p style={{ textAlign: 'center', color: '#666', marginBottom: '32px', fontSize: '14px' }}>
-          請登入您的帳號
-        </p>
+    <div className="login-page">
+      <Card className="login-card">
+        <h1 className="login-card__title">請假系統</h1>
+        <p className="login-card__subtitle">請登入您的帳號</p>
 
-        {error && (
-          <div style={{
-            backgroundColor: '#FEE2E2', color: '#DC2626',
-            padding: '12px', borderRadius: '8px',
-            marginBottom: '16px', fontSize: '14px'
-          }}>
-            {error}
-          </div>
-        )}
+        {error && <div className="login-card__error" role="alert">{error}</div>}
 
         <form onSubmit={handleLogin}>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500' }}>
-              電子郵件
-            </label>
-            <input
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
+          <TextField
+            label="電子郵件"
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            required
+            placeholder="請輸入電子郵件"
+          />
+
+          <div className="login-card__password-field">
+            <TextField
+              label="密碼"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={e => setPassword(e.target.value)}
               required
-              style={{
-                width: '100%', padding: '10px 12px',
-                border: '1px solid #ddd', borderRadius: '8px',
-                fontSize: '14px', boxSizing: 'border-box'
-              }}
-              placeholder="請輸入電子郵件"
+              placeholder="請輸入密碼"
             />
+            <button
+              type="button"
+              className="login-card__toggle-password"
+              onClick={() => setShowPassword(!showPassword)}
+            >
+              {showPassword ? '隱藏' : '顯示'}
+            </button>
           </div>
 
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500' }}>
-              密碼
-            </label>
-            <div style={{ position: 'relative' }}>
-              <input
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
-                required
-                style={{
-                  width: '100%', padding: '10px 44px 10px 12px',
-                  border: '1px solid #ddd', borderRadius: '8px',
-                  fontSize: '14px', boxSizing: 'border-box'
-                }}
-                placeholder="請輸入密碼"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword(!showPassword)}
-                style={{
-                  position: 'absolute', right: '12px', top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none', border: 'none',
-                  cursor: 'pointer', color: '#9ca3af',
-                  fontSize: '13px', padding: '0'
-                }}
-              >
-                {showPassword ? '隱藏' : '顯示'}
-              </button>
-            </div>
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: '100%', padding: '12px',
-              backgroundColor: loading ? '#a5b4fc' : '#4F46E5',
-              color: 'white', border: 'none', borderRadius: '8px',
-              fontSize: '16px', fontWeight: '600',
-              cursor: loading ? 'not-allowed' : 'pointer'
-            }}
-          >
+          <Button type="submit" block loading={loading} style={{ marginTop: 'var(--space-100)' }}>
             {loading ? '登入中...' : '登入'}
-          </button>
+          </Button>
         </form>
-      </div>
+      </Card>
     </div>
   )
 }

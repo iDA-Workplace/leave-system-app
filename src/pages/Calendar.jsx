@@ -3,55 +3,36 @@ import { Calendar, momentLocalizer, Navigate } from 'react-big-calendar'
 import moment from 'moment'
 import 'react-big-calendar/lib/css/react-big-calendar.css'
 import { supabase } from '../lib/supabase'
+import { Button, Card, PageHeader, Skeleton } from '../components/ui'
+import './Calendar.css'
 
 moment.locale('zh-tw')
 const localizer = momentLocalizer(moment)
 
 function CustomToolbar({ date, view, onNavigate, onView }) {
   return (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '8px' }}>
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-        <button onClick={() => onNavigate(Navigate.TODAY)} style={toolbarBtn}>今天</button>
-        <button onClick={() => onNavigate(Navigate.PREVIOUS)} style={toolbarBtn}>
+    <div className="calendar-toolbar">
+      <div className="calendar-toolbar__nav">
+        <Button variant="tonal" size="sm" onClick={() => onNavigate(Navigate.TODAY)}>今天</Button>
+        <Button variant="tonal" size="sm" onClick={() => onNavigate(Navigate.PREVIOUS)}>
           {view === 'month' ? '上個月' : '上一週'}
-        </button>
-        <button onClick={() => onNavigate(Navigate.NEXT)} style={toolbarBtn}>
+        </Button>
+        <Button variant="tonal" size="sm" onClick={() => onNavigate(Navigate.NEXT)}>
           {view === 'month' ? '下個月' : '下一週'}
-        </button>
-        <span style={{ fontWeight: '600', color: '#1f2937', fontSize: '16px' }}>
+        </Button>
+        <span className="calendar-toolbar__label">
           {view === 'month'
             ? moment(date).format('YYYY 年 MM 月')
             : `${moment(date).startOf('isoWeek').format('MM/DD')} ～ ${moment(date).endOf('isoWeek').format('MM/DD')}`
           }
         </span>
       </div>
-      <div style={{ display: 'flex', gap: '8px' }}>
-        <button
-          onClick={() => onView('month')}
-          style={{ ...toolbarBtn, backgroundColor: view === 'month' ? '#4F46E5' : '#f3f4f6', color: view === 'month' ? 'white' : '#374151' }}
-        >
-          月
-        </button>
-        <button
-          onClick={() => onView('week')}
-          style={{ ...toolbarBtn, backgroundColor: view === 'week' ? '#4F46E5' : '#f3f4f6', color: view === 'week' ? 'white' : '#374151' }}
-        >
-          週
-        </button>
+      <div className="calendar-toolbar__views">
+        <Button variant={view === 'month' ? 'filled' : 'tonal'} size="sm" onClick={() => onView('month')}>月</Button>
+        <Button variant={view === 'week' ? 'filled' : 'tonal'} size="sm" onClick={() => onView('week')}>週</Button>
       </div>
     </div>
   )
-}
-
-const toolbarBtn = {
-  padding: '6px 14px',
-  backgroundColor: '#f3f4f6',
-  color: '#374151',
-  border: 'none',
-  borderRadius: '8px',
-  cursor: 'pointer',
-  fontSize: '13px',
-  fontWeight: '500'
 }
 
 function LeaveCalendar() {
@@ -64,7 +45,7 @@ function LeaveCalendar() {
   }, [])
 
   async function fetchLeaves() {
-    const { data, error } = await supabase
+    const { data } = await supabase
       .from('leave_requests')
       .select(`
         *,
@@ -112,7 +93,7 @@ function LeaveCalendar() {
       backgroundColor: event.color,
       borderRadius: '6px',
       border: 'none',
-      color: 'white',
+      color: '#fff',
       fontSize: '12px',
       padding: '2px 6px'
     }
@@ -123,7 +104,7 @@ function LeaveCalendar() {
     const weekEnd = moment().startOf('isoWeek').add(4, 'days').toDate()
     const isThisWeek = date >= weekStart && date <= weekEnd
     if (isThisWeek) {
-      return { style: { backgroundColor: '#EEF2FF' } }
+      return { className: 'calendar-day--this-week' }
     }
     return {}
   }
@@ -146,22 +127,22 @@ function LeaveCalendar() {
 
   return (
     <div>
-      <h2 style={{ marginBottom: '24px', color: '#1f2937', fontSize: '22px' }}>請假行事曆</h2>
+      <PageHeader title="請假行事曆" />
 
-      {loading ? <p style={{ color: '#6b7280' }}>載入中...</p> : (
-        <div style={{ backgroundColor: 'white', borderRadius: '12px', padding: '24px', boxShadow: '0 1px 4px rgba(0,0,0,0.06)' }}>
-          <div style={{ marginBottom: '12px', display: 'flex', gap: '16px', alignItems: 'center' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: '#EEF2FF', border: '1px solid #c7d2fe' }}></div>
-              <span style={{ fontSize: '13px', color: '#6b7280' }}>本週</span>
+      {loading ? <Skeleton height="600px" /> : (
+        <Card className="calendar-card">
+          <div className="calendar-legend">
+            <div className="calendar-legend__item">
+              <span className="calendar-legend__swatch calendar-legend__swatch--week" />
+              <span>本週</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <div style={{ width: '12px', height: '12px', borderRadius: '3px', backgroundColor: '#4F46E5' }}></div>
-              <span style={{ fontSize: '13px', color: '#6b7280' }}>整天假</span>
+            <div className="calendar-legend__item">
+              <span className="calendar-legend__swatch calendar-legend__swatch--allday" />
+              <span>整天假</span>
             </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <div style={{ width: '12px', height: '4px', borderRadius: '2px', backgroundColor: '#4F46E5' }}></div>
-              <span style={{ fontSize: '13px', color: '#6b7280' }}>半天/時段假</span>
+            <div className="calendar-legend__item">
+              <span className="calendar-legend__swatch calendar-legend__swatch--partial" />
+              <span>半天/時段假</span>
             </div>
           </div>
 
@@ -182,18 +163,12 @@ function LeaveCalendar() {
           />
 
           {selected && (
-            <div style={{
-              marginTop: '20px', padding: '16px 20px',
-              backgroundColor: '#f9fafb', borderRadius: '10px',
-              border: '1px solid #e5e7eb'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                <div style={{ fontWeight: '600', color: '#1f2937', fontSize: '16px' }}>
-                  {selected.requester?.full_name}
-                </div>
-                <button onClick={() => setSelected(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: '18px' }}>✕</button>
+            <div className="calendar-detail">
+              <div className="calendar-detail__header">
+                <div className="calendar-detail__name">{selected.requester?.full_name}</div>
+                <button className="calendar-detail__close" onClick={() => setSelected(null)} aria-label="關閉">✕</button>
               </div>
-              <div style={{ fontSize: '14px', color: '#6b7280', display: 'grid', gap: '4px' }}>
+              <div className="calendar-detail__body">
                 <div>假別：{selected.leave_type?.name}</div>
                 <div>日期：{selected.start_date} ～ {selected.end_date}</div>
                 {selected.start_time && selected.hours < 8 && (
@@ -204,7 +179,7 @@ function LeaveCalendar() {
               </div>
             </div>
           )}
-        </div>
+        </Card>
       )}
     </div>
   )
