@@ -3,8 +3,8 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useTheme } from '../context/ThemeContext'
 import {
-  DashboardIcon, AddNoteIcon, ListIcon, HistoryIcon, CalendarIcon,
-  ApprovalIcon, ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
+  DashboardIcon, AddNoteIcon, ListIcon, HistoryIcon,
+  ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
   BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon, SearchIcon,
 } from './icons'
 import './AppShell.css'
@@ -29,20 +29,14 @@ const ROLE_LABELS = {
   boss: '老闆',
 }
 
-function buildNavItems(userProfile, pendingCount) {
+function buildNavItems() {
   const items = [
-    { path: '/', label: '儀表板', icon: DashboardIcon, end: true },
-    { path: '/leave/new', label: '申請請假', icon: AddNoteIcon },
-    { path: '/leave/my', label: '我的假單', icon: ListIcon },
-    { path: '/past-leaves', label: '過往假期', icon: HistoryIcon },
+    { path: '/', label: '首頁', icon: DashboardIcon, end: true },
+    { path: '/leave/my', label: '假單管理', icon: ListIcon },
+    { path: '/past-leaves', label: '審核假單', icon: HistoryIcon },
   ]
 
-  if (APPROVER_ROLES.includes(userProfile?.role)) {
-    items.push({ path: '/approval', label: '簽核中心', icon: ApprovalIcon, badge: pendingCount })
-  }
-
   items.push({ path: '/review', label: '年度考核', icon: ReviewIcon })
-  items.push({ path: '/calendar', label: '團隊行事曆', icon: CalendarIcon })
   items.push({ path: '/admin', label: '管理後台', icon: AdminIcon })
   items.push({ path: '/settings', label: '個人設定', icon: SettingsIcon })
 
@@ -167,7 +161,7 @@ function Layout({ children, userProfile }) {
     })
   }
 
-  const navItems = buildNavItems(userProfile, pendingCount)
+  const navItems = buildNavItems()
   const bottomNavItems = navItems.slice(0, 3)
   const moreItems = navItems.slice(3)
 
@@ -259,7 +253,7 @@ function Layout({ children, userProfile }) {
           <button
             type="button"
             className="icon-button"
-            aria-label={`簽核中心，${pendingCount} 筆待處理`}
+            aria-label={`待審核假單，${pendingCount} 筆待處理`}
             onClick={() => navigate('/approval')}
           >
             <BellIcon size={20} />
