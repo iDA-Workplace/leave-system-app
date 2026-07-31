@@ -3,7 +3,7 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useTheme } from '../context/ThemeContext'
 import {
-  DashboardIcon, AddNoteIcon, ListIcon, HistoryIcon,
+  DashboardIcon, AddNoteIcon, ListIcon, ApprovalIcon,
   ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
   BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon, SearchIcon,
 } from './icons'
@@ -29,12 +29,15 @@ const ROLE_LABELS = {
   boss: '老闆',
 }
 
-function buildNavItems() {
+function buildNavItems(userProfile, pendingCount) {
   const items = [
     { path: '/', label: '首頁', icon: DashboardIcon, end: true },
     { path: '/leave/my', label: '假單管理', icon: ListIcon },
-    { path: '/past-leaves', label: '審核假單', icon: HistoryIcon },
   ]
+
+  if (APPROVER_ROLES.includes(userProfile?.role)) {
+    items.push({ path: '/approval', label: '審核假單', icon: ApprovalIcon, badge: pendingCount })
+  }
 
   items.push({ path: '/review', label: '年度考核', icon: ReviewIcon })
   items.push({ path: '/admin', label: '管理後台', icon: AdminIcon })
@@ -161,7 +164,7 @@ function Layout({ children, userProfile }) {
     })
   }
 
-  const navItems = buildNavItems()
+  const navItems = buildNavItems(userProfile, pendingCount)
   const bottomNavItems = navItems.slice(0, 3)
   const moreItems = navItems.slice(3)
 
