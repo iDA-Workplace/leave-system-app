@@ -9,7 +9,6 @@ import MyLeaves from './pages/MyLeaves'
 import ApprovalList from './pages/ApprovalList'
 import AdminPanel from './pages/AdminPanel'
 import Layout from './components/Layout'
-import LeaveCalendar from './pages/Calendar'
 import PastLeaves from './pages/PastLeaves'
 import Review from './pages/Review'
 import Settings from './pages/Settings'
@@ -58,7 +57,6 @@ function App() {
     <Layout userProfile={userProfile}>
       <Routes>
         <Route path="/" element={<Home userProfile={userProfile} />} />
-        <Route path="/calendar" element={<LeaveCalendar />} />
         <Route path="/past-leaves" element={<PastLeaves />} />
         <Route path="/review/*" element={<Review userProfile={userProfile} />} />
         <Route path="/leave/new" element={<LeaveForm userProfile={userProfile} />} />
