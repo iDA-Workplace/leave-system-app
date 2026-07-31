@@ -21,15 +21,10 @@
   font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
 }
 
-.dash-stats-grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: var(--space-200);
-}
-@media (min-width: 640px) {
-  .dash-stats-grid {
-    grid-template-columns: 1fr 1fr;
-  }
+.dash-welcome__role {
+  font-weight: 400;
+  color: var(--sys-color-on-surface-variant);
+  font-size: 0.7em;
 }
 
 .dash-stat-card__header {
@@ -208,4 +203,142 @@
 
 .dash-mini-calendar__date--today {
   border: 2px solid var(--sys-color-primary);
+  font-weight: 700;
+  color: var(--sys-color-primary);
+}
+
+.dash-mini-calendar__cell {
+  position: relative;
+}
+
+.dash-mini-calendar__dot {
+  position: absolute;
+  bottom: 2px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--sys-color-primary);
+}
+
+.dash-today-colleagues {
+  display: flex;
+  align-items: center;
+  gap: var(--space-100);
+  margin-top: var(--space-200);
+  padding-top: var(--space-200);
+  border-top: 1px solid var(--sys-color-outline-variant);
+}
+
+.dash-today-colleagues__label {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+
+.dash-today-colleagues__avatars {
+  display: flex;
+  gap: var(--space-050);
+}
+
+.dash-today-colleagues__avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.dash-today-colleagues__avatar--more {
+  background: var(--sys-color-surface-container-high) !important;
+  color: var(--sys-color-on-surface-variant);
+}
+
+/* ---- Annual review progress card ---- */
+.dash-review-card__status-badge {
+  background: var(--sys-color-primary);
+  color: var(--sys-color-on-primary);
+  font: 700 var(--type-label-small-size)/var(--type-label-small-line) var(--font-family-base);
+  padding: 3px var(--space-150);
+  border-radius: var(--shape-corner-full);
+}
+
+.dash-review-card__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-150);
+  margin-bottom: var(--space-150);
+}
+@media (min-width: 560px) {
+  .dash-review-card__grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.dash-review-card__tile {
+  background: var(--sys-color-surface-container);
+  border-radius: var(--shape-corner-small);
+  padding: var(--space-150);
+}
+
+.dash-review-card__tile-label {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  margin-bottom: var(--space-050);
+}
+
+.dash-review-card__tile-value {
+  font: 700 var(--type-title-medium-size)/var(--type-title-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+  margin-bottom: var(--space-100);
+}
+
+.dash-review-card__footer {
+  text-align: right;
+}
+
+/* ---- Flow chips (my requests table) ---- */
+.dash-status-cell {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-050);
+  align-items: flex-start;
+}
+
+.dash-flow-chips {
+  display: flex;
+  align-items: center;
+  gap: var(--space-025);
+  font: var(--type-label-small-size)/var(--type-label-small-line) var(--font-family-base);
+}
+
+.dash-flow-chips__item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-025);
+}
+
+.dash-flow-chips__arrow {
+  color: var(--sys-color-on-surface-variant);
+}
+
+.dash-flow-chips__name {
+  background: var(--sys-color-surface-container-high);
+  color: var(--sys-color-on-surface-variant);
+  padding: 1px var(--space-100);
+  border-radius: var(--shape-corner-full);
+}
+
+.dash-withdraw-link {
+  border: none;
+  background: none;
+  color: var(--sys-color-primary);
+  font: 500 var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  cursor: pointer;
+  padding: 0;
+  text-decoration: underline;
 }

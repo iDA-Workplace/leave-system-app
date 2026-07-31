@@ -7,9 +7,27 @@ import './Home.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'admin', 'boss']
 const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
+const STATUS_MAP = {
+  pending: { label: '審核中', tone: 'warning' },
+  approved: { label: '已核准', tone: 'success' },
+  rejected: { label: '已拒絕', tone: 'error' },
+  returned: { label: '已退回', tone: 'neutral' },
+  withdrawn: { label: '已收回', tone: 'info' },
+}
+const AVATAR_PALETTE = ['var(--sys-color-primary)', 'var(--sys-color-tertiary)', 'var(--sys-color-secondary)', 'var(--sys-color-success)']
 
 function toISODate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+function initials(name) {
+  return name ? name.trim().charAt(0).toUpperCase() : '?'
+}
+
+function avatarColor(id) {
+  let hash = 0
+  for (const ch of String(id || '')) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0
+  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length]
 }
 
 function StatCard({ icon, title, value, valueTone, unit, caption, progress }) {
@@ -31,6 +49,20 @@ function StatCard({ icon, title, value, valueTone, unit, caption, progress }) {
   )
 }
 
+function FlowChips({ steps }) {
+  if (!steps || steps.length === 0) return null
+  return (
+    <div className="dash-flow-chips">
+      {steps.map((s, i) => (
+        <span key={s.step_order} className="dash-flow-chips__item">
+          {i > 0 && <span className="dash-flow-chips__arrow">→</span>}
+          <span className="dash-flow-chips__name">{s.approver?.full_name}</span>
+        </span>
+      ))}
+    </div>
+  )
+}
+
 function Home({ userProfile }) {
   const isApprover = APPROVER_ROLES.includes(userProfile?.role)
   const { showToast } = useToast()
@@ -38,11 +70,15 @@ function Home({ userProfile }) {
   const [annualLeave, setAnnualLeave] = useState(null)
   const [statsLoading, setStatsLoading] = useState(true)
 
-  const [myPendingCount, setMyPendingCount] = useState(0)
+  const [reviewParticipant, setReviewParticipant] = useState(null)
+  const [reviewLoading, setReviewLoading] = useState(true)
+
   const [approvalQueue, setApprovalQueue] = useState([])
-  const [approvalLoading, setApprovalLoading] = useState(true)
+  const [myRequests, setMyRequests] = useState([])
+  const [queueLoading, setQueueLoading] = useState(true)
   const [rejectTarget, setRejectTarget] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
+  const [withdrawTarget, setWithdrawTarget] = useState(null)
   const [actingId, setActingId] = useState(null)
 
   const [calendarMonth, setCalendarMonth] = useState(() => {
@@ -50,14 +86,17 @@ function Home({ userProfile }) {
     return new Date(now.getFullYear(), now.getMonth(), 1)
   })
   const [monthLeaveDates, setMonthLeaveDates] = useState(new Set())
+  const [todayColleagues, setTodayColleagues] = useState([])
   const [calendarLoading, setCalendarLoading] = useState(true)
 
   useEffect(() => { fetchEntitlement() }, [userProfile])
+  useEffect(() => { fetchReviewParticipant() }, [userProfile])
   useEffect(() => {
     if (isApprover) fetchApprovalQueue()
-    else fetchMyPendingCount()
+    else fetchMyRequests()
   }, [userProfile])
   useEffect(() => { fetchMonthLeaveDates() }, [calendarMonth])
+  useEffect(() => { fetchTodayColleagues() }, [userProfile])
 
   async function fetchEntitlement() {
     if (!userProfile?.id) return
@@ -76,17 +115,20 @@ function Home({ userProfile }) {
     setStatsLoading(false)
   }
 
-  async function fetchMyPendingCount() {
-    const { count } = await supabase
-      .from('leave_requests')
-      .select('id', { count: 'exact', head: true })
-      .eq('requester_id', userProfile.id)
-      .eq('status', 'pending')
-    setMyPendingCount(count || 0)
+  async function fetchReviewParticipant() {
+    if (!userProfile?.id) return
+    const { data } = await supabase
+      .from('annual_review_participants')
+      .select('*, review:annual_reviews(*)')
+      .eq('user_id', userProfile.id)
+      .order('id', { ascending: false })
+    const active = (data || []).find(p => p.review?.status === 'active')
+    setReviewParticipant(active || null)
+    setReviewLoading(false)
   }
 
   async function fetchApprovalQueue() {
-    setApprovalLoading(true)
+    setQueueLoading(true)
     const today = new Date().toISOString().split('T')[0]
 
     const { data: flowSteps } = await supabase
@@ -113,7 +155,7 @@ function Home({ userProfile }) {
     }
 
     const allSteps = [...(flowSteps || []), ...delegateSteps]
-    if (allSteps.length === 0) { setApprovalQueue([]); setApprovalLoading(false); return }
+    if (allSteps.length === 0) { setApprovalQueue([]); setQueueLoading(false); return }
 
     const { data } = await supabase
       .from('leave_requests')
@@ -131,7 +173,23 @@ function Home({ userProfile }) {
     )
 
     setApprovalQueue(filtered)
-    setApprovalLoading(false)
+    setQueueLoading(false)
+  }
+
+  async function fetchMyRequests() {
+    setQueueLoading(true)
+    const { data } = await supabase
+      .from('leave_requests')
+      .select(`
+        *,
+        leave_type:leave_types(name, color),
+        flow:approval_flows(steps:approval_flow_steps(step_order, approver:users!approval_flow_steps_approver_id_fkey(full_name)))
+      `)
+      .eq('requester_id', userProfile.id)
+      .order('created_at', { ascending: false })
+      .limit(5)
+    setMyRequests(data || [])
+    setQueueLoading(false)
   }
 
   async function fetchMonthLeaveDates() {
@@ -159,6 +217,17 @@ function Home({ userProfile }) {
     }
     setMonthLeaveDates(dates)
     setCalendarLoading(false)
+  }
+
+  async function fetchTodayColleagues() {
+    const today = toISODate(new Date())
+    const { data } = await supabase
+      .from('leave_requests')
+      .select('requester:users!leave_requests_requester_id_fkey(id, full_name)')
+      .eq('status', 'approved')
+      .lte('start_date', today)
+      .gte('end_date', today)
+    setTodayColleagues((data || []).map(d => d.requester).filter(Boolean))
   }
 
   async function handleApprove(request) {
@@ -205,6 +274,13 @@ function Home({ userProfile }) {
     fetchApprovalQueue()
   }
 
+  async function handleConfirmWithdraw() {
+    await supabase.from('leave_requests').update({ status: 'withdrawn' }).eq('id', withdrawTarget.id)
+    showToast('假單已收回')
+    setWithdrawTarget(null)
+    fetchMyRequests()
+  }
+
   const now = new Date()
   const todayLabel = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${WEEKDAY_LABELS[now.getDay()]}`
   const pendingSentence = isApprover && approvalQueue.length > 0
@@ -225,56 +301,68 @@ function Home({ userProfile }) {
     }
   }
 
+  const reviewDeadline = reviewParticipant?.review
+    ? (reviewParticipant.review.self_assessment_deadline || reviewParticipant.review.evaluation_deadline || reviewParticipant.review.end_date)
+    : null
+
   return (
     <div className="dash">
       <div className="dash-welcome">
-        <h1 className="dash-welcome__title">歡迎回來，{userProfile?.full_name?.split(' ')[0] || userProfile?.full_name}</h1>
+        <h1 className="dash-welcome__title">
+          歡迎回來，{userProfile?.full_name}
+          {!isApprover && userProfile?.role === 'employee' && <span className="dash-welcome__role"> (一般員工)</span>}
+        </h1>
         <p className="dash-welcome__subtitle">今日是 {todayLabel}。{pendingSentence}</p>
       </div>
 
-      <div className="dash-stats-grid">
-        {statsLoading ? <Skeleton height="150px" /> : (
-          <StatCard
-            icon="📊"
-            title="特休假餘額"
-            value={annualLeave?.remaining ?? '—'}
-            valueTone={annualLeave?.remaining < 0 ? 'negative' : undefined}
-            unit={annualLeave ? `天 / 總計 ${annualLeave.entitled} 天` : ''}
-            caption={annualLeave ? `已使用 ${annualLeave.used} 天` : '尚無資料'}
-            progress={annualLeave?.entitled ? (annualLeave.used / annualLeave.entitled) * 100 : 0}
-          />
-        )}
+      {statsLoading ? <Skeleton height="150px" /> : (
+        <StatCard
+          icon="📊"
+          title="特休假餘額 (Annual)"
+          value={annualLeave?.remaining ?? '—'}
+          valueTone={annualLeave?.remaining < 0 ? 'negative' : undefined}
+          unit={annualLeave ? `天 / 總計 ${annualLeave.entitled} 天` : ''}
+          caption={annualLeave ? `已使用 ${annualLeave.used} 天` : '尚無資料'}
+          progress={annualLeave?.entitled ? (annualLeave.used / annualLeave.entitled) * 100 : 0}
+        />
+      )}
 
-        {isApprover ? (
-          approvalLoading ? <Skeleton height="150px" /> : (
-            <StatCard
-              icon="📋"
-              title="審核中"
-              value={approvalQueue.length}
-              unit="件申請"
-              caption="需要您的審核"
-              progress={Math.min(100, approvalQueue.length * 25)}
-            />
-          )
-        ) : (
-          <StatCard
-            icon="📋"
-            title="我的申請"
-            value={myPendingCount}
-            unit="件審核中"
-            caption="等待審核結果"
-            progress={Math.min(100, myPendingCount * 25)}
-          />
-        )}
-      </div>
+      {reviewLoading ? <Skeleton height="180px" /> : reviewParticipant && (
+        <Card className="dash-review-card">
+          <div className="dash-card-header">
+            <span className="dash-card-header__title">📈 {reviewParticipant.review.title}</span>
+            <span className="dash-review-card__status-badge">
+              {reviewParticipant.review.status === 'active' ? '進行中' : '已結束'}
+            </span>
+          </div>
+          <div className="dash-review-card__grid">
+            <div className="dash-review-card__tile">
+              <div className="dash-review-card__tile-label">📝 自評進度</div>
+              <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
+              <div className="dash-stat-card__progress-track">
+                <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
+              </div>
+            </div>
+            {reviewDeadline && (
+              <div className="dash-review-card__tile">
+                <div className="dash-review-card__tile-label">📅 考核提交截止日</div>
+                <div className="dash-review-card__tile-value">{reviewDeadline}</div>
+              </div>
+            )}
+          </div>
+          <div className="dash-review-card__footer">
+            <Link to="/review" className="dash-card-header__link">查看詳細考核表 →</Link>
+          </div>
+        </Card>
+      )}
 
-      {isApprover && (
+      {isApprover ? (
         <Card className="dash-approval-card">
           <div className="dash-card-header">
             <span className="dash-card-header__title">📋 待審核假單</span>
             <Link to="/approval" className="dash-card-header__link">查看全部</Link>
           </div>
-          {approvalLoading ? (
+          {queueLoading ? (
             <Skeleton height="120px" />
           ) : approvalQueue.length === 0 ? (
             <p className="dash-empty-hint">目前沒有待審核的假單 🎉</p>
@@ -289,7 +377,7 @@ function Home({ userProfile }) {
                     <tr key={req.id}>
                       <td>
                         <div className="dash-approval-table__name">
-                          <span className="dash-approval-table__avatar">{req.requester?.full_name?.charAt(0)}</span>
+                          <span className="dash-approval-table__avatar" style={{ background: avatarColor(req.requester_id) }}>{initials(req.requester?.full_name)}</span>
                           {req.requester?.full_name}
                         </div>
                       </td>
@@ -308,6 +396,49 @@ function Home({ userProfile }) {
             </div>
           )}
         </Card>
+      ) : (
+        <Card className="dash-approval-card">
+          <div className="dash-card-header">
+            <span className="dash-card-header__title">🕐 我的假單申請進度</span>
+            <Link to="/leave/my" className="dash-card-header__link">查看歷史紀錄</Link>
+          </div>
+          {queueLoading ? (
+            <Skeleton height="120px" />
+          ) : myRequests.length === 0 ? (
+            <p className="dash-empty-hint">尚無請假記錄</p>
+          ) : (
+            <div className="ui-table-wrap">
+              <table className="ui-table dash-approval-table">
+                <thead>
+                  <tr><th>假別</th><th>請假日期</th><th>狀態</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                  {myRequests.map(req => {
+                    const status = STATUS_MAP[req.status] || STATUS_MAP.pending
+                    const days = countDaysLabel(req.start_date, req.end_date)
+                    return (
+                      <tr key={req.id}>
+                        <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                        <td>{req.start_date}{days}</td>
+                        <td>
+                          <div className="dash-status-cell">
+                            <Chip tone={status.tone}>{status.label}</Chip>
+                            <FlowChips steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)} />
+                          </div>
+                        </td>
+                        <td>
+                          {req.status === 'pending' ? (
+                            <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
+                          ) : '-'}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
       )}
 
       <Card className="dash-calendar-card">
@@ -320,18 +451,36 @@ function Home({ userProfile }) {
           </div>
         </div>
         {calendarLoading ? <Skeleton height="260px" /> : (
-          <div className="dash-mini-calendar">
-            {WEEKDAY_LABELS.map(w => <div key={w} className="dash-mini-calendar__weekday">{w}</div>)}
-            {monthGrid.map((cell, i) => (
-              <div key={i} className="dash-mini-calendar__cell">
-                {cell && (
-                  <span className={`dash-mini-calendar__date${cell.isToday ? ' dash-mini-calendar__date--today' : ''}${cell.hasLeave ? ' dash-mini-calendar__date--leave' : ''}`}>
-                    {cell.day}
-                  </span>
-                )}
+          <>
+            <div className="dash-mini-calendar">
+              {WEEKDAY_LABELS.map(w => <div key={w} className="dash-mini-calendar__weekday">{w}</div>)}
+              {monthGrid.map((cell, i) => (
+                <div key={i} className="dash-mini-calendar__cell">
+                  {cell && (
+                    <span className={`dash-mini-calendar__date${cell.isToday ? ' dash-mini-calendar__date--today' : ''}${cell.hasLeave ? ' dash-mini-calendar__date--leave' : ''}`}>
+                      {cell.day}
+                      {cell.hasLeave && <span className="dash-mini-calendar__dot" />}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+            {todayColleagues.length > 0 && (
+              <div className="dash-today-colleagues">
+                <span className="dash-today-colleagues__label">今日休假同仁：</span>
+                <div className="dash-today-colleagues__avatars">
+                  {todayColleagues.slice(0, 2).map(c => (
+                    <span key={c.id} className="dash-today-colleagues__avatar" style={{ background: avatarColor(c.id) }} title={c.full_name}>
+                      {initials(c.full_name)}
+                    </span>
+                  ))}
+                  {todayColleagues.length > 2 && (
+                    <span className="dash-today-colleagues__avatar dash-today-colleagues__avatar--more">+{todayColleagues.length - 2}</span>
+                  )}
+                </div>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </Card>
 
@@ -355,8 +504,26 @@ function Home({ userProfile }) {
           onCancel={() => { setRejectTarget(null); setRejectReason('') }}
         />
       )}
+
+      {withdrawTarget && (
+        <ConfirmDialog
+          title="收回假單"
+          description="確定要收回這張假單嗎？收回後需要重新送出。"
+          confirmLabel="收回"
+          danger
+          onConfirm={handleConfirmWithdraw}
+          onCancel={() => setWithdrawTarget(null)}
+        />
+      )}
     </div>
   )
+}
+
+function countDaysLabel(startDate, endDate) {
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  const days = Math.round((end - start) / 86400000) + 1
+  return ` (${days}天)`
 }
 
 export default Home
