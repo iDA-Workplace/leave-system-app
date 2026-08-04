@@ -37,6 +37,22 @@
   gap: var(--space-200);
 }
 
+.settings-password-field {
+  position: relative;
+}
+
+.settings-password-toggle {
+  position: absolute;
+  right: 0;
+  top: 0;
+  border: none;
+  background: none;
+  color: var(--sys-color-primary);
+  font: 500 var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  cursor: pointer;
+  padding: var(--space-025) 0;
+}
+
 .settings-message {
   padding: var(--space-150);
   border-radius: var(--shape-corner-small);

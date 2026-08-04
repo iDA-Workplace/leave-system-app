@@ -2,8 +2,9 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { useTheme } from '../context/ThemeContext'
+import { useLanguage } from '../context/LanguageContext'
 import {
-  DashboardIcon, AddNoteIcon, ListIcon, ApprovalIcon,
+  DashboardIcon, AddNoteIcon, ListIcon,
   ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
   BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon, SearchIcon,
 } from './icons'
@@ -13,35 +14,32 @@ const ROLE_BADGE_LABELS = {
   employee: 'EMPLOYEE',
   deputy_supervisor: 'DEPUTY',
   supervisor: 'SUPERVISOR',
-  admin: 'ADMIN',
   boss: 'BOSS',
 }
 
 const RAIL_EXPANDED_KEY = 'leave-system-rail-expanded'
 
-const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'admin', 'boss']
+const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 
 const ROLE_LABELS = {
   employee: '員工',
   deputy_supervisor: '副主管',
   supervisor: '主管',
-  admin: '管理員',
   boss: '老闆',
 }
 
-function buildNavItems(userProfile, pendingCount) {
+function buildNavItems(userProfile, t) {
   const items = [
-    { path: '/', label: '首頁', icon: DashboardIcon, end: true },
-    { path: '/leave/my', label: '假單管理', icon: ListIcon },
+    { path: '/', label: t('nav_home'), icon: DashboardIcon, end: true },
+    { path: '/leave/my', label: t('nav_leave_management'), icon: ListIcon },
+    { path: '/review', label: t('nav_review'), icon: ReviewIcon },
   ]
 
-  if (APPROVER_ROLES.includes(userProfile?.role)) {
-    items.push({ path: '/approval', label: '審核假單', icon: ApprovalIcon, badge: pendingCount })
+  if (userProfile?.is_admin) {
+    items.push({ path: '/admin', label: t('nav_admin'), icon: AdminIcon })
   }
 
-  items.push({ path: '/review', label: '年度考核', icon: ReviewIcon })
-  items.push({ path: '/admin', label: '管理後台', icon: AdminIcon })
-  items.push({ path: '/settings', label: '個人設定', icon: SettingsIcon })
+  items.push({ path: '/settings', label: t('nav_settings'), icon: SettingsIcon })
 
   return items
 }
@@ -60,6 +58,7 @@ function Layout({ children, userProfile }) {
   const navigate = useNavigate()
   const location = useLocation()
   const { mode, setMode, resolvedTheme } = useTheme()
+  const { t } = useLanguage()
   const [pendingCount, setPendingCount] = useState(0)
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_EXPANDED_KEY) === 'true'
@@ -164,7 +163,7 @@ function Layout({ children, userProfile }) {
     })
   }
 
-  const navItems = buildNavItems(userProfile, pendingCount)
+  const navItems = buildNavItems(userProfile, t)
   const bottomNavItems = navItems.slice(0, 3)
   const moreItems = navItems.slice(3)
 
@@ -203,11 +202,11 @@ function Layout({ children, userProfile }) {
           <input
             type="search"
             className="app-bar__search-input"
-            placeholder="搜尋功能..."
+            placeholder={t('app_bar_search_placeholder')}
             value={searchQuery}
             onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true) }}
             onFocus={() => setSearchOpen(true)}
-            aria-label="搜尋功能"
+            aria-label={t('app_bar_search_placeholder')}
           />
           {searchOpen && searchMatches.length > 0 && (
             <ul className="app-bar__search-results" role="listbox">
@@ -257,7 +256,7 @@ function Layout({ children, userProfile }) {
             type="button"
             className="icon-button"
             aria-label={`待審核假單，${pendingCount} 筆待處理`}
-            onClick={() => navigate('/approval')}
+            onClick={() => navigate('/leave/my')}
           >
             <BellIcon size={20} />
             {pendingCount > 0 && <span className="icon-button__badge">{pendingCount}</span>}
@@ -273,7 +272,9 @@ function Layout({ children, userProfile }) {
               onClick={() => setAvatarMenuOpen(o => !o)}
             >
               {ROLE_BADGE_LABELS[userProfile?.role] && (
-                <span className="app-bar__role-badge">{ROLE_BADGE_LABELS[userProfile.role]}</span>
+                <span className="app-bar__role-badge">
+                  {ROLE_BADGE_LABELS[userProfile.role]}{userProfile?.is_admin ? ' · ADMIN' : ''}
+                </span>
               )}
               <span className="avatar">{initials(userProfile?.full_name)}</span>
               <span className="app-bar__name">{userProfile?.full_name}</span>
@@ -282,11 +283,13 @@ function Layout({ children, userProfile }) {
               <div className="avatar-menu__panel" role="menu">
                 <div className="avatar-menu__identity">
                   <div className="avatar-menu__name">{userProfile?.full_name}</div>
-                  <div className="avatar-menu__role">{ROLE_LABELS[userProfile?.role] || userProfile?.role}</div>
+                  <div className="avatar-menu__role">
+                    {ROLE_LABELS[userProfile?.role] || userProfile?.role}{userProfile?.is_admin ? '｜管理員' : ''}
+                  </div>
                 </div>
                 <button type="button" className="avatar-menu__item avatar-menu__item--danger" onClick={handleLogout}>
                   <LogoutIcon size={18} />
-                  登出
+                  {t('app_bar_logout')}
                 </button>
               </div>
             )}
@@ -398,7 +401,7 @@ function Layout({ children, userProfile }) {
               <li>
                 <button type="button" className="more-sheet__item" onClick={handleLogout}>
                   <LogoutIcon size={20} />
-                  登出
+                  {t('app_bar_logout')}
                 </button>
               </li>
             </ul>

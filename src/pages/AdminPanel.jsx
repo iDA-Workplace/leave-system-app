@@ -7,8 +7,8 @@ import { Button, Card, Chip, ConfirmDialog, PageHeader, Select, Skeleton, Tabs, 
 import { useToast } from '../context/ToastContext'
 import './AdminPanel.css'
 
-const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor: '主管', admin: '管理員', boss: '老闆' }
-const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor: 'warning', admin: 'info', boss: 'info' }
+const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor: '主管', boss: '老闆' }
+const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor: 'warning', boss: 'info' }
 
 // ===== 員工管理 =====
 function UserManagement({ isAdmin, userProfile }) {
@@ -17,7 +17,7 @@ function UserManagement({ isAdmin, userProfile }) {
   const [annualLeaveMap, setAnnualLeaveMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '' })
+  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
@@ -63,11 +63,16 @@ function UserManagement({ isAdmin, userProfile }) {
       hire_date: newUser.hire_date || null
     })
     if (error || data?.error) { showToast('新增失敗：' + (data?.error || error.message), { tone: 'error' }); setSaving(false); return }
-    if (newUser.default_flow_id && data?.user?.id) {
-      await supabase.from('users').update({ default_flow_id: newUser.default_flow_id }).eq('id', data.user.id)
+    if (data?.user?.id) {
+      await supabase.from('users').update({
+        default_flow_id: newUser.default_flow_id || null,
+        is_admin: newUser.is_admin,
+        department: newUser.department || null,
+        job_title: newUser.job_title || null
+      }).eq('id', data.user.id)
     }
     showToast('員工新增成功！預設密碼為 Welcome@123')
-    setNewUser({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '' })
+    setNewUser({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
     setShowAdd(false)
     setSaving(false)
     setTimeout(() => { fetchUsers(); fetchAnnualLeave() }, 1000)
@@ -85,7 +90,12 @@ function UserManagement({ isAdmin, userProfile }) {
       hire_date: editing.hire_date || null
     })
     if (error || data?.error) { showToast('更新失敗：' + (data?.error || error.message), { tone: 'error' }); setSaving(false); return }
-    await supabase.from('users').update({ default_flow_id: editing.default_flow_id || null }).eq('id', user.id)
+    await supabase.from('users').update({
+      default_flow_id: editing.default_flow_id || null,
+      is_admin: editing.is_admin,
+      department: editing.department || null,
+      job_title: editing.job_title || null
+    }).eq('id', user.id)
     setEditing(null)
     setSaving(false)
     showToast('已更新使用者')
@@ -115,10 +125,16 @@ function UserManagement({ isAdmin, userProfile }) {
               {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </Select>
             <TextField label="入職日期" type="date" value={newUser.hire_date} onChange={e => setNewUser(p => ({ ...p, hire_date: e.target.value }))} />
+            <TextField label="部門" value={newUser.department} onChange={e => setNewUser(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
+            <TextField label="職稱" value={newUser.job_title} onChange={e => setNewUser(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
           </div>
           <div className="admin-form-actions">
             <Button loading={saving} onClick={handleAddUser}>新增</Button>
             <Button variant="text" onClick={() => setShowAdd(false)}>取消</Button>
+            <label className="admin-checkbox-label">
+              <input type="checkbox" checked={newUser.is_admin} onChange={e => setNewUser(p => ({ ...p, is_admin: e.target.checked }))} />
+              同時為管理員（管理員可與其他角色重疊）
+            </label>
           </div>
         </Card>
       )}
@@ -142,6 +158,8 @@ function UserManagement({ isAdmin, userProfile }) {
                     </Select>
                     <TextField label="Slack User ID" value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} placeholder="U0123ABCD" />
                     <TextField label="入職日期" type="date" value={editing.hire_date || ''} onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))} />
+                    <TextField label="部門" value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
+                    <TextField label="職稱" value={editing.job_title || ''} onChange={e => setEditing(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
                   </div>
                   <div className="admin-form-actions">
                     <Button loading={saving} onClick={() => handleUpdateUser(user)}>儲存</Button>
@@ -149,6 +167,10 @@ function UserManagement({ isAdmin, userProfile }) {
                     <label className="admin-checkbox-label">
                       <input type="checkbox" checked={editing.is_active} onChange={e => setEditing(p => ({ ...p, is_active: e.target.checked }))} />
                       帳號啟用
+                    </label>
+                    <label className="admin-checkbox-label">
+                      <input type="checkbox" checked={!!editing.is_admin} onChange={e => setEditing(p => ({ ...p, is_admin: e.target.checked }))} />
+                      同時為管理員
                     </label>
                   </div>
                 </div>
@@ -158,15 +180,17 @@ function UserManagement({ isAdmin, userProfile }) {
                     <div className="admin-row__title">
                       {user.full_name}
                       <Chip tone={roleTone[user.role] || 'neutral'}>{roleMap[user.role]}</Chip>
+                      {user.is_admin && <Chip tone="info">管理員</Chip>}
                       {!user.is_active && <Chip tone="error">停用</Chip>}
                     </div>
                     <div className="admin-row__meta">
                       {user.email}{user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
+                      {(user.department || user.job_title) && ` ｜ ${[user.department, user.job_title].filter(Boolean).join(' / ')}`}
                     </div>
                     {user.default_flow?.name && (
                       <div className="admin-row__flow">審核流程：{user.default_flow.name}</div>
                     )}
-                    {(isAdmin || userProfile?.role === 'boss') && user.hire_date && (
+                    {isAdmin && user.hire_date && (
                       <div className="admin-row__service">
                         <span>入職：{user.hire_date}</span>
                         {annualLeaveMap[user.id] && (
@@ -587,20 +611,18 @@ function NotificationTargets({ isAdmin }) {
 function AdminPanel({ userProfile }) {
   const location = useLocation()
 
-  const isAdmin = userProfile?.role === 'admin' || userProfile?.role === 'boss'
+  const isAdmin = !!userProfile?.is_admin
   const isSupervisor = userProfile?.role === 'supervisor'
+
+  if (!isAdmin && !isSupervisor) return <Navigate to="/" replace />
 
   const tabs = []
 
   if (isAdmin) {
-    tabs.push({ key: 'users', path: '/admin', label: '員工管理' })
-    tabs.push({ key: 'flows', path: '/admin/flows', label: '審核流程' })
-    tabs.push({ key: 'notifications', path: '/admin/notifications', label: '通知對象' })
-  } else {
+    tabs.push({ key: 'users', path: '/admin', label: '員工帳號管理' })
     tabs.push({ key: 'flows', path: '/admin/flows', label: '審核流程' })
     tabs.push({ key: 'notifications', path: '/admin/notifications', label: '通知對象' })
   }
-
   if (isAdmin || isSupervisor) {
     tabs.push({ key: 'delegates', path: '/admin/delegates', label: '代理審核設定' })
   }
@@ -617,10 +639,10 @@ function AdminPanel({ userProfile }) {
         <Route index element={
           isAdmin
             ? <UserManagement isAdmin={isAdmin} userProfile={userProfile} />
-            : <Navigate to="flows" replace />
+            : <Navigate to="delegates" replace />
         } />
-        <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />
-        <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />
+        {isAdmin && <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />}
+        {isAdmin && <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
         {(isAdmin || isSupervisor) && (
           <Route path="delegates" element={<DelegateManagement userProfile={userProfile} isAdmin={isAdmin} isSupervisor={isSupervisor} />} />
@@ -628,6 +650,7 @@ function AdminPanel({ userProfile }) {
         {isAdmin && (
           <Route path="export" element={<ExportReport />} />
         )}
+        <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     </div>
   )

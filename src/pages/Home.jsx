@@ -3,9 +3,10 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, Skeleton, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
+import { useLanguage } from '../context/LanguageContext'
 import './Home.css'
 
-const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'admin', 'boss']
+const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
 const STATUS_MAP = {
   pending: { label: '審核中', tone: 'warning' },
@@ -49,16 +50,19 @@ function StatCard({ icon, title, value, valueTone, unit, caption, progress }) {
   )
 }
 
-function FlowChips({ steps }) {
+function FlowChips({ steps, currentStep, isApproved }) {
   if (!steps || steps.length === 0) return null
   return (
     <div className="dash-flow-chips">
-      {steps.map((s, i) => (
-        <span key={s.step_order} className="dash-flow-chips__item">
-          {i > 0 && <span className="dash-flow-chips__arrow">→</span>}
-          <span className="dash-flow-chips__name">{s.approver?.full_name}</span>
-        </span>
-      ))}
+      {steps.map((s, i) => {
+        const tone = isApproved || s.step_order < currentStep ? 'passed' : s.step_order === currentStep ? 'current' : 'upcoming'
+        return (
+          <span key={s.step_order} className="dash-flow-chips__item">
+            {i > 0 && <span className="dash-flow-chips__arrow">→</span>}
+            <span className={`dash-flow-chips__name dash-flow-chips__name--${tone}`}>{s.approver?.full_name}</span>
+          </span>
+        )
+      })}
     </div>
   )
 }
@@ -66,6 +70,7 @@ function FlowChips({ steps }) {
 function Home({ userProfile }) {
   const isApprover = APPROVER_ROLES.includes(userProfile?.role)
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   const [annualLeave, setAnnualLeave] = useState(null)
   const [statsLoading, setStatsLoading] = useState(true)
@@ -76,6 +81,7 @@ function Home({ userProfile }) {
   const [approvalQueue, setApprovalQueue] = useState([])
   const [myRequests, setMyRequests] = useState([])
   const [queueLoading, setQueueLoading] = useState(true)
+  const [myRequestsLoading, setMyRequestsLoading] = useState(true)
   const [rejectTarget, setRejectTarget] = useState(null)
   const [rejectReason, setRejectReason] = useState('')
   const [withdrawTarget, setWithdrawTarget] = useState(null)
@@ -92,8 +98,8 @@ function Home({ userProfile }) {
   useEffect(() => { fetchEntitlement() }, [userProfile])
   useEffect(() => { fetchReviewParticipant() }, [userProfile])
   useEffect(() => {
+    fetchMyRequests()
     if (isApprover) fetchApprovalQueue()
-    else fetchMyRequests()
   }, [userProfile])
   useEffect(() => { fetchMonthLeaveDates() }, [calendarMonth])
   useEffect(() => { fetchTodayColleagues() }, [userProfile])
@@ -177,7 +183,7 @@ function Home({ userProfile }) {
   }
 
   async function fetchMyRequests() {
-    setQueueLoading(true)
+    setMyRequestsLoading(true)
     const { data } = await supabase
       .from('leave_requests')
       .select(`
@@ -189,7 +195,7 @@ function Home({ userProfile }) {
       .order('created_at', { ascending: false })
       .limit(5)
     setMyRequests(data || [])
-    setQueueLoading(false)
+    setMyRequestsLoading(false)
   }
 
   async function fetchMonthLeaveDates() {
@@ -301,6 +307,8 @@ function Home({ userProfile }) {
     }
   }
 
+  const canSelfAssess = userProfile?.role !== 'boss'
+  const reviewActive = reviewParticipant?.review?.status === 'active'
   const reviewDeadline = reviewParticipant?.review
     ? (reviewParticipant.review.self_assessment_deadline || reviewParticipant.review.evaluation_deadline || reviewParticipant.review.end_date)
     : null
@@ -309,7 +317,7 @@ function Home({ userProfile }) {
     <div className="dash">
       <div className="dash-welcome">
         <h1 className="dash-welcome__title">
-          歡迎回來，{userProfile?.full_name}
+          {t('home_welcome')}，{userProfile?.full_name}
           {!isApprover && userProfile?.role === 'employee' && <span className="dash-welcome__role"> (一般員工)</span>}
         </h1>
         <p className="dash-welcome__subtitle">今日是 {todayLabel}。{pendingSentence}</p>
@@ -318,7 +326,7 @@ function Home({ userProfile }) {
       {statsLoading ? <Skeleton height="150px" /> : (
         <StatCard
           icon="📊"
-          title="特休假餘額 (Annual)"
+          title={t('home_annual_leave_balance') + ' (Annual)'}
           value={annualLeave?.remaining ?? '—'}
           valueTone={annualLeave?.remaining < 0 ? 'negative' : undefined}
           unit={annualLeave ? `天 / 總計 ${annualLeave.entitled} 天` : ''}
@@ -327,40 +335,96 @@ function Home({ userProfile }) {
         />
       )}
 
-      {reviewLoading ? <Skeleton height="180px" /> : reviewParticipant && (
+      {reviewLoading ? <Skeleton height="180px" /> : (
         <Card className="dash-review-card">
           <div className="dash-card-header">
-            <span className="dash-card-header__title">📈 {reviewParticipant.review.title}</span>
-            <span className="dash-review-card__status-badge">
-              {reviewParticipant.review.status === 'active' ? '進行中' : '已結束'}
-            </span>
+            <span className="dash-card-header__title">📈 {reviewActive ? reviewParticipant.review.title : t('home_review_reminder')}</span>
+            {reviewActive && <span className="dash-review-card__status-badge">進行中</span>}
           </div>
-          <div className="dash-review-card__grid">
-            <div className="dash-review-card__tile">
-              <div className="dash-review-card__tile-label">📝 自評進度</div>
-              <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
-              <div className="dash-stat-card__progress-track">
-                <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
+          {!reviewActive ? (
+            <p className="dash-empty-hint">{t('home_review_not_in_period')}</p>
+          ) : (
+            <>
+              <div className="dash-review-card__grid">
+                {canSelfAssess && (
+                  <div className="dash-review-card__tile">
+                    <div className="dash-review-card__tile-label">📝 {t('home_review_self_progress')}</div>
+                    <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
+                    <div className="dash-stat-card__progress-track">
+                      <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
+                    </div>
+                  </div>
+                )}
+                {reviewDeadline && (
+                  <div className="dash-review-card__tile">
+                    <div className="dash-review-card__tile-label">📅 {t('home_review_deadline')}</div>
+                    <div className="dash-review-card__tile-value">{reviewDeadline}</div>
+                  </div>
+                )}
               </div>
-            </div>
-            {reviewDeadline && (
-              <div className="dash-review-card__tile">
-                <div className="dash-review-card__tile-label">📅 考核提交截止日</div>
-                <div className="dash-review-card__tile-value">{reviewDeadline}</div>
+              <div className="dash-review-card__footer">
+                {canSelfAssess && <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>}
+                {isApprover && <Link to="/review/team" className="dash-card-header__link">{t('home_review_give_evaluation')} →</Link>}
               </div>
-            )}
-          </div>
-          <div className="dash-review-card__footer">
-            <Link to="/review" className="dash-card-header__link">查看詳細考核表 →</Link>
-          </div>
+            </>
+          )}
         </Card>
       )}
 
-      {isApprover ? (
+      <Card className="dash-approval-card">
+        <div className="dash-card-header">
+          <span className="dash-card-header__title">🕐 {t('home_my_requests')}</span>
+          <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
+        </div>
+        {myRequestsLoading ? (
+          <Skeleton height="120px" />
+        ) : myRequests.length === 0 ? (
+          <p className="dash-empty-hint">尚無請假記錄</p>
+        ) : (
+          <div className="ui-table-wrap">
+            <table className="ui-table dash-approval-table">
+              <thead>
+                <tr><th>假別</th><th>請假日期</th><th>簽核狀態</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                {myRequests.map(req => {
+                  const status = STATUS_MAP[req.status] || STATUS_MAP.pending
+                  const days = countDaysLabel(req.start_date, req.end_date)
+                  return (
+                    <tr key={req.id}>
+                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                      <td>{req.start_date}{days}</td>
+                      <td>
+                        <div className="dash-status-cell">
+                          <Chip tone={status.tone}>{status.label}</Chip>
+                          {req.status === 'pending' && (
+                            <FlowChips
+                              steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)}
+                              currentStep={req.current_step}
+                              isApproved={req.status === 'approved'}
+                            />
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        {req.status === 'pending' ? (
+                          <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
+                        ) : '-'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {isApprover && (
         <Card className="dash-approval-card">
           <div className="dash-card-header">
-            <span className="dash-card-header__title">📋 待審核假單</span>
-            <Link to="/approval" className="dash-card-header__link">查看全部</Link>
+            <span className="dash-card-header__title">📋 {t('home_pending_approvals')}</span>
+            <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
           </div>
           {queueLoading ? (
             <Skeleton height="120px" />
@@ -396,54 +460,11 @@ function Home({ userProfile }) {
             </div>
           )}
         </Card>
-      ) : (
-        <Card className="dash-approval-card">
-          <div className="dash-card-header">
-            <span className="dash-card-header__title">🕐 我的假單申請進度</span>
-            <Link to="/leave/my" className="dash-card-header__link">查看歷史紀錄</Link>
-          </div>
-          {queueLoading ? (
-            <Skeleton height="120px" />
-          ) : myRequests.length === 0 ? (
-            <p className="dash-empty-hint">尚無請假記錄</p>
-          ) : (
-            <div className="ui-table-wrap">
-              <table className="ui-table dash-approval-table">
-                <thead>
-                  <tr><th>假別</th><th>請假日期</th><th>狀態</th><th>操作</th></tr>
-                </thead>
-                <tbody>
-                  {myRequests.map(req => {
-                    const status = STATUS_MAP[req.status] || STATUS_MAP.pending
-                    const days = countDaysLabel(req.start_date, req.end_date)
-                    return (
-                      <tr key={req.id}>
-                        <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
-                        <td>{req.start_date}{days}</td>
-                        <td>
-                          <div className="dash-status-cell">
-                            <Chip tone={status.tone}>{status.label}</Chip>
-                            <FlowChips steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)} />
-                          </div>
-                        </td>
-                        <td>
-                          {req.status === 'pending' ? (
-                            <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
-                          ) : '-'}
-                        </td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </Card>
       )}
 
       <Card className="dash-calendar-card">
         <div className="dash-card-header">
-          <span className="dash-card-header__title">📅 請假行事曆</span>
+          <span className="dash-card-header__title">📅 {t('home_leave_calendar')}</span>
           <div className="dash-calendar-nav">
             <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))} aria-label="上個月">‹</button>
             <span>{calendarMonth.getFullYear()}年 {calendarMonth.getMonth() + 1}月</span>
@@ -467,7 +488,7 @@ function Home({ userProfile }) {
             </div>
             {todayColleagues.length > 0 && (
               <div className="dash-today-colleagues">
-                <span className="dash-today-colleagues__label">今日休假同仁：</span>
+                <span className="dash-today-colleagues__label">{t('home_colleagues_on_leave_today')}：</span>
                 <div className="dash-today-colleagues__avatars">
                   {todayColleagues.slice(0, 2).map(c => (
                     <span key={c.id} className="dash-today-colleagues__avatar" style={{ background: avatarColor(c.id) }} title={c.full_name}>

@@ -293,6 +293,14 @@
   margin-left: var(--space-050);
 }
 
+.leave-success-rows {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-100);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
 .leave-form-error-banner {
   background: var(--sys-color-error-container);
   color: var(--sys-color-on-error-container);

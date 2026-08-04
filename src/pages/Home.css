@@ -333,6 +333,20 @@
   border-radius: var(--shape-corner-full);
 }
 
+.dash-flow-chips__name--current {
+  color: var(--sys-color-success);
+  font-weight: 600;
+}
+
+.dash-flow-chips__name--passed {
+  color: var(--sys-color-on-surface-variant);
+}
+
+.dash-flow-chips__name--upcoming {
+  color: var(--sys-color-on-surface-variant);
+  opacity: 0.6;
+}
+
 .dash-withdraw-link {
   border: none;
   background: none;

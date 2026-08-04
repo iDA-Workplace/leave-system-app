@@ -240,6 +240,35 @@
   grid-template-columns: 1fr;
 }
 
+.dash-review-card__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: var(--space-150);
+  margin-bottom: var(--space-200);
+}
+@media (min-width: 560px) {
+  .dash-review-card__grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+.dash-review-card__tile {
+  background: var(--sys-color-surface-container);
+  border-radius: var(--shape-corner-small);
+  padding: var(--space-150);
+}
+
+.dash-review-card__tile-label {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  margin-bottom: var(--space-050);
+}
+
+.dash-review-card__tile-value {
+  font: 700 var(--type-title-medium-size)/var(--type-title-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
 .review-form-actions {
   display: flex;
   gap: var(--space-100);

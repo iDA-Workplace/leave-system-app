@@ -7,7 +7,21 @@ import {
 import { useToast } from '../context/ToastContext'
 import './Review.css'
 
-const EVALUATOR_ROLES = ['supervisor', 'deputy_supervisor', 'admin', 'boss']
+const EVALUATOR_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
+
+// A cycle can assign different questionnaires per role (员工帳號管理 word-spec
+// item 5): supervisor/boss template columns fall back to the shared
+// template_id when not set for that cycle.
+function templateIdForParticipant(review, participantRole) {
+  if (!review) return null
+  if ((participantRole === 'supervisor' || participantRole === 'deputy_supervisor') && review.supervisor_template_id) {
+    return review.supervisor_template_id
+  }
+  if (participantRole === 'boss' && review.boss_template_id) {
+    return review.boss_template_id
+  }
+  return review.template_id
+}
 
 function ScoreButtons({ min, max, value, onChange }) {
   return (
@@ -26,17 +40,14 @@ function ScoreButtons({ min, max, value, onChange }) {
   )
 }
 
-// ===== B18: 我的考核（自評／查看結果） =====
-function MyReview({ userProfile }) {
+// ===== B18: 年度自評 =====
+function MyAssessment({ userProfile }) {
   const [reviews, setReviews] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
   const [questions, setQuestions] = useState([])
   const [responses, setResponses] = useState({})
-  const [evaluations, setEvaluations] = useState([])
   const [submitting, setSubmitting] = useState(false)
-  const [disputeOpen, setDisputeOpen] = useState(false)
-  const [disputeText, setDisputeText] = useState('')
   const { showToast } = useToast()
 
   useEffect(() => { fetchMyReviews() }, [])
@@ -44,12 +55,9 @@ function MyReview({ userProfile }) {
   async function fetchMyReviews() {
     const { data } = await supabase
       .from('annual_review_participants')
-      .select(`
-        *,
-        review:annual_reviews(*, template:review_templates(name)),
-        supervisor:users!annual_review_participants_supervisor_id_fkey(full_name)
-      `)
+      .select(`*, review:annual_reviews(*, template:review_templates(name))`)
       .eq('user_id', userProfile.id)
+      .is('published_at', null)
       .order('id', { ascending: false })
     setReviews(data || [])
     setLoading(false)
@@ -77,7 +85,24 @@ function MyReview({ userProfile }) {
 
   async function handleSelectForAssessment(participant) {
     setSelected(participant)
-    await fetchQuestions(participant.review.template_id, participant.id)
+    await fetchQuestions(templateIdForParticipant(participant.review, userProfile.role), participant.id)
+  }
+
+  async function handleSaveDraft() {
+    setSubmitting(true)
+    for (const q of questions) {
+      if (responses[q.id] === undefined || responses[q.id] === '') continue
+      await supabase.from('review_responses').upsert({
+        review_id: selected.review_id,
+        participant_id: selected.id,
+        question_id: q.id,
+        text_answer: q.question_type === 'text' ? String(responses[q.id]) : null,
+        score_answer: q.question_type === 'score' ? Number(responses[q.id]) : null,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'participant_id,question_id' })
+    }
+    setSubmitting(false)
+    showToast('草稿已儲存')
   }
 
   async function handleSubmitSelfAssessment() {
@@ -111,9 +136,139 @@ function MyReview({ userProfile }) {
     fetchMyReviews()
   }
 
+  function statusFor(p) {
+    if (!p.self_submitted) return { label: '待填寫自評', tone: 'warning' }
+    if (!p.supervisor_submitted) return { label: '自評已完成，待主管評核', tone: 'warning' }
+    return { label: '評核中，待人資校準', tone: 'warning' }
+  }
+
+  if (loading) return <div><PageHeader title="年度自評" /><Skeleton height="80px" /></div>
+
+  const active = reviews.filter(p => p.review?.status === 'active')
+
+  return (
+    <div>
+      <PageHeader title="年度自評" />
+
+      {active.length === 0 ? (
+        <Card><EmptyState title="非考核期間" description="目前沒有進行中的年度考核。" /></Card>
+      ) : (
+        <div className="review-list">
+          {active.map(p => {
+            const status = statusFor(p)
+            return (
+              <Card key={p.id}>
+                <div className="review-row">
+                  <div>
+                    <div className="review-row__title">{p.review?.title}</div>
+                    <div className="review-row__meta">{p.review?.year} 年度｜{p.review?.start_date} ～ {p.review?.end_date}</div>
+                    {p.review?.self_assessment_deadline && (
+                      <div className="review-row__sub">自評截止：{p.review.self_assessment_deadline}</div>
+                    )}
+                  </div>
+                  <div className="review-row__actions">
+                    <Chip tone={status.tone}>{status.label}</Chip>
+                    {!p.self_submitted && (
+                      <Button size="sm" onClick={() => handleSelectForAssessment(p)}>開始自評</Button>
+                    )}
+                  </div>
+                </div>
+              </Card>
+            )
+          })}
+        </div>
+      )}
+
+      {selected && !selected.self_submitted && (
+        <Card className="review-panel">
+          <div className="review-panel__header">
+            <h4 className="review-panel__title">填寫自評 — {selected.review?.title}</h4>
+            <Button variant="text" onClick={() => setSelected(null)}>取消</Button>
+          </div>
+          {questions.map((q, i) => (
+            <div key={q.id} className="review-question">
+              <label className="review-question__label">{i + 1}. {q.question_text} <span className="review-required">*</span></label>
+              {q.question_type === 'text' ? (
+                <Textarea value={responses[q.id] || ''} onChange={e => setResponses(p => ({ ...p, [q.id]: e.target.value }))} rows={4} placeholder="請填寫..." />
+              ) : (
+                <ScoreButtons min={q.score_min} max={q.score_max} value={responses[q.id]} onChange={v => setResponses(p => ({ ...p, [q.id]: v }))} />
+              )}
+            </div>
+          ))}
+          <div className="review-form-actions">
+            <Button variant="outlined" loading={submitting} onClick={handleSaveDraft}>儲存草稿</Button>
+            <Button loading={submitting} onClick={handleSubmitSelfAssessment}>提交自評</Button>
+          </div>
+        </Card>
+      )}
+    </div>
+  )
+}
+
+// ===== B18b: 考核結果（過往已發佈結果） =====
+function MyReviewResults({ userProfile }) {
+  const [reviews, setReviews] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [selected, setSelected] = useState(null)
+  const [questions, setQuestions] = useState([])
+  const [responses, setResponses] = useState({})
+  const [evaluations, setEvaluations] = useState([])
+  const [disputeOpen, setDisputeOpen] = useState(false)
+  const [disputeText, setDisputeText] = useState('')
+  const { showToast } = useToast()
+
+  useEffect(() => { fetchMyReviews() }, [])
+
+  async function fetchMyReviews() {
+    const { data } = await supabase
+      .from('annual_review_participants')
+      .select(`
+        *,
+        review:annual_reviews(*, template:review_templates(name)),
+        supervisor:users!annual_review_participants_supervisor_id_fkey(full_name)
+      `)
+      .eq('user_id', userProfile.id)
+      .not('published_at', 'is', null)
+      .order('published_at', { ascending: false })
+
+    const rows = data || []
+    if (rows.length > 0) {
+      const { data: overalls } = await supabase
+        .from('review_evaluations')
+        .select('participant_id, overall_score')
+        .in('participant_id', rows.map(p => p.id))
+        .eq('is_overall', true)
+      const scoreMap = {}
+      for (const o of overalls || []) scoreMap[o.participant_id] = o.overall_score
+      for (const p of rows) p._overallScore = scoreMap[p.id]
+    }
+    setReviews(rows)
+    setLoading(false)
+  }
+
+  async function fetchQuestions(templateId, participantId) {
+    const { data: qs } = await supabase
+      .from('review_template_questions')
+      .select('*')
+      .eq('template_id', templateId)
+      .order('order_index')
+
+    const { data: rs } = await supabase
+      .from('review_responses')
+      .select('*')
+      .eq('participant_id', participantId)
+
+    setQuestions(qs || [])
+    const responseMap = {}
+    for (const r of rs || []) {
+      responseMap[r.question_id] = r.question_type === 'score' ? r.score_answer : r.text_answer
+    }
+    setResponses(responseMap)
+  }
+
   async function handleViewResult(participant) {
     setSelected(participant)
-    await fetchQuestions(participant.review.template_id, participant.id)
+    await fetchQuestions(templateIdForParticipant(participant.review, userProfile.role), participant.id)
     const { data } = await supabase
       .from('review_evaluations')
       .select('*, evaluator:users!review_evaluations_evaluator_id_fkey(full_name, role)')
@@ -142,68 +297,36 @@ function MyReview({ userProfile }) {
     fetchMyReviews()
   }
 
-  function statusFor(p) {
-    if (!p.self_submitted) return { label: '待填寫自評', tone: 'warning' }
-    if (!p.supervisor_submitted) return { label: '自評已完成，待主管評核', tone: 'warning' }
-    if (!p.published_at) return { label: '評核中，待人資校準', tone: 'warning' }
-    if (!p.acknowledged_at) return { label: '結果已發佈，待確認閱讀', tone: 'info' }
-    return { label: '已完成', tone: 'success' }
+  function overallScoreFor(p) {
+    return p._overallScore
   }
 
-  if (loading) return <div><PageHeader title="我的考核" /><Skeleton height="80px" /></div>
+  if (loading) return <div><PageHeader title="考核結果" /><Skeleton height="80px" /></div>
 
   return (
     <div>
-      <PageHeader title="我的考核" />
+      <PageHeader title="考核結果" />
 
       {reviews.length === 0 ? (
-        <Card><EmptyState title="目前沒有考核任務" /></Card>
+        <Card><EmptyState title="尚無過往考核結果" /></Card>
       ) : (
-        <div className="review-list">
-          {reviews.map(p => {
-            const status = statusFor(p)
-            return (
-              <Card key={p.id}>
-                <div className="review-row">
-                  <div>
-                    <div className="review-row__title">{p.review?.title}</div>
-                    <div className="review-row__meta">{p.review?.year} 年度｜{p.review?.start_date} ～ {p.review?.end_date}</div>
-                    <div className="review-row__sub">主管：{p.supervisor?.full_name || '未指定'}</div>
-                  </div>
-                  <div className="review-row__actions">
-                    <Chip tone={status.tone}>{status.label}</Chip>
-                    {!p.self_submitted && p.review?.status === 'active' && (
-                      <Button size="sm" onClick={() => handleSelectForAssessment(p)}>填寫自評</Button>
-                    )}
-                    {p.published_at && (
-                      <Button size="sm" variant="outlined" onClick={() => handleViewResult(p)}>查看結果</Button>
-                    )}
-                  </div>
-                </div>
-              </Card>
-            )
-          })}
+        <div className="ui-table-wrap">
+          <table className="ui-table">
+            <thead>
+              <tr><th>考核年度</th><th>最終等級</th><th>評核主管</th><th>操作</th></tr>
+            </thead>
+            <tbody>
+              {reviews.map(p => (
+                <tr key={p.id}>
+                  <td>{p.review?.year} 年度｜{p.review?.title}</td>
+                  <td>{overallScoreFor(p) ?? '—'}</td>
+                  <td>{p.supervisor?.full_name || '未指定'}</td>
+                  <td><Button size="sm" variant="outlined" onClick={() => handleViewResult(p)}>查看詳情</Button></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
-      )}
-
-      {selected && !selected.self_submitted && (
-        <Card className="review-panel">
-          <div className="review-panel__header">
-            <h4 className="review-panel__title">填寫自評 — {selected.review?.title}</h4>
-            <Button variant="text" onClick={() => setSelected(null)}>取消</Button>
-          </div>
-          {questions.map((q, i) => (
-            <div key={q.id} className="review-question">
-              <label className="review-question__label">{i + 1}. {q.question_text} <span className="review-required">*</span></label>
-              {q.question_type === 'text' ? (
-                <Textarea value={responses[q.id] || ''} onChange={e => setResponses(p => ({ ...p, [q.id]: e.target.value }))} rows={4} placeholder="請填寫..." />
-              ) : (
-                <ScoreButtons min={q.score_min} max={q.score_max} value={responses[q.id]} onChange={v => setResponses(p => ({ ...p, [q.id]: v }))} />
-              )}
-            </div>
-          ))}
-          <Button block loading={submitting} onClick={handleSubmitSelfAssessment}>送出自評</Button>
-        </Card>
       )}
 
       {selected && selected.published_at && (
@@ -275,8 +398,8 @@ function MyReview({ userProfile }) {
   )
 }
 
-// ===== B19: 評核填寫（主管／老闆） =====
-function SupervisorEvaluation({ userProfile }) {
+// ===== B19: 團隊管理與年度考核（主管：自己團隊／老闆：全公司） =====
+function SupervisorEvaluation({ userProfile, isBoss }) {
   const [participants, setParticipants] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -291,16 +414,29 @@ function SupervisorEvaluation({ userProfile }) {
   useEffect(() => { fetchParticipants() }, [])
 
   async function fetchParticipants() {
-    const { data } = await supabase
+    let query = supabase
       .from('annual_review_participants')
       .select(`
         *,
         review:annual_reviews(*, template:review_templates(name, id)),
-        user:users!annual_review_participants_user_id_fkey(full_name, email)
+        user:users!annual_review_participants_user_id_fkey(full_name, email, role)
       `)
-      .eq('supervisor_id', userProfile.id)
       .order('created_at', { ascending: false })
-    setParticipants(data || [])
+    if (!isBoss) query = query.eq('supervisor_id', userProfile.id)
+    const { data } = await query
+
+    const rows = data || []
+    if (isBoss && rows.length > 0) {
+      const { data: overalls } = await supabase
+        .from('review_evaluations')
+        .select('participant_id, overall_score')
+        .in('participant_id', rows.map(p => p.id))
+        .eq('is_overall', true)
+      const scoreMap = {}
+      for (const o of overalls || []) scoreMap[o.participant_id] = o.overall_score
+      for (const p of rows) p._overallScore = scoreMap[p.id]
+    }
+    setParticipants(rows)
     setLoading(false)
   }
 
@@ -309,7 +445,7 @@ function SupervisorEvaluation({ userProfile }) {
     const { data: qs } = await supabase
       .from('review_template_questions')
       .select('*')
-      .eq('template_id', participant.review.template.id)
+      .eq('template_id', templateIdForParticipant(participant.review, participant.user?.role))
       .order('order_index')
     setQuestions(qs || [])
 
@@ -387,14 +523,33 @@ function SupervisorEvaluation({ userProfile }) {
     fetchParticipants()
   }
 
-  if (loading) return <div><PageHeader title="員工考核評量" /><Skeleton height="80px" /></div>
+  if (loading) return <div><PageHeader title={isBoss ? '團隊管理' : '團隊管理與年度考核'} /><Skeleton height="80px" /></div>
+
+  const totalCount = participants.length
+  const notSelfSubmittedCount = participants.filter(p => !p.self_submitted).length
+  const pendingEvalCount = participants.filter(p => p.self_submitted && !p.supervisor_submitted).length
 
   return (
     <div>
-      <PageHeader title="員工考核評量" />
+      <PageHeader title={isBoss ? '團隊管理' : '團隊管理與年度考核'} />
+
+      <div className="dash-review-card__grid">
+        <div className="dash-review-card__tile">
+          <div className="dash-review-card__tile-label">{isBoss ? '團隊總人數' : '團隊總人數'}</div>
+          <div className="dash-review-card__tile-value">{totalCount}</div>
+        </div>
+        <div className="dash-review-card__tile">
+          <div className="dash-review-card__tile-label">未提交自評人數</div>
+          <div className="dash-review-card__tile-value">{notSelfSubmittedCount}</div>
+        </div>
+        <div className="dash-review-card__tile">
+          <div className="dash-review-card__tile-label">待評核數量</div>
+          <div className="dash-review-card__tile-value">{pendingEvalCount}</div>
+        </div>
+      </div>
 
       {participants.length === 0 ? (
-        <Card><EmptyState title="目前沒有需要評量的員工" /></Card>
+        <Card><EmptyState title="目前沒有團隊成員的考核資料" /></Card>
       ) : (
         <div className="review-list">
           {participants.map(p => {
@@ -409,6 +564,7 @@ function SupervisorEvaluation({ userProfile }) {
                     <div className="review-row__chips">
                       <Chip tone={p.self_submitted ? 'success' : 'warning'}>{p.self_submitted ? '自評已完成' : '待完成自評'}</Chip>
                       {isReturned && <Chip tone="error">HR 已退回，請重新評核</Chip>}
+                      {isBoss && <Chip tone="neutral">最終等級：{p._overallScore ?? '—'}</Chip>}
                     </div>
                   </div>
                   <div className="review-row__actions">
@@ -417,7 +573,7 @@ function SupervisorEvaluation({ userProfile }) {
                     </Chip>
                     {p.self_submitted && p.review?.status === 'active' && (
                       <Button size="sm" variant={isLocked ? 'outlined' : 'filled'} onClick={() => handleSelect(p)}>
-                        {isLocked ? '查看評量' : p.supervisor_submitted ? '修改評量' : '填寫評量'}
+                        {isLocked ? '查看評量' : p.supervisor_submitted ? '修改評量' : '開始評價'}
                       </Button>
                     )}
                   </div>
@@ -489,7 +645,7 @@ function CycleAndTemplates({ onSelectReviewForParticipants }) {
   const [showAddReview, setShowAddReview] = useState(false)
   const [editTemplate, setEditTemplate] = useState(null)
   const [newTemplate, setNewTemplate] = useState({ name: '', description: '' })
-  const [newReview, setNewReview] = useState({ title: '', year: new Date().getFullYear(), template_id: '', start_date: '', end_date: '', self_assessment_deadline: '', evaluation_deadline: '' })
+  const [newReview, setNewReview] = useState({ title: '', year: new Date().getFullYear(), template_id: '', supervisor_template_id: '', boss_template_id: '', start_date: '', end_date: '', self_assessment_deadline: '', evaluation_deadline: '' })
   const [questions, setQuestions] = useState([])
   const [newQuestion, setNewQuestion] = useState({ question_text: '', question_type: 'text', score_min: 1, score_max: 5 })
   const { showToast } = useToast()
@@ -549,13 +705,15 @@ function CycleAndTemplates({ onSelectReviewForParticipants }) {
       title: newReview.title,
       year: newReview.year,
       template_id: newReview.template_id,
+      supervisor_template_id: newReview.supervisor_template_id || null,
+      boss_template_id: newReview.boss_template_id || null,
       start_date: newReview.start_date,
       end_date: newReview.end_date,
       self_assessment_deadline: newReview.self_assessment_deadline || null,
       evaluation_deadline: newReview.evaluation_deadline || null,
       created_by: user.id,
     })
-    setNewReview({ title: '', year: new Date().getFullYear(), template_id: '', start_date: '', end_date: '', self_assessment_deadline: '', evaluation_deadline: '' })
+    setNewReview({ title: '', year: new Date().getFullYear(), template_id: '', supervisor_template_id: '', boss_template_id: '', start_date: '', end_date: '', self_assessment_deadline: '', evaluation_deadline: '' })
     setShowAddReview(false)
     fetchAll()
   }
@@ -651,11 +809,24 @@ function CycleAndTemplates({ onSelectReviewForParticipants }) {
               <div className="review-form-grid">
                 <input className="ui-field__control" value={newReview.title} onChange={e => setNewReview(p => ({ ...p, title: e.target.value }))} placeholder="週期名稱，例：2026 年度考核（H2）" />
                 <input className="ui-field__control" type="number" value={newReview.year} onChange={e => setNewReview(p => ({ ...p, year: Number(e.target.value) }))} />
-                <select className="ui-field__control" value={newReview.template_id} onChange={e => setNewReview(p => ({ ...p, template_id: e.target.value }))}>
-                  <option value="">請選擇模板</option>
-                  {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
-                </select>
-                <div />
+                <label className="review-inline-label">員工模板
+                  <select className="ui-field__control" value={newReview.template_id} onChange={e => setNewReview(p => ({ ...p, template_id: e.target.value }))}>
+                    <option value="">請選擇模板</option>
+                    {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </label>
+                <label className="review-inline-label">主管模板（選填，預設同員工模板）
+                  <select className="ui-field__control" value={newReview.supervisor_template_id} onChange={e => setNewReview(p => ({ ...p, supervisor_template_id: e.target.value }))}>
+                    <option value="">同員工模板</option>
+                    {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </label>
+                <label className="review-inline-label">老闆模板（選填，預設同員工模板）
+                  <select className="ui-field__control" value={newReview.boss_template_id} onChange={e => setNewReview(p => ({ ...p, boss_template_id: e.target.value }))}>
+                    <option value="">同員工模板</option>
+                    {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                  </select>
+                </label>
                 <label className="review-inline-label">自評期間開始<input className="ui-field__control" type="date" value={newReview.start_date} onChange={e => setNewReview(p => ({ ...p, start_date: e.target.value }))} /></label>
                 <label className="review-inline-label">整體結束日<input className="ui-field__control" type="date" value={newReview.end_date} min={newReview.start_date} onChange={e => setNewReview(p => ({ ...p, end_date: e.target.value }))} /></label>
                 <label className="review-inline-label">自評截止日<input className="ui-field__control" type="date" value={newReview.self_assessment_deadline} onChange={e => setNewReview(p => ({ ...p, self_assessment_deadline: e.target.value }))} /></label>
@@ -1111,6 +1282,50 @@ function PublishOverview({ readOnly = false }) {
   )
 }
 
+// ===== B19b: 團隊年度考核（老闆：全公司名冊） =====
+function CompanyReviewRoster() {
+  const [rows, setRows] = useState([])
+  const [loading, setLoading] = useState(true)
+
+  useEffect(() => { fetchRows() }, [])
+
+  async function fetchRows() {
+    const { data } = await supabase
+      .from('users')
+      .select('id, full_name, department, job_title')
+      .eq('is_active', true)
+      .order('full_name')
+    setRows(data || [])
+    setLoading(false)
+  }
+
+  if (loading) return <div><PageHeader title="團隊年度考核" /><Skeleton height="80px" /></div>
+
+  return (
+    <div>
+      <PageHeader title="團隊年度考核" />
+      {rows.length === 0 ? (
+        <Card><EmptyState title="尚無員工資料" /></Card>
+      ) : (
+        <div className="ui-table-wrap">
+          <table className="ui-table">
+            <thead><tr><th>員工姓名</th><th>部門</th><th>職稱</th></tr></thead>
+            <tbody>
+              {rows.map(u => (
+                <tr key={u.id}>
+                  <td>{u.full_name}</td>
+                  <td>{u.department || '—'}</td>
+                  <td>{u.job_title || '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ===== HR 治理殼層：週期/模板、參與者、校準、發佈 =====
 function Governance() {
   const location = useLocation()
@@ -1139,18 +1354,27 @@ function Governance() {
 // ===== Review 主元件 =====
 function Review({ userProfile }) {
   const location = useLocation()
-  const isAdmin = userProfile?.role === 'admin'
+  const isAdmin = !!userProfile?.is_admin
   const isBoss = userProfile?.role === 'boss'
-  const isEvaluator = EVALUATOR_ROLES.includes(userProfile?.role)
+  const isTeamManager = EVALUATOR_ROLES.includes(userProfile?.role)
+  const canSelfAssess = userProfile?.role !== 'boss'
 
-  const tabs = [{ key: 'mine', path: '/review', label: '我的考核', end: true }]
-  if (isEvaluator) tabs.push({ key: 'evaluate', path: '/review/evaluate', label: '員工評量' })
+  const tabs = []
+  if (canSelfAssess) {
+    tabs.push({ key: 'mine', path: '/review', label: '年度自評', end: true })
+    tabs.push({ key: 'results', path: '/review/results', label: '考核結果' })
+  }
+  if (isTeamManager) {
+    tabs.push({ key: 'team', path: '/review/team', label: isBoss ? '團隊管理' : '團隊管理與年度考核' })
+  }
+  if (isBoss) {
+    tabs.push({ key: 'team-annual', path: '/review/team/annual', label: '團隊年度考核' })
+  }
   if (isAdmin) tabs.push({ key: 'admin', path: '/review/admin', label: '考核治理' })
-  if (isBoss) tabs.push({ key: 'overview', path: '/review/overview', label: '全公司總覽' })
 
   return (
     <div>
-      <PageHeader title="年度考核" />
+      <PageHeader title="考核管理" />
       <Tabs tabs={tabs.map(t => ({
         ...t,
         to: t.path,
@@ -1158,10 +1382,15 @@ function Review({ userProfile }) {
       }))} />
 
       <Routes>
-        <Route index element={<MyReview userProfile={userProfile} />} />
-        {isEvaluator && <Route path="evaluate" element={<SupervisorEvaluation userProfile={userProfile} />} />}
+        <Route index element={
+          canSelfAssess
+            ? <MyAssessment userProfile={userProfile} />
+            : <Navigate to="team" replace />
+        } />
+        {canSelfAssess && <Route path="results" element={<MyReviewResults userProfile={userProfile} />} />}
+        {isTeamManager && <Route path="team" element={<SupervisorEvaluation userProfile={userProfile} isBoss={isBoss} />} />}
+        {isBoss && <Route path="team/annual" element={<CompanyReviewRoster />} />}
         {isAdmin && <Route path="admin/*" element={<Governance />} />}
-        {isBoss && <Route path="overview" element={<PublishOverview readOnly />} />}
         <Route path="*" element={<Navigate to="/review" replace />} />
       </Routes>
     </div>

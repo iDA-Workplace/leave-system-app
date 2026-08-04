@@ -1,9 +1,11 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { Button, Card, TextField } from '../components/ui'
+import { useLanguage } from '../context/LanguageContext'
 import './Login.css'
 
 function Login() {
+  const { t } = useLanguage()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
@@ -18,7 +20,7 @@ function Login() {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      setError('帳號或密碼錯誤，請重新輸入')
+      setError(t('login_error'))
       setLoading(false)
     }
   }
@@ -26,41 +28,41 @@ function Login() {
   return (
     <div className="login-page">
       <Card className="login-card">
-        <h1 className="login-card__title">請假系統</h1>
-        <p className="login-card__subtitle">請登入您的帳號</p>
+        <h1 className="login-card__title">{t('login_title')}</h1>
+        <p className="login-card__subtitle">{t('login_subtitle')}</p>
 
         {error && <div className="login-card__error" role="alert">{error}</div>}
 
         <form onSubmit={handleLogin}>
           <TextField
-            label="電子郵件"
+            label={t('login_email')}
             type="email"
             value={email}
             onChange={e => setEmail(e.target.value)}
             required
-            placeholder="請輸入電子郵件"
+            placeholder={t('login_email_placeholder')}
           />
 
           <div className="login-card__password-field">
             <TextField
-              label="密碼"
+              label={t('login_password')}
               type={showPassword ? 'text' : 'password'}
               value={password}
               onChange={e => setPassword(e.target.value)}
               required
-              placeholder="請輸入密碼"
+              placeholder={t('login_password_placeholder')}
             />
             <button
               type="button"
               className="login-card__toggle-password"
               onClick={() => setShowPassword(!showPassword)}
             >
-              {showPassword ? '隱藏' : '顯示'}
+              {showPassword ? t('login_hide') : t('login_show')}
             </button>
           </div>
 
           <Button type="submit" block loading={loading} style={{ marginTop: 'var(--space-100)' }}>
-            {loading ? '登入中...' : '登入'}
+            {loading ? t('login_submitting') : t('login_submit')}
           </Button>
         </form>
       </Card>

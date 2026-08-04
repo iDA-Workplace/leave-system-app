@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Button, Select, Textarea, TextField } from '../components/ui'
+import { Button, Dialog, Select, Textarea, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './LeaveForm.css'
 
@@ -65,6 +65,7 @@ function LeaveForm({ userProfile }) {
   const [dragActive, setDragActive] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [attachment, setAttachment] = useState(null) // { name, url }
+  const [successInfo, setSuccessInfo] = useState(null)
   const [form, setForm] = useState({
     leave_type_id: '',
     start_date: '',
@@ -216,7 +217,7 @@ function LeaveForm({ userProfile }) {
       .single()
 
     if (error) {
-      showToast('送出失敗，請稍後再試', { tone: 'error' })
+      showToast('送出失敗：' + error.message, { tone: 'error' })
       setLoading(false)
       return
     }
@@ -235,8 +236,14 @@ function LeaveForm({ userProfile }) {
     }
 
     setLoading(false)
-    showToast('假單已送出，已通知審核人')
-    navigate('/leave/my')
+
+    const leaveTypeName = leaveTypes.find(lt => lt.id === form.leave_type_id)?.name || ''
+    const dateLabel = isMultiDay
+      ? `${form.start_date} ～ ${form.end_date}`
+      : `${form.start_date} ${form.start_time} ～ ${form.end_time}`
+    const hoursLabel = isMultiDay ? `${countWorkdays(form.start_date, form.end_date)} 天` : `${hours} 小時`
+
+    setSuccessInfo({ leaveTypeName, dateLabel, hoursLabel })
   }
 
   const balanceRows = leaveTypes.map(lt => {
@@ -251,6 +258,7 @@ function LeaveForm({ userProfile }) {
   })
 
   return (
+    <>
     <div className="leave-modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) navigate(-1) }}>
       <div className="leave-modal" role="dialog" aria-modal="true" aria-labelledby="leave-modal-title">
         <div className="leave-modal__header">
@@ -439,6 +447,27 @@ function LeaveForm({ userProfile }) {
         </div>
       </div>
     </div>
+
+    {successInfo && (
+      <Dialog
+        title="假單已送出"
+        labelledBy="leave-success-title"
+        actions={(
+          <>
+            <Button variant="outlined" onClick={() => navigate('/')}>返回首頁</Button>
+            <Button onClick={() => navigate('/leave/my')}>查看申請進度</Button>
+          </>
+        )}
+      >
+        <div className="leave-success-rows">
+          <div><strong>假別：</strong>{successInfo.leaveTypeName}</div>
+          <div><strong>申請日期/時間：</strong>{successInfo.dateLabel}</div>
+          <div><strong>申請時數：</strong>{successInfo.hoursLabel}</div>
+          <div><strong>審核流程：</strong>{flowSteps.length > 0 ? flowSteps.map(s => s.approver?.full_name).join(' → ') : '無須審核'}</div>
+        </div>
+      </Dialog>
+    )}
+    </>
   )
 }
 

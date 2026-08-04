@@ -6,10 +6,8 @@ import Login from './pages/Login'
 import Home from './pages/Home'
 import LeaveForm from './pages/LeaveForm'
 import MyLeaves from './pages/MyLeaves'
-import ApprovalList from './pages/ApprovalList'
 import AdminPanel from './pages/AdminPanel'
 import Layout from './components/Layout'
-import PastLeaves from './pages/PastLeaves'
 import Review from './pages/Review'
 import Settings from './pages/Settings'
 
@@ -57,11 +55,10 @@ function App() {
     <Layout userProfile={userProfile}>
       <Routes>
         <Route path="/" element={<Home userProfile={userProfile} />} />
-        <Route path="/past-leaves" element={<PastLeaves />} />
         <Route path="/review/*" element={<Review userProfile={userProfile} />} />
         <Route path="/leave/new" element={<LeaveForm userProfile={userProfile} />} />
         <Route path="/leave/my" element={<MyLeaves userProfile={userProfile} />} />
-        <Route path="/approval" element={<ApprovalList userProfile={userProfile} />} />
+        <Route path="/approval" element={<Navigate to="/leave/my" replace />} />
         <Route path="/admin/*" element={<AdminPanel userProfile={userProfile} />} />
         <Route path="/settings" element={<Settings userProfile={userProfile} />} />
         <Route path="*" element={<Navigate to="/" />} />

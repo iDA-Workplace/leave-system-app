@@ -1,40 +1,29 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import * as XLSX from 'xlsx'
-import { Button, Card, PageHeader, Select } from '../components/ui'
+import { Button, Card, PageHeader, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './ExportReport.css'
 
+function toISODate(d) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 function ExportReport() {
   const [loading, setLoading] = useState(false)
-  const [year, setYear] = useState(new Date().getFullYear())
-  const [month, setMonth] = useState(0) // 0 = 全年
+  const [startDate, setStartDate] = useState(() => {
+    const d = new Date()
+    d.setMonth(0, 1)
+    return toISODate(d)
+  })
+  const [endDate, setEndDate] = useState(() => toISODate(new Date()))
   const { showToast } = useToast()
 
-  const currentYear = new Date().getFullYear()
-  const years = [currentYear - 1, currentYear, currentYear + 1]
-  const months = [
-    { value: 0, label: '全年' },
-    { value: 1, label: '1 月' }, { value: 2, label: '2 月' },
-    { value: 3, label: '3 月' }, { value: 4, label: '4 月' },
-    { value: 5, label: '5 月' }, { value: 6, label: '6 月' },
-    { value: 7, label: '7 月' }, { value: 8, label: '8 月' },
-    { value: 9, label: '9 月' }, { value: 10, label: '10 月' },
-    { value: 11, label: '11 月' }, { value: 12, label: '12 月' },
-  ]
-
   async function handleExport() {
-    setLoading(true)
+    if (!startDate || !endDate) { showToast('請選擇起訖日期', { tone: 'error' }); return }
+    if (endDate < startDate) { showToast('結束日期不能早於開始日期', { tone: 'error' }); return }
 
-    let startDate, endDate
-    if (month === 0) {
-      startDate = `${year}-01-01`
-      endDate = `${year}-12-31`
-    } else {
-      const lastDay = new Date(year, month, 0).getDate()
-      startDate = `${year}-${String(month).padStart(2, '0')}-01`
-      endDate = `${year}-${String(month).padStart(2, '0')}-${lastDay}`
-    }
+    setLoading(true)
 
     const { data } = await supabase
       .from('leave_requests')
@@ -97,9 +86,7 @@ function ExportReport() {
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, ws, '請假記錄')
 
-    const fileName = month === 0
-      ? `請假記錄_${year}年.xlsx`
-      : `請假記錄_${year}年${month}月.xlsx`
+    const fileName = `請假記錄_${startDate}_至_${endDate}.xlsx`
 
     XLSX.writeFile(wb, fileName)
     setLoading(false)
@@ -111,12 +98,8 @@ function ExportReport() {
 
       <Card>
         <div className="export-report-grid">
-          <Select label="年份" value={year} onChange={e => setYear(Number(e.target.value))}>
-            {years.map(y => <option key={y} value={y}>{y} 年</option>)}
-          </Select>
-          <Select label="月份" value={month} onChange={e => setMonth(Number(e.target.value))}>
-            {months.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
-          </Select>
+          <TextField label="起始日期" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+          <TextField label="結束日期" type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} />
         </div>
 
         <div className="export-report-hint">
