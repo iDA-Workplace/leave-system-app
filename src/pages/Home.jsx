@@ -368,17 +368,55 @@ function Home({ userProfile }) {
         <p className="dash-welcome__subtitle">今日是 {todayLabel}。{pendingSentence}</p>
       </div>
 
-      {statsLoading ? <Skeleton height="150px" /> : (
-        <StatCard
-          icon="📊"
-          title={t('home_annual_leave_balance') + ' (Annual)'}
-          value={annualLeave?.remaining ?? '—'}
-          valueTone={annualLeave?.remaining < 0 ? 'negative' : undefined}
-          unit={annualLeave ? `天 / 總計 ${annualLeave.entitled} 天` : ''}
-          caption={annualLeave ? `已使用 ${annualLeave.used} 天` : '尚無資料'}
-          progress={annualLeave?.entitled ? (annualLeave.used / annualLeave.entitled) * 100 : 0}
-        />
-      )}
+      <div className="dash-top-grid">
+        {statsLoading ? <Skeleton height="150px" /> : (
+          <StatCard
+            icon="📊"
+            title={t('home_annual_leave_balance') + ' (Annual)'}
+            value={annualLeave?.remaining ?? '—'}
+            valueTone={annualLeave?.remaining < 0 ? 'negative' : undefined}
+            unit={annualLeave ? `天 / 總計 ${annualLeave.entitled} 天` : ''}
+            caption={annualLeave ? `已使用 ${annualLeave.used} 天` : '尚無資料'}
+            progress={annualLeave?.entitled ? (annualLeave.used / annualLeave.entitled) * 100 : 0}
+          />
+        )}
+
+        {reviewLoading ? <Skeleton height="150px" /> : (
+          <Card className="dash-review-card">
+            <div className="dash-card-header">
+              <span className="dash-card-header__title">📈 {reviewActive ? reviewParticipant.review.title : t('home_review_reminder')}</span>
+              {reviewActive && <span className="dash-review-card__status-badge">進行中</span>}
+            </div>
+            {!reviewActive ? (
+              <p className="dash-empty-hint">{t('home_review_not_in_period')}</p>
+            ) : (
+              <>
+                <div className="dash-review-card__grid">
+                  {canSelfAssess && (
+                    <div className="dash-review-card__tile">
+                      <div className="dash-review-card__tile-label">📝 {t('home_review_self_progress')}</div>
+                      <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
+                      <div className="dash-stat-card__progress-track">
+                        <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
+                      </div>
+                    </div>
+                  )}
+                  {reviewDeadline && (
+                    <div className="dash-review-card__tile">
+                      <div className="dash-review-card__tile-label">📅 {t('home_review_deadline')}</div>
+                      <div className="dash-review-card__tile-value">{reviewDeadline}</div>
+                    </div>
+                  )}
+                </div>
+                <div className="dash-review-card__footer">
+                  {canSelfAssess && <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>}
+                  {isApprover && <Link to="/review/team" className="dash-card-header__link">{t('home_review_give_evaluation')} →</Link>}
+                </div>
+              </>
+            )}
+          </Card>
+        )}
+      </div>
 
       <Card className="dash-approval-card">
         <div className="dash-card-header">
@@ -432,88 +470,50 @@ function Home({ userProfile }) {
         )}
       </Card>
 
+      {isApprover && (
+        <Card className="dash-approval-card" id="pending-team-approvals">
+          <div className="dash-card-header">
+            <span className="dash-card-header__title">📋 {t('home_pending_approvals')}</span>
+            <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
+          </div>
+          {queueLoading ? (
+            <Skeleton height="120px" />
+          ) : approvalQueue.length === 0 ? (
+            <p className="dash-empty-hint">目前沒有待審核的假單 🎉</p>
+          ) : (
+            <div className="ui-table-wrap">
+              <table className="ui-table dash-approval-table">
+                <thead>
+                  <tr><th>員工姓名</th><th>假別</th><th>請假日期</th><th>操作</th></tr>
+                </thead>
+                <tbody>
+                  {approvalQueue.slice(0, 5).map(req => (
+                    <tr key={req.id}>
+                      <td>
+                        <div className="dash-approval-table__name">
+                          <span className="dash-approval-table__avatar" style={{ background: avatarColor(req.requester_id) }}>{initials(req.requester?.full_name)}</span>
+                          {req.requester?.full_name}
+                        </div>
+                      </td>
+                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                      <td>{req.start_date}</td>
+                      <td>
+                        <div className="dash-approval-table__actions">
+                          <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label="拒絕">✕</Button>
+                          <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label="核准">✓</Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Card>
+      )}
+
       <div className="dash-bottom-grid">
         <div className="dash-bottom-grid__main">
-          {isApprover && (
-            <Card className="dash-approval-card" id="pending-team-approvals">
-              <div className="dash-card-header">
-                <span className="dash-card-header__title">📋 {t('home_pending_approvals')}</span>
-                <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
-              </div>
-              {queueLoading ? (
-                <Skeleton height="120px" />
-              ) : approvalQueue.length === 0 ? (
-                <p className="dash-empty-hint">目前沒有待審核的假單 🎉</p>
-              ) : (
-                <div className="ui-table-wrap">
-                  <table className="ui-table dash-approval-table">
-                    <thead>
-                      <tr><th>員工姓名</th><th>假別</th><th>請假日期</th><th>操作</th></tr>
-                    </thead>
-                    <tbody>
-                      {approvalQueue.slice(0, 5).map(req => (
-                        <tr key={req.id}>
-                          <td>
-                            <div className="dash-approval-table__name">
-                              <span className="dash-approval-table__avatar" style={{ background: avatarColor(req.requester_id) }}>{initials(req.requester?.full_name)}</span>
-                              {req.requester?.full_name}
-                            </div>
-                          </td>
-                          <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
-                          <td>{req.start_date}</td>
-                          <td>
-                            <div className="dash-approval-table__actions">
-                              <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label="拒絕">✕</Button>
-                              <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label="核准">✓</Button>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              )}
-            </Card>
-          )}
-        </div>
-
-        <div className="dash-bottom-grid__side">
-          {reviewLoading ? <Skeleton height="180px" /> : (
-            <Card className="dash-review-card">
-              <div className="dash-card-header">
-                <span className="dash-card-header__title">📈 {reviewActive ? reviewParticipant.review.title : t('home_review_reminder')}</span>
-                {reviewActive && <span className="dash-review-card__status-badge">進行中</span>}
-              </div>
-              {!reviewActive ? (
-                <p className="dash-empty-hint">{t('home_review_not_in_period')}</p>
-              ) : (
-                <>
-                  <div className="dash-review-card__grid">
-                    {canSelfAssess && (
-                      <div className="dash-review-card__tile">
-                        <div className="dash-review-card__tile-label">📝 {t('home_review_self_progress')}</div>
-                        <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
-                        <div className="dash-stat-card__progress-track">
-                          <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
-                        </div>
-                      </div>
-                    )}
-                    {reviewDeadline && (
-                      <div className="dash-review-card__tile">
-                        <div className="dash-review-card__tile-label">📅 {t('home_review_deadline')}</div>
-                        <div className="dash-review-card__tile-value">{reviewDeadline}</div>
-                      </div>
-                    )}
-                  </div>
-                  <div className="dash-review-card__footer">
-                    {canSelfAssess && <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>}
-                    {isApprover && <Link to="/review/team" className="dash-card-header__link">{t('home_review_give_evaluation')} →</Link>}
-                  </div>
-                </>
-              )}
-            </Card>
-          )}
-
           <Card className="dash-calendar-card">
             <div className="dash-card-header">
               <span className="dash-card-header__title">📅 {t('home_leave_calendar')}</span>
@@ -524,53 +524,61 @@ function Home({ userProfile }) {
               </div>
             </div>
             {calendarLoading ? <Skeleton height="260px" /> : (
-              <>
-                <div className="dash-mini-calendar">
-                  {WEEKDAY_LABELS.map(w => <div key={w} className="dash-mini-calendar__weekday">{w}</div>)}
-                  {monthGrid.map((cell, i) => (
-                    <div key={i} className="dash-mini-calendar__cell">
-                      {cell && (
+              <div className="dash-mini-calendar">
+                {WEEKDAY_LABELS.map(w => <div key={w} className="dash-mini-calendar__weekday">{w}</div>)}
+                {monthGrid.map((cell, i) => (
+                  <div key={i} className="dash-mini-calendar__cell">
+                    {cell && (
+                      <button
+                        type="button"
+                        className={`dash-mini-calendar__date${cell.isToday ? ' dash-mini-calendar__date--today' : ''}${cell.hasLeave ? ' dash-mini-calendar__date--leave' : ''}${cell.iso === selectedDate ? ' dash-mini-calendar__date--selected' : ''}`}
+                        onClick={() => setSelectedDate(cell.iso)}
+                      >
+                        {cell.day}
+                        {cell.hasLeave && <span className="dash-mini-calendar__dot" />}
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </Card>
+        </div>
+
+        <div className="dash-bottom-grid__side">
+          <Card className="dash-colleagues-card">
+            <div className="dash-card-header">
+              <span className="dash-card-header__title">🧑‍🤝‍🧑 {t('home_colleagues_on_leave_today')}</span>
+            </div>
+            {calendarLoading ? <Skeleton height="120px" /> : (
+              <div className="dash-today-colleagues dash-today-colleagues--vertical">
+                <span className="dash-today-colleagues__label">{selectedDate}</span>
+                {selectedDateColleagues.length === 0 ? (
+                  <span className="dash-today-colleagues__empty">目前沒有人請假</span>
+                ) : (
+                  <div className="dash-today-colleagues__avatars">
+                    {selectedDateColleagues.slice(0, 4).map(c => {
+                      const isExpanded = expandedColleagueIds.has(c.id)
+                      return (
                         <button
+                          key={c.id}
                           type="button"
-                          className={`dash-mini-calendar__date${cell.isToday ? ' dash-mini-calendar__date--today' : ''}${cell.hasLeave ? ' dash-mini-calendar__date--leave' : ''}${cell.iso === selectedDate ? ' dash-mini-calendar__date--selected' : ''}`}
-                          onClick={() => setSelectedDate(cell.iso)}
+                          className={`dash-today-colleagues__avatar${isExpanded ? ' dash-today-colleagues__avatar--expanded' : ''}`}
+                          style={{ background: avatarColor(c.id) }}
+                          onClick={() => toggleColleagueExpanded(c.id)}
+                          aria-pressed={isExpanded}
+                          aria-label={c.full_name}
                         >
-                          {cell.day}
-                          {cell.hasLeave && <span className="dash-mini-calendar__dot" />}
+                          {isExpanded ? c.full_name : initials(c.full_name)}
                         </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
-                <div className="dash-today-colleagues">
-                  <span className="dash-today-colleagues__label">{selectedDate} {t('home_colleagues_on_leave_today')}：</span>
-                  {selectedDateColleagues.length === 0 ? (
-                    <span className="dash-today-colleagues__empty">—</span>
-                  ) : (
-                    <div className="dash-today-colleagues__avatars">
-                      {selectedDateColleagues.slice(0, 4).map(c => {
-                        const isExpanded = expandedColleagueIds.has(c.id)
-                        return (
-                          <button
-                            key={c.id}
-                            type="button"
-                            className={`dash-today-colleagues__avatar${isExpanded ? ' dash-today-colleagues__avatar--expanded' : ''}`}
-                            style={{ background: avatarColor(c.id) }}
-                            onClick={() => toggleColleagueExpanded(c.id)}
-                            aria-pressed={isExpanded}
-                            aria-label={c.full_name}
-                          >
-                            {isExpanded ? c.full_name : initials(c.full_name)}
-                          </button>
-                        )
-                      })}
-                      {selectedDateColleagues.length > 4 && (
-                        <span className="dash-today-colleagues__avatar dash-today-colleagues__avatar--more">+{selectedDateColleagues.length - 4}</span>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </>
+                      )
+                    })}
+                    {selectedDateColleagues.length > 4 && (
+                      <span className="dash-today-colleagues__avatar dash-today-colleagues__avatar--more">+{selectedDateColleagues.length - 4}</span>
+                    )}
+                  </div>
+                )}
+              </div>
             )}
           </Card>
         </div>
