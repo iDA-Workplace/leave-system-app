@@ -261,7 +261,7 @@
   align-items: start;
 }
 @media (min-width: 960px) {
-  .dash-bottom-grid:not(.dash-bottom-grid--single) {
+  .dash-bottom-grid {
     grid-template-columns: 1.6fr 1fr;
   }
 }

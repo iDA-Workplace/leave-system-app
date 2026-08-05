@@ -432,7 +432,7 @@ function Home({ userProfile }) {
         )}
       </Card>
 
-      <div className={`dash-bottom-grid${isApprover ? '' : ' dash-bottom-grid--single'}`}>
+      <div className="dash-bottom-grid">
         <div className="dash-bottom-grid__main">
           {isApprover && (
             <Card className="dash-approval-card" id="pending-team-approvals">
