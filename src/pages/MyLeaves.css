@@ -25,6 +25,27 @@
   margin-bottom: var(--space-200);
 }
 
+.leave-mgmt-filters {
+  display: flex;
+  gap: var(--space-150);
+  flex-wrap: wrap;
+  margin: var(--space-200) 0;
+  max-width: 400px;
+}
+
+.leave-mgmt-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-150);
+  margin-top: var(--space-200);
+}
+
+.leave-mgmt-pagination__label {
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+
 .my-leave-card__row {
   display: flex;
   justify-content: space-between;

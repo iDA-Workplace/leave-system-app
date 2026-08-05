@@ -441,7 +441,7 @@ function Home({ userProfile }) {
                   return (
                     <tr key={req.id}>
                       <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
-                      <td>{req.start_date}</td>
+                      <td>{isMultiDay ? `${req.start_date} ~ ${req.end_date}` : req.start_date}</td>
                       <td>{isMultiDay ? '全天' : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
                       <td>{req.hours ? `${req.hours} 小時` : (isMultiDay ? days.trim() : '—')}</td>
                       <td>

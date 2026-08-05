@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Skeleton, Tabs, Textarea } from '../components/ui'
+import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './MyLeaves.css'
 import './ApprovalList.css'
@@ -31,7 +31,6 @@ function MyLeaves({ userProfile }) {
   // 請假紀錄清單（自己的假單）
   const [leaves, setLeaves] = useState([])
   const [leavesLoading, setLeavesLoading] = useState(true)
-  const [selected, setSelected] = useState(null)
   const [withdrawTarget, setWithdrawTarget] = useState(null)
   const [withdrawing, setWithdrawing] = useState(false)
 
@@ -53,6 +52,13 @@ function MyLeaves({ userProfile }) {
   const [historyLoading, setHistoryLoading] = useState(true)
   const [historyTab, setHistoryTab] = useState('mine')
 
+  // 請假紀錄清單／審核紀錄清單共用的年度/月份篩選＋分頁
+  const currentYear = new Date().getFullYear()
+  const [filterYear, setFilterYear] = useState(currentYear)
+  const [filterMonth, setFilterMonth] = useState(0) // 0 = 全部月份
+  const [historyPage, setHistoryPage] = useState(1)
+  const PAGE_SIZE = 5
+
   useEffect(() => {
     fetchMyLeaves()
     fetchBalance()
@@ -67,6 +73,8 @@ function MyLeaves({ userProfile }) {
       document.getElementById('pending-team-approvals')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [location.hash, pendingLoading])
+
+  useEffect(() => { setHistoryPage(1) }, [historyTab, filterYear, filterMonth])
 
   async function fetchMyLeaves() {
     setLeavesLoading(true)
@@ -344,7 +352,7 @@ function MyLeaves({ userProfile }) {
       </div>
 
       <Card className="leave-mgmt-section">
-        <PageHeader title="假期明細" />
+        <PageHeader title="我的假期明細" />
         {balanceLoading ? <Skeleton height="120px" /> : (
           <div className="ui-table-wrap">
             <table className="ui-table">
@@ -424,107 +432,102 @@ function MyLeaves({ userProfile }) {
           <PageHeader title="請假紀錄清單" />
         )}
 
-        {(!isApprover || historyTab === 'mine') && (
-          leavesLoading ? (
-            <div className="my-leaves-list"><Skeleton height="88px" /><Skeleton height="88px" /></div>
-          ) : leaves.length === 0 ? (
-            <EmptyState title="尚無請假記錄" />
-          ) : (
-            <div className="my-leaves-list">
-              {leaves.map(leave => {
-                const status = statusMap[leave.status] || statusMap.pending
-                const isOpen = selected?.id === leave.id
-                return (
-                  <Card
-                    key={leave.id}
-                    className="my-leave-card"
-                    style={{ borderLeft: `4px solid ${leave.leave_type?.color || 'var(--sys-color-primary)'}`, cursor: 'pointer' }}
-                    onClick={() => setSelected(isOpen ? null : leave)}
-                  >
-                    <div className="my-leave-card__row">
-                      <div>
-                        <div className="my-leave-card__type">{leave.leave_type?.name}</div>
-                        <div className="my-leave-card__meta">
-                          {leave.start_date} ～ {leave.end_date}
-                          {leave.hours && ` ｜ ${leave.hours} 小時`}
-                          {leave.proxy?.full_name && ` ｜ 代理人：${leave.proxy.full_name}`}
-                        </div>
-                        <div className="my-leave-card__timestamp">申請時間：{new Date(leave.created_at).toLocaleString('zh-TW')}</div>
-                      </div>
-                      <div className="my-leave-card__actions">
-                        <Chip tone={status.tone}>{status.label}</Chip>
-                        {leave.status === 'pending' && (
-                          <Button variant="tonal" size="sm" onClick={e => { e.stopPropagation(); setWithdrawTarget(leave) }}>收回假單</Button>
-                        )}
-                        {(leave.status === 'returned' || leave.status === 'withdrawn') && (
-                          <Button size="sm" onClick={e => { e.stopPropagation(); handleResubmit(leave) }}>重新送出</Button>
-                        )}
-                      </div>
-                    </div>
+        <div className="leave-mgmt-filters">
+          <Select label="年度" value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}>
+            {[currentYear, currentYear - 1, currentYear - 2].map(y => <option key={y} value={y}>{y} 年</option>)}
+          </Select>
+          <Select label="月份" value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))}>
+            <option value={0}>全部月份</option>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m} 月</option>)}
+          </Select>
+        </div>
 
-                    {isOpen && (
-                      <div className="my-leave-card__detail">
-                        <div className="my-leave-card__detail-row">
-                          <span className="my-leave-card__detail-label">請假原因：</span>
-                          <span>{leave.reason}</span>
-                        </div>
-                        {leave.start_time && (
-                          <div className="my-leave-card__detail-row">
-                            <span className="my-leave-card__detail-label">請假時段：</span>
-                            <span>{leave.start_time} ～ {leave.end_time}</span>
-                          </div>
-                        )}
-                        {(leave.status === 'returned' || leave.status === 'withdrawn') && leave.returned_reason && (
-                          <div className="my-leave-card__detail-row">
-                            <span className="my-leave-card__detail-label">退回原因：</span>
-                            <span className="my-leave-card__detail-error">{leave.returned_reason}</span>
-                          </div>
-                        )}
-                        {leave.approvals?.length > 0 && (
-                          <div className="my-leave-card__approvals">
-                            <div className="my-leave-card__detail-label">審核記錄：</div>
-                            {leave.approvals.map(approval => (
-                              <div key={approval.id} className="my-leave-card__approval-row">
-                                <Chip tone={approval.action === 'approved' ? 'success' : 'error'}>{approval.action === 'approved' ? '核准' : '拒絕'}</Chip>
-                                <span>{approval.approver?.full_name}</span>
-                                {approval.comment && <span className="my-leave-card__detail-label">：{approval.comment}</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </Card>
-                )
-              })}
-            </div>
-          )
-        )}
-
-        {isApprover && historyTab === 'approved' && (
-          historyLoading ? (
-            <Skeleton height="96px" />
-          ) : approvalHistory.length === 0 ? (
-            <EmptyState title="尚無審核紀錄" />
+        {(!isApprover || historyTab === 'mine') && (() => {
+          const filtered = filterByYearMonth(leaves, filterYear, filterMonth, l => l.start_date)
+          const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+          const pageRows = paginate(filtered, historyPage, PAGE_SIZE)
+          return leavesLoading ? (
+            <Skeleton height="120px" />
+          ) : filtered.length === 0 ? (
+            <EmptyState title="這段期間沒有請假記錄" />
           ) : (
-            <div className="ui-table-wrap">
-              <table className="ui-table">
-                <thead><tr><th>請假人</th><th>請假日期/時間</th><th>時數</th><th>職務代理人</th><th>審核結果</th></tr></thead>
-                <tbody>
-                  {approvalHistory.map(a => (
-                    <tr key={a.id}>
-                      <td>{a.request?.requester?.full_name}</td>
-                      <td>{a.request?.start_date} ～ {a.request?.end_date}</td>
-                      <td>{a.request?.hours ? `${a.request.hours} 小時` : '—'}</td>
-                      <td>{a.request?.proxy?.full_name || '—'}</td>
-                      <td><Chip tone={a.action === 'approved' ? 'success' : 'error'}>{a.action === 'approved' ? '核准' : '拒絕'}</Chip></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              <div className="ui-table-wrap">
+                <table className="ui-table">
+                  <thead><tr><th>假別</th><th>請假日期</th><th>時間</th><th>時數</th><th>簽核狀態</th><th>操作</th></tr></thead>
+                  <tbody>
+                    {pageRows.map(leave => {
+                      const status = statusMap[leave.status] || statusMap.pending
+                      const isMultiDay = leave.end_date > leave.start_date
+                      return (
+                        <tr key={leave.id}>
+                          <td><Chip tone="info" style={{ background: (leave.leave_type?.color || 'var(--sys-color-primary)') + '22', color: leave.leave_type?.color || 'var(--sys-color-primary)' }}>{leave.leave_type?.name}</Chip></td>
+                          <td>{isMultiDay ? `${leave.start_date} ~ ${leave.end_date}` : leave.start_date}</td>
+                          <td>{isMultiDay ? '全天' : (leave.start_time && leave.end_time ? `${leave.start_time} ~ ${leave.end_time}` : '—')}</td>
+                          <td>{hoursFor(leave)}</td>
+                          <td><Chip tone={status.tone}>{status.label}</Chip></td>
+                          <td>
+                            {leave.status === 'pending' && (
+                              <Button variant="tonal" size="sm" onClick={() => setWithdrawTarget(leave)}>收回假單</Button>
+                            )}
+                            {(leave.status === 'returned' || leave.status === 'withdrawn') && (
+                              <Button size="sm" onClick={() => handleResubmit(leave)}>重新送出</Button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="leave-mgmt-pagination">
+                <Button size="sm" variant="outlined" disabled={historyPage <= 1} onClick={() => setHistoryPage(p => p - 1)}>上一頁</Button>
+                <span className="leave-mgmt-pagination__label">第 {historyPage} / {totalPages} 頁</span>
+                <Button size="sm" variant="outlined" disabled={historyPage >= totalPages} onClick={() => setHistoryPage(p => p + 1)}>下一頁</Button>
+              </div>
+            </>
           )
-        )}
+        })()}
+
+        {isApprover && historyTab === 'approved' && (() => {
+          const filtered = filterByYearMonth(approvalHistory, filterYear, filterMonth, a => a.request?.start_date)
+          const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+          const pageRows = paginate(filtered, historyPage, PAGE_SIZE)
+          return historyLoading ? (
+            <Skeleton height="120px" />
+          ) : filtered.length === 0 ? (
+            <EmptyState title="這段期間沒有審核記錄" />
+          ) : (
+            <>
+              <div className="ui-table-wrap">
+                <table className="ui-table">
+                  <thead><tr><th>請假人</th><th>請假日期</th><th>時間</th><th>時數</th><th>職務代理人</th><th>審核結果</th></tr></thead>
+                  <tbody>
+                    {pageRows.map(a => {
+                      const req = a.request
+                      const isMultiDay = req?.end_date > req?.start_date
+                      return (
+                        <tr key={a.id}>
+                          <td>{req?.requester?.full_name}</td>
+                          <td>{isMultiDay ? `${req?.start_date} ~ ${req?.end_date}` : req?.start_date}</td>
+                          <td>{isMultiDay ? '全天' : (req?.start_time && req?.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
+                          <td>{req ? hoursFor(req) : '—'}</td>
+                          <td>{req?.proxy?.full_name || '—'}</td>
+                          <td><Chip tone={a.action === 'approved' ? 'success' : 'error'}>{a.action === 'approved' ? '核准' : '拒絕'}</Chip></td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <div className="leave-mgmt-pagination">
+                <Button size="sm" variant="outlined" disabled={historyPage <= 1} onClick={() => setHistoryPage(p => p - 1)}>上一頁</Button>
+                <span className="leave-mgmt-pagination__label">第 {historyPage} / {totalPages} 頁</span>
+                <Button size="sm" variant="outlined" disabled={historyPage >= totalPages} onClick={() => setHistoryPage(p => p + 1)}>下一頁</Button>
+              </div>
+            </>
+          )
+        })()}
       </Card>
 
       {withdrawTarget && (
@@ -540,6 +543,34 @@ function MyLeaves({ userProfile }) {
       )}
     </div>
   )
+}
+
+function calendarDayCount(startDate, endDate) {
+  const start = new Date(startDate)
+  const end = new Date(endDate)
+  return Math.round((end - start) / 86400000) + 1
+}
+
+function hoursFor(item) {
+  if (item.hours) return `${item.hours} 小時`
+  const days = calendarDayCount(item.start_date, item.end_date)
+  return `${days * 8} 小時`
+}
+
+function filterByYearMonth(rows, year, month, getDate) {
+  return rows.filter(r => {
+    const d = getDate(r)
+    if (!d) return false
+    const [y, m] = d.split('-')
+    if (Number(y) !== year) return false
+    if (month !== 0 && Number(m) !== month) return false
+    return true
+  })
+}
+
+function paginate(rows, page, pageSize) {
+  const start = (page - 1) * pageSize
+  return rows.slice(start, start + pageSize)
 }
 
 function countWorkdays(startDate, endDate) {
