@@ -94,6 +94,7 @@ function Home({ userProfile }) {
   const [monthLeaveDates, setMonthLeaveDates] = useState(new Set())
   const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()))
   const [selectedDateColleagues, setSelectedDateColleagues] = useState([])
+  const [expandedColleagueIds, setExpandedColleagueIds] = useState(() => new Set())
   const [calendarLoading, setCalendarLoading] = useState(true)
 
   useEffect(() => { fetchEntitlement() }, [userProfile])
@@ -231,6 +232,7 @@ function Home({ userProfile }) {
   }
 
   async function fetchColleaguesForDate(dateISO) {
+    setExpandedColleagueIds(new Set())
     const { data } = await supabase
       .from('leave_requests')
       .select('requester:users!leave_requests_requester_id_fkey(id, full_name)')
@@ -238,6 +240,15 @@ function Home({ userProfile }) {
       .lte('start_date', dateISO)
       .gte('end_date', dateISO)
     setSelectedDateColleagues((data || []).map(d => d.requester).filter(Boolean))
+  }
+
+  function toggleColleagueExpanded(id) {
+    setExpandedColleagueIds(prev => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
   }
 
   async function handleApprove(request) {
@@ -420,16 +431,19 @@ function Home({ userProfile }) {
               <div className="ui-table-wrap">
                 <table className="ui-table dash-approval-table">
                   <thead>
-                    <tr><th>假別</th><th>請假日期</th><th>簽核狀態</th><th>操作</th></tr>
+                    <tr><th>假別</th><th>請假日期</th><th>時間</th><th>時數</th><th>簽核狀態</th><th>操作</th></tr>
                   </thead>
                   <tbody>
                     {myRequests.map(req => {
                       const status = STATUS_MAP[req.status] || STATUS_MAP.pending
                       const days = countDaysLabel(req.start_date, req.end_date)
+                      const isMultiDay = req.end_date > req.start_date
                       return (
                         <tr key={req.id}>
                           <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
                           <td>{req.start_date}{days}</td>
+                          <td>{isMultiDay ? '全天' : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
+                          <td>{req.hours ? `${req.hours} 小時` : (isMultiDay ? days.trim() : '—')}</td>
                           <td>
                             <div className="dash-status-cell">
                               <Chip tone={status.tone}>{status.label}</Chip>
@@ -534,11 +548,22 @@ function Home({ userProfile }) {
                     <span className="dash-today-colleagues__empty">—</span>
                   ) : (
                     <div className="dash-today-colleagues__avatars">
-                      {selectedDateColleagues.slice(0, 4).map(c => (
-                        <span key={c.id} className="dash-today-colleagues__avatar" style={{ background: avatarColor(c.id) }} title={c.full_name}>
-                          {initials(c.full_name)}
-                        </span>
-                      ))}
+                      {selectedDateColleagues.slice(0, 4).map(c => {
+                        const isExpanded = expandedColleagueIds.has(c.id)
+                        return (
+                          <button
+                            key={c.id}
+                            type="button"
+                            className={`dash-today-colleagues__avatar${isExpanded ? ' dash-today-colleagues__avatar--expanded' : ''}`}
+                            style={{ background: avatarColor(c.id) }}
+                            onClick={() => toggleColleagueExpanded(c.id)}
+                            aria-pressed={isExpanded}
+                            aria-label={c.full_name}
+                          >
+                            {isExpanded ? c.full_name : initials(c.full_name)}
+                          </button>
+                        )
+                      })}
                       {selectedDateColleagues.length > 4 && (
                         <span className="dash-today-colleagues__avatar dash-today-colleagues__avatar--more">+{selectedDateColleagues.length - 4}</span>
                       )}
