@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Skeleton, Tabs, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
@@ -26,6 +26,7 @@ function urgencyDays(startDate) {
 function MyLeaves({ userProfile }) {
   const isApprover = APPROVER_ROLES.includes(userProfile?.role)
   const { showToast } = useToast()
+  const location = useLocation()
 
   // 請假紀錄清單（自己的假單）
   const [leaves, setLeaves] = useState([])
@@ -60,6 +61,12 @@ function MyLeaves({ userProfile }) {
       fetchApprovalHistory()
     }
   }, [userProfile])
+
+  useEffect(() => {
+    if (location.hash === '#pending-team-approvals' && !pendingLoading) {
+      document.getElementById('pending-team-approvals')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [location.hash, pendingLoading])
 
   async function fetchMyLeaves() {
     setLeavesLoading(true)
@@ -336,7 +343,7 @@ function MyLeaves({ userProfile }) {
       </Card>
 
       {isApprover && (
-        <Card className="leave-mgmt-section">
+        <Card className="leave-mgmt-section" id="pending-team-approvals">
           <PageHeader title="待審核假單（團隊）" />
           {pendingLoading ? (
             <Skeleton height="96px" />

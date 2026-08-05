@@ -92,7 +92,8 @@ function Home({ userProfile }) {
     return new Date(now.getFullYear(), now.getMonth(), 1)
   })
   const [monthLeaveDates, setMonthLeaveDates] = useState(new Set())
-  const [todayColleagues, setTodayColleagues] = useState([])
+  const [selectedDate, setSelectedDate] = useState(() => toISODate(new Date()))
+  const [selectedDateColleagues, setSelectedDateColleagues] = useState([])
   const [calendarLoading, setCalendarLoading] = useState(true)
 
   useEffect(() => { fetchEntitlement() }, [userProfile])
@@ -102,7 +103,7 @@ function Home({ userProfile }) {
     if (isApprover) fetchApprovalQueue()
   }, [userProfile])
   useEffect(() => { fetchMonthLeaveDates() }, [calendarMonth])
-  useEffect(() => { fetchTodayColleagues() }, [userProfile])
+  useEffect(() => { fetchColleaguesForDate(selectedDate) }, [selectedDate])
 
   async function fetchEntitlement() {
     if (!userProfile?.id) return
@@ -184,6 +185,9 @@ function Home({ userProfile }) {
 
   async function fetchMyRequests() {
     setMyRequestsLoading(true)
+    const now = new Date()
+    const monthStart = toISODate(new Date(now.getFullYear(), now.getMonth(), 1))
+    const monthEnd = toISODate(new Date(now.getFullYear(), now.getMonth() + 1, 0))
     const { data } = await supabase
       .from('leave_requests')
       .select(`
@@ -192,8 +196,9 @@ function Home({ userProfile }) {
         flow:approval_flows(steps:approval_flow_steps(step_order, approver:users!approval_flow_steps_approver_id_fkey(full_name)))
       `)
       .eq('requester_id', userProfile.id)
+      .lte('start_date', monthEnd)
+      .gte('end_date', monthStart)
       .order('created_at', { ascending: false })
-      .limit(5)
     setMyRequests(data || [])
     setMyRequestsLoading(false)
   }
@@ -225,15 +230,14 @@ function Home({ userProfile }) {
     setCalendarLoading(false)
   }
 
-  async function fetchTodayColleagues() {
-    const today = toISODate(new Date())
+  async function fetchColleaguesForDate(dateISO) {
     const { data } = await supabase
       .from('leave_requests')
       .select('requester:users!leave_requests_requester_id_fkey(id, full_name)')
       .eq('status', 'approved')
-      .lte('start_date', today)
-      .gte('end_date', today)
-    setTodayColleagues((data || []).map(d => d.requester).filter(Boolean))
+      .lte('start_date', dateISO)
+      .gte('end_date', dateISO)
+    setSelectedDateColleagues((data || []).map(d => d.requester).filter(Boolean))
   }
 
   async function handleApprove(request) {
@@ -371,139 +375,151 @@ function Home({ userProfile }) {
         </Card>
       )}
 
-      <Card className="dash-approval-card">
-        <div className="dash-card-header">
-          <span className="dash-card-header__title">🕐 {t('home_my_requests')}</span>
-          <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
-        </div>
-        {myRequestsLoading ? (
-          <Skeleton height="120px" />
-        ) : myRequests.length === 0 ? (
-          <p className="dash-empty-hint">尚無請假記錄</p>
-        ) : (
-          <div className="ui-table-wrap">
-            <table className="ui-table dash-approval-table">
-              <thead>
-                <tr><th>假別</th><th>請假日期</th><th>簽核狀態</th><th>操作</th></tr>
-              </thead>
-              <tbody>
-                {myRequests.map(req => {
-                  const status = STATUS_MAP[req.status] || STATUS_MAP.pending
-                  const days = countDaysLabel(req.start_date, req.end_date)
-                  return (
-                    <tr key={req.id}>
-                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
-                      <td>{req.start_date}{days}</td>
-                      <td>
-                        <div className="dash-status-cell">
-                          <Chip tone={status.tone}>{status.label}</Chip>
-                          {req.status === 'pending' && (
-                            <FlowChips
-                              steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)}
-                              currentStep={req.current_step}
-                              isApproved={req.status === 'approved'}
-                            />
-                          )}
-                        </div>
-                      </td>
-                      <td>
-                        {req.status === 'pending' ? (
-                          <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
-                        ) : '-'}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </Card>
-
-      {isApprover && (
-        <Card className="dash-approval-card">
-          <div className="dash-card-header">
-            <span className="dash-card-header__title">📋 {t('home_pending_approvals')}</span>
-            <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
-          </div>
-          {queueLoading ? (
-            <Skeleton height="120px" />
-          ) : approvalQueue.length === 0 ? (
-            <p className="dash-empty-hint">目前沒有待審核的假單 🎉</p>
-          ) : (
-            <div className="ui-table-wrap">
-              <table className="ui-table dash-approval-table">
-                <thead>
-                  <tr><th>員工姓名</th><th>假別</th><th>請假日期</th><th>操作</th></tr>
-                </thead>
-                <tbody>
-                  {approvalQueue.slice(0, 5).map(req => (
-                    <tr key={req.id}>
-                      <td>
-                        <div className="dash-approval-table__name">
-                          <span className="dash-approval-table__avatar" style={{ background: avatarColor(req.requester_id) }}>{initials(req.requester?.full_name)}</span>
-                          {req.requester?.full_name}
-                        </div>
-                      </td>
-                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
-                      <td>{req.start_date}</td>
-                      <td>
-                        <div className="dash-approval-table__actions">
-                          <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label="拒絕">✕</Button>
-                          <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label="核准">✓</Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      <div className="dash-bottom-grid">
+        <div className="dash-bottom-grid__main">
+          <Card className="dash-approval-card">
+            <div className="dash-card-header">
+              <span className="dash-card-header__title">🕐 {t('home_my_requests')}</span>
+              <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
             </div>
-          )}
-        </Card>
-      )}
-
-      <Card className="dash-calendar-card">
-        <div className="dash-card-header">
-          <span className="dash-card-header__title">📅 {t('home_leave_calendar')}</span>
-          <div className="dash-calendar-nav">
-            <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))} aria-label="上個月">‹</button>
-            <span>{calendarMonth.getFullYear()}年 {calendarMonth.getMonth() + 1}月</span>
-            <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))} aria-label="下個月">›</button>
-          </div>
-        </div>
-        {calendarLoading ? <Skeleton height="260px" /> : (
-          <>
-            <div className="dash-mini-calendar">
-              {WEEKDAY_LABELS.map(w => <div key={w} className="dash-mini-calendar__weekday">{w}</div>)}
-              {monthGrid.map((cell, i) => (
-                <div key={i} className="dash-mini-calendar__cell">
-                  {cell && (
-                    <span className={`dash-mini-calendar__date${cell.isToday ? ' dash-mini-calendar__date--today' : ''}${cell.hasLeave ? ' dash-mini-calendar__date--leave' : ''}`}>
-                      {cell.day}
-                      {cell.hasLeave && <span className="dash-mini-calendar__dot" />}
-                    </span>
-                  )}
-                </div>
-              ))}
-            </div>
-            {todayColleagues.length > 0 && (
-              <div className="dash-today-colleagues">
-                <span className="dash-today-colleagues__label">{t('home_colleagues_on_leave_today')}：</span>
-                <div className="dash-today-colleagues__avatars">
-                  {todayColleagues.slice(0, 2).map(c => (
-                    <span key={c.id} className="dash-today-colleagues__avatar" style={{ background: avatarColor(c.id) }} title={c.full_name}>
-                      {initials(c.full_name)}
-                    </span>
-                  ))}
-                  {todayColleagues.length > 2 && (
-                    <span className="dash-today-colleagues__avatar dash-today-colleagues__avatar--more">+{todayColleagues.length - 2}</span>
-                  )}
-                </div>
+            {myRequestsLoading ? (
+              <Skeleton height="120px" />
+            ) : myRequests.length === 0 ? (
+              <p className="dash-empty-hint">尚無請假記錄</p>
+            ) : (
+              <div className="ui-table-wrap">
+                <table className="ui-table dash-approval-table">
+                  <thead>
+                    <tr><th>假別</th><th>請假日期</th><th>簽核狀態</th><th>操作</th></tr>
+                  </thead>
+                  <tbody>
+                    {myRequests.map(req => {
+                      const status = STATUS_MAP[req.status] || STATUS_MAP.pending
+                      const days = countDaysLabel(req.start_date, req.end_date)
+                      return (
+                        <tr key={req.id}>
+                          <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                          <td>{req.start_date}{days}</td>
+                          <td>
+                            <div className="dash-status-cell">
+                              <Chip tone={status.tone}>{status.label}</Chip>
+                              {req.status === 'pending' && (
+                                <FlowChips
+                                  steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)}
+                                  currentStep={req.current_step}
+                                  isApproved={req.status === 'approved'}
+                                />
+                              )}
+                            </div>
+                          </td>
+                          <td>
+                            {req.status === 'pending' ? (
+                              <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
+                            ) : '-'}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
               </div>
             )}
-          </>
-        )}
-      </Card>
+          </Card>
+
+          {isApprover && (
+            <Card className="dash-approval-card" id="pending-team-approvals">
+              <div className="dash-card-header">
+                <span className="dash-card-header__title">📋 {t('home_pending_approvals')}</span>
+                <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
+              </div>
+              {queueLoading ? (
+                <Skeleton height="120px" />
+              ) : approvalQueue.length === 0 ? (
+                <p className="dash-empty-hint">目前沒有待審核的假單 🎉</p>
+              ) : (
+                <div className="ui-table-wrap">
+                  <table className="ui-table dash-approval-table">
+                    <thead>
+                      <tr><th>員工姓名</th><th>假別</th><th>請假日期</th><th>操作</th></tr>
+                    </thead>
+                    <tbody>
+                      {approvalQueue.slice(0, 5).map(req => (
+                        <tr key={req.id}>
+                          <td>
+                            <div className="dash-approval-table__name">
+                              <span className="dash-approval-table__avatar" style={{ background: avatarColor(req.requester_id) }}>{initials(req.requester?.full_name)}</span>
+                              {req.requester?.full_name}
+                            </div>
+                          </td>
+                          <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                          <td>{req.start_date}</td>
+                          <td>
+                            <div className="dash-approval-table__actions">
+                              <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label="拒絕">✕</Button>
+                              <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label="核准">✓</Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </Card>
+          )}
+        </div>
+
+        <div className="dash-bottom-grid__side">
+          <Card className="dash-calendar-card">
+            <div className="dash-card-header">
+              <span className="dash-card-header__title">📅 {t('home_leave_calendar')}</span>
+              <div className="dash-calendar-nav">
+                <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))} aria-label="上個月">‹</button>
+                <span>{calendarMonth.getFullYear()}年 {calendarMonth.getMonth() + 1}月</span>
+                <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))} aria-label="下個月">›</button>
+              </div>
+            </div>
+            {calendarLoading ? <Skeleton height="260px" /> : (
+              <>
+                <div className="dash-mini-calendar">
+                  {WEEKDAY_LABELS.map(w => <div key={w} className="dash-mini-calendar__weekday">{w}</div>)}
+                  {monthGrid.map((cell, i) => (
+                    <div key={i} className="dash-mini-calendar__cell">
+                      {cell && (
+                        <button
+                          type="button"
+                          className={`dash-mini-calendar__date${cell.isToday ? ' dash-mini-calendar__date--today' : ''}${cell.hasLeave ? ' dash-mini-calendar__date--leave' : ''}${cell.iso === selectedDate ? ' dash-mini-calendar__date--selected' : ''}`}
+                          onClick={() => setSelectedDate(cell.iso)}
+                        >
+                          {cell.day}
+                          {cell.hasLeave && <span className="dash-mini-calendar__dot" />}
+                        </button>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                <div className="dash-today-colleagues">
+                  <span className="dash-today-colleagues__label">{selectedDate} {t('home_colleagues_on_leave_today')}：</span>
+                  {selectedDateColleagues.length === 0 ? (
+                    <span className="dash-today-colleagues__empty">—</span>
+                  ) : (
+                    <div className="dash-today-colleagues__avatars">
+                      {selectedDateColleagues.slice(0, 4).map(c => (
+                        <span key={c.id} className="dash-today-colleagues__avatar" style={{ background: avatarColor(c.id) }} title={c.full_name}>
+                          {initials(c.full_name)}
+                        </span>
+                      ))}
+                      {selectedDateColleagues.length > 4 && (
+                        <span className="dash-today-colleagues__avatar dash-today-colleagues__avatar--more">+{selectedDateColleagues.length - 4}</span>
+                      )}
+                    </div>
+                  )}
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+      </div>
 
       {rejectTarget && (
         <ConfirmDialog

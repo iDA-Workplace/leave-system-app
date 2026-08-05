@@ -256,7 +256,7 @@ function Layout({ children, userProfile }) {
             type="button"
             className="icon-button"
             aria-label={`待審核假單，${pendingCount} 筆待處理`}
-            onClick={() => navigate('/leave/my')}
+            onClick={() => navigate('/leave/my#pending-team-approvals')}
           >
             <BellIcon size={20} />
             {pendingCount > 0 && <span className="icon-button__badge">{pendingCount}</span>}
