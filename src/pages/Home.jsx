@@ -242,19 +242,34 @@ function Home({ userProfile }) {
 
   async function handleApprove(request) {
     setActingId(request.id)
-    await supabase.from('leave_approvals').insert({
+    const { error: insertError } = await supabase.from('leave_approvals').insert({
       request_id: request.id,
       approver_id: userProfile.id,
       step_order: request.current_step,
       action: 'approved',
     })
+    if (insertError) {
+      showToast('送出審核記錄失敗：' + insertError.message, { tone: 'error' })
+      setActingId(null)
+      return
+    }
 
     const maxStep = Math.max(...request.flow.steps.map(s => s.step_order))
-    if (request.current_step >= maxStep) {
-      await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', request.id)
-    } else {
-      await supabase.from('leave_requests').update({ current_step: request.current_step + 1 }).eq('id', request.id)
+    const updateResult = request.current_step >= maxStep
+      ? await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', request.id).select()
+      : await supabase.from('leave_requests').update({ current_step: request.current_step + 1 }).eq('id', request.id).select()
+
+    if (updateResult.error) {
+      showToast('更新假單狀態失敗：' + updateResult.error.message, { tone: 'error' })
+      setActingId(null)
+      return
     }
+    if (!updateResult.data || updateResult.data.length === 0) {
+      showToast('更新假單狀態失敗：沒有權限修改這筆假單（可能是資料庫權限規則 RLS 擋下），已通知請檢查', { tone: 'error' })
+      setActingId(null)
+      return
+    }
+
     await supabase.functions.invoke('send-slack-notification', {
       body: { type: request.current_step >= maxStep ? 'approved' : 'new_request', request_id: request.id }
     })
@@ -267,14 +282,29 @@ function Home({ userProfile }) {
   async function handleConfirmReject() {
     if (!rejectReason.trim()) { showToast('請填寫拒絕原因', { tone: 'error' }); return }
     setActingId(rejectTarget.id)
-    await supabase.from('leave_approvals').insert({
+    const { error: insertError } = await supabase.from('leave_approvals').insert({
       request_id: rejectTarget.id,
       approver_id: userProfile.id,
       step_order: rejectTarget.current_step,
       action: 'rejected',
       comment: rejectReason.trim(),
     })
-    await supabase.from('leave_requests').update({ status: 'rejected' }).eq('id', rejectTarget.id)
+    if (insertError) {
+      showToast('送出審核記錄失敗：' + insertError.message, { tone: 'error' })
+      setActingId(null)
+      return
+    }
+    const { error: updateError, data: updateData } = await supabase.from('leave_requests').update({ status: 'rejected' }).eq('id', rejectTarget.id).select()
+    if (updateError) {
+      showToast('更新假單狀態失敗：' + updateError.message, { tone: 'error' })
+      setActingId(null)
+      return
+    }
+    if (!updateData || updateData.length === 0) {
+      showToast('更新假單狀態失敗：沒有權限修改這筆假單（可能是資料庫權限規則 RLS 擋下），已通知請檢查', { tone: 'error' })
+      setActingId(null)
+      return
+    }
     await supabase.functions.invoke('send-slack-notification', { body: { type: 'rejected', request_id: rejectTarget.id } })
 
     showToast(`已拒絕 ${rejectTarget.requester?.full_name} 的請假`)

@@ -261,7 +261,7 @@ function MyLeaves({ userProfile }) {
       .gte('end_date', today)
       .single()
 
-    await supabase.from('leave_approvals').insert({
+    const { error: insertError } = await supabase.from('leave_approvals').insert({
       request_id: request.id,
       approver_id: userProfile.id,
       original_approver_id: delegate ? currentStep?.approver_id : null,
@@ -269,21 +269,43 @@ function MyLeaves({ userProfile }) {
       action,
       comment: comment.trim() || null
     })
+    if (insertError) {
+      showToast('送出審核記錄失敗：' + insertError.message, { tone: 'error' })
+      setSubmitting(false)
+      return
+    }
+
+    let updateResult
+    if (action === 'rejected') {
+      updateResult = await supabase.from('leave_requests').update({ status: 'rejected' }).eq('id', request.id).select()
+    } else {
+      const maxStep = Math.max(...request.flow.steps.map(s => s.step_order))
+      updateResult = request.current_step >= maxStep
+        ? await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', request.id).select()
+        : await supabase.from('leave_requests').update({ current_step: request.current_step + 1 }).eq('id', request.id).select()
+    }
+
+    if (updateResult.error) {
+      showToast('更新假單狀態失敗：' + updateResult.error.message, { tone: 'error' })
+      setSubmitting(false)
+      return
+    }
+    if (!updateResult.data || updateResult.data.length === 0) {
+      showToast('更新假單狀態失敗：沒有權限修改這筆假單（可能是資料庫權限規則 RLS 擋下），已通知請檢查', { tone: 'error' })
+      setSubmitting(false)
+      return
+    }
 
     if (action === 'rejected') {
-      await supabase.from('leave_requests').update({ status: 'rejected' }).eq('id', request.id)
       await supabase.functions.invoke('send-slack-notification', { body: { type: 'rejected', request_id: request.id } })
     } else {
       const maxStep = Math.max(...request.flow.steps.map(s => s.step_order))
-      if (request.current_step >= maxStep) {
-        await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', request.id)
-        await supabase.functions.invoke('send-slack-notification', { body: { type: 'approved', request_id: request.id } })
-      } else {
-        await supabase.from('leave_requests').update({ current_step: request.current_step + 1 }).eq('id', request.id)
-        await supabase.functions.invoke('send-slack-notification', { body: { type: 'new_request', request_id: request.id } })
-      }
+      await supabase.functions.invoke('send-slack-notification', {
+        body: { type: request.current_step >= maxStep ? 'approved' : 'new_request', request_id: request.id }
+      })
     }
 
+    showToast(action === 'rejected' ? `已拒絕 ${request.requester?.full_name} 的請假` : `已核准 ${request.requester?.full_name} 的請假`)
     setComment('')
     setApprovalSelected(null)
     setSubmitting(false)
