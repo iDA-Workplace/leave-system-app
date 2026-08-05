@@ -607,6 +607,93 @@ function NotificationTargets({ isAdmin }) {
   )
 }
 
+// ===== 假別管理（各假別年度可使用時數）=====
+function LeaveTypeManagement() {
+  const [types, setTypes] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [editingId, setEditingId] = useState(null)
+  const [editValue, setEditValue] = useState('')
+  const [saving, setSaving] = useState(false)
+  const { showToast } = useToast()
+
+  useEffect(() => { fetchTypes() }, [])
+
+  async function fetchTypes() {
+    const { data } = await supabase.from('leave_types').select('*').order('name')
+    setTypes(data || [])
+    setLoading(false)
+  }
+
+  function startEdit(t) {
+    setEditingId(t.id)
+    setEditValue(t.annual_quota_hours != null ? String(t.annual_quota_hours) : '')
+  }
+
+  async function handleSave(t) {
+    setSaving(true)
+    const value = editValue.trim() === '' ? null : Number(editValue)
+    if (value !== null && (Number.isNaN(value) || value < 0)) {
+      showToast('請輸入有效的時數', { tone: 'error' })
+      setSaving(false)
+      return
+    }
+    const { error } = await supabase.from('leave_types').update({ annual_quota_hours: value }).eq('id', t.id)
+    if (error) {
+      showToast('儲存失敗：' + error.message, { tone: 'error' })
+    } else {
+      showToast('已更新')
+      setEditingId(null)
+      fetchTypes()
+    }
+    setSaving(false)
+  }
+
+  if (loading) return <div><PageHeader title="假別管理" /><Skeleton height="120px" /></div>
+
+  return (
+    <div>
+      <PageHeader title="假別管理" />
+      <p className="admin-hint">設定各假別每年度可使用的時數，「假單管理」的假期明細會依此顯示。留白表示依勞基法（不顯示固定時數）。</p>
+      <div className="admin-list">
+        {types.map(t => (
+          <Card key={t.id}>
+            <div className="admin-row">
+              <div>
+                <div className="admin-row__title">
+                  {t.name}
+                  {!t.is_active && <Chip tone="error">停用</Chip>}
+                </div>
+                <div className="admin-row__meta">
+                  年度可使用時數：{editingId === t.id ? (
+                    <TextField
+                      type="number"
+                      min="0"
+                      value={editValue}
+                      onChange={e => setEditValue(e.target.value)}
+                      placeholder="留白＝依勞基法"
+                      style={{ display: 'inline-block', width: '140px', marginLeft: 'var(--space-100)' }}
+                    />
+                  ) : (
+                    t.annual_quota_hours != null ? `${t.annual_quota_hours} 小時` : '依勞基法（未設定）'
+                  )}
+                </div>
+              </div>
+              {editingId === t.id ? (
+                <div className="admin-form-actions">
+                  <Button size="sm" loading={saving} onClick={() => handleSave(t)}>儲存</Button>
+                  <Button size="sm" variant="text" onClick={() => setEditingId(null)}>取消</Button>
+                </div>
+              ) : (
+                <Button size="sm" variant="outlined" onClick={() => startEdit(t)}>編輯</Button>
+              )}
+            </div>
+          </Card>
+        ))}
+      </div>
+    </div>
+  )
+}
+
 // ===== AdminPanel 主元件 =====
 function AdminPanel({ userProfile }) {
   const location = useLocation()
@@ -622,6 +709,7 @@ function AdminPanel({ userProfile }) {
     tabs.push({ key: 'users', path: '/admin', label: '員工帳號管理' })
     tabs.push({ key: 'flows', path: '/admin/flows', label: '審核流程' })
     tabs.push({ key: 'notifications', path: '/admin/notifications', label: '通知對象' })
+    tabs.push({ key: 'leave-types', path: '/admin/leave-types', label: '假別管理' })
   }
   if (isAdmin || isSupervisor) {
     tabs.push({ key: 'delegates', path: '/admin/delegates', label: '代理審核設定' })
@@ -643,6 +731,7 @@ function AdminPanel({ userProfile }) {
         } />
         {isAdmin && <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />}
         {isAdmin && <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />}
+        {isAdmin && <Route path="leave-types" element={<LeaveTypeManagement />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
         {(isAdmin || isSupervisor) && (
           <Route path="delegates" element={<DelegateManagement userProfile={userProfile} isAdmin={isAdmin} isSupervisor={isSupervisor} />} />
