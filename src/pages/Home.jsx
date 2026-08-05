@@ -380,96 +380,60 @@ function Home({ userProfile }) {
         />
       )}
 
-      {reviewLoading ? <Skeleton height="180px" /> : (
-        <Card className="dash-review-card">
-          <div className="dash-card-header">
-            <span className="dash-card-header__title">📈 {reviewActive ? reviewParticipant.review.title : t('home_review_reminder')}</span>
-            {reviewActive && <span className="dash-review-card__status-badge">進行中</span>}
+      <Card className="dash-approval-card">
+        <div className="dash-card-header">
+          <span className="dash-card-header__title">🕐 {t('home_my_requests')}</span>
+          <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
+        </div>
+        {myRequestsLoading ? (
+          <Skeleton height="120px" />
+        ) : myRequests.length === 0 ? (
+          <p className="dash-empty-hint">尚無請假記錄</p>
+        ) : (
+          <div className="ui-table-wrap">
+            <table className="ui-table dash-approval-table">
+              <thead>
+                <tr><th>假別</th><th>請假日期</th><th>時間</th><th>時數</th><th>簽核狀態</th><th>操作</th></tr>
+              </thead>
+              <tbody>
+                {myRequests.map(req => {
+                  const status = STATUS_MAP[req.status] || STATUS_MAP.pending
+                  const isMultiDay = req.end_date > req.start_date
+                  const days = countDaysLabel(req.start_date, req.end_date)
+                  return (
+                    <tr key={req.id}>
+                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                      <td>{req.start_date}</td>
+                      <td>{isMultiDay ? '全天' : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
+                      <td>{req.hours ? `${req.hours} 小時` : (isMultiDay ? days.trim() : '—')}</td>
+                      <td>
+                        <div className="dash-status-cell">
+                          <Chip tone={status.tone}>{status.label}</Chip>
+                          {req.status === 'pending' && (
+                            <FlowChips
+                              steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)}
+                              currentStep={req.current_step}
+                              isApproved={req.status === 'approved'}
+                            />
+                          )}
+                        </div>
+                      </td>
+                      <td>
+                        {req.status === 'pending' ? (
+                          <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
+                        ) : '-'}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
           </div>
-          {!reviewActive ? (
-            <p className="dash-empty-hint">{t('home_review_not_in_period')}</p>
-          ) : (
-            <>
-              <div className="dash-review-card__grid">
-                {canSelfAssess && (
-                  <div className="dash-review-card__tile">
-                    <div className="dash-review-card__tile-label">📝 {t('home_review_self_progress')}</div>
-                    <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
-                    <div className="dash-stat-card__progress-track">
-                      <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
-                    </div>
-                  </div>
-                )}
-                {reviewDeadline && (
-                  <div className="dash-review-card__tile">
-                    <div className="dash-review-card__tile-label">📅 {t('home_review_deadline')}</div>
-                    <div className="dash-review-card__tile-value">{reviewDeadline}</div>
-                  </div>
-                )}
-              </div>
-              <div className="dash-review-card__footer">
-                {canSelfAssess && <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>}
-                {isApprover && <Link to="/review/team" className="dash-card-header__link">{t('home_review_give_evaluation')} →</Link>}
-              </div>
-            </>
-          )}
-        </Card>
-      )}
+        )}
+      </Card>
 
-      <div className="dash-bottom-grid">
+      <div className={`dash-bottom-grid${isApprover ? '' : ' dash-bottom-grid--single'}`}>
         <div className="dash-bottom-grid__main">
-          <Card className="dash-approval-card">
-            <div className="dash-card-header">
-              <span className="dash-card-header__title">🕐 {t('home_my_requests')}</span>
-              <Link to="/leave/my" className="dash-card-header__link">{t('home_view_history')}</Link>
-            </div>
-            {myRequestsLoading ? (
-              <Skeleton height="120px" />
-            ) : myRequests.length === 0 ? (
-              <p className="dash-empty-hint">尚無請假記錄</p>
-            ) : (
-              <div className="ui-table-wrap">
-                <table className="ui-table dash-approval-table">
-                  <thead>
-                    <tr><th>假別</th><th>請假日期</th><th>時間</th><th>時數</th><th>簽核狀態</th><th>操作</th></tr>
-                  </thead>
-                  <tbody>
-                    {myRequests.map(req => {
-                      const status = STATUS_MAP[req.status] || STATUS_MAP.pending
-                      const days = countDaysLabel(req.start_date, req.end_date)
-                      const isMultiDay = req.end_date > req.start_date
-                      return (
-                        <tr key={req.id}>
-                          <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
-                          <td>{req.start_date}{days}</td>
-                          <td>{isMultiDay ? '全天' : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
-                          <td>{req.hours ? `${req.hours} 小時` : (isMultiDay ? days.trim() : '—')}</td>
-                          <td>
-                            <div className="dash-status-cell">
-                              <Chip tone={status.tone}>{status.label}</Chip>
-                              {req.status === 'pending' && (
-                                <FlowChips
-                                  steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)}
-                                  currentStep={req.current_step}
-                                  isApproved={req.status === 'approved'}
-                                />
-                              )}
-                            </div>
-                          </td>
-                          <td>
-                            {req.status === 'pending' ? (
-                              <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
-                            ) : '-'}
-                          </td>
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-
           {isApprover && (
             <Card className="dash-approval-card" id="pending-team-approvals">
               <div className="dash-card-header">
@@ -514,6 +478,42 @@ function Home({ userProfile }) {
         </div>
 
         <div className="dash-bottom-grid__side">
+          {reviewLoading ? <Skeleton height="180px" /> : (
+            <Card className="dash-review-card">
+              <div className="dash-card-header">
+                <span className="dash-card-header__title">📈 {reviewActive ? reviewParticipant.review.title : t('home_review_reminder')}</span>
+                {reviewActive && <span className="dash-review-card__status-badge">進行中</span>}
+              </div>
+              {!reviewActive ? (
+                <p className="dash-empty-hint">{t('home_review_not_in_period')}</p>
+              ) : (
+                <>
+                  <div className="dash-review-card__grid">
+                    {canSelfAssess && (
+                      <div className="dash-review-card__tile">
+                        <div className="dash-review-card__tile-label">📝 {t('home_review_self_progress')}</div>
+                        <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
+                        <div className="dash-stat-card__progress-track">
+                          <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
+                        </div>
+                      </div>
+                    )}
+                    {reviewDeadline && (
+                      <div className="dash-review-card__tile">
+                        <div className="dash-review-card__tile-label">📅 {t('home_review_deadline')}</div>
+                        <div className="dash-review-card__tile-value">{reviewDeadline}</div>
+                      </div>
+                    )}
+                  </div>
+                  <div className="dash-review-card__footer">
+                    {canSelfAssess && <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>}
+                    {isApprover && <Link to="/review/team" className="dash-card-header__link">{t('home_review_give_evaluation')} →</Link>}
+                  </div>
+                </>
+              )}
+            </Card>
+          )}
+
           <Card className="dash-calendar-card">
             <div className="dash-card-header">
               <span className="dash-card-header__title">📅 {t('home_leave_calendar')}</span>
