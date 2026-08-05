@@ -1,10 +1,9 @@
 import { useState, useEffect } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea } from '../components/ui'
+import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './MyLeaves.css'
-import './ApprovalList.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 
@@ -16,17 +15,9 @@ const statusMap = {
   withdrawn: { label: '已收回', tone: 'info' }
 }
 
-function urgencyDays(startDate) {
-  const start = new Date(startDate + 'T00:00:00')
-  const today = new Date()
-  today.setHours(0, 0, 0, 0)
-  return Math.round((start - today) / 86400000)
-}
-
 function MyLeaves({ userProfile }) {
   const isApprover = APPROVER_ROLES.includes(userProfile?.role)
   const { showToast } = useToast()
-  const location = useLocation()
 
   // 請假紀錄清單（自己的假單）
   const [leaves, setLeaves] = useState([])
@@ -40,12 +31,9 @@ function MyLeaves({ userProfile }) {
   const [leaveStats, setLeaveStats] = useState([])
   const [balanceLoading, setBalanceLoading] = useState(true)
 
-  // 待審核（團隊）— 主管／老闆專用
+  // 待審核（團隊）計數 — 主管／老闆專用（實際審核已移到首頁）
   const [pendingRequests, setPendingRequests] = useState([])
   const [pendingLoading, setPendingLoading] = useState(true)
-  const [approvalSelected, setApprovalSelected] = useState(null)
-  const [comment, setComment] = useState('')
-  const [submitting, setSubmitting] = useState(false)
 
   // 審核紀錄清單 — 主管／老闆專用
   const [approvalHistory, setApprovalHistory] = useState([])
@@ -67,12 +55,6 @@ function MyLeaves({ userProfile }) {
       fetchApprovalHistory()
     }
   }, [userProfile])
-
-  useEffect(() => {
-    if (location.hash === '#pending-team-approvals' && !pendingLoading) {
-      document.getElementById('pending-team-approvals')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    }
-  }, [location.hash, pendingLoading])
 
   useEffect(() => { setHistoryPage(1) }, [historyTab, filterYear, filterMonth])
 
@@ -171,18 +153,11 @@ function MyLeaves({ userProfile }) {
       return
     }
 
+    // Only the count is needed here (the actionable list now lives on the
+    // homepage), so this fetches minimal columns.
     const { data } = await supabase
       .from('leave_requests')
-      .select(`
-        *,
-        requester:users!leave_requests_requester_id_fkey(full_name, email),
-        leave_type:leave_types(name, color),
-        flow:approval_flows(
-          name,
-          steps:approval_flow_steps(*, approver:users!approval_flow_steps_approver_id_fkey(full_name))
-        ),
-        approvals:leave_approvals(*, approver:users!leave_approvals_approver_id_fkey(full_name))
-      `)
+      .select('id, flow_id, current_step')
       .eq('status', 'pending')
 
     const filtered = (data || []).filter(req =>
@@ -248,79 +223,6 @@ function MyLeaves({ userProfile }) {
     }
   }
 
-  async function handleAction(request, action) {
-    if (action === 'rejected' && !comment.trim()) {
-      showToast('請填寫拒絕原因', { tone: 'error' })
-      return
-    }
-
-    setSubmitting(true)
-
-    const today = new Date().toISOString().split('T')[0]
-    const currentStep = request.flow.steps.find(s => s.step_order === request.current_step)
-
-    const { data: delegate } = await supabase
-      .from('approval_delegates')
-      .select('original_approver_id')
-      .eq('delegate_user_id', userProfile.id)
-      .eq('original_approver_id', currentStep?.approver_id)
-      .eq('is_active', true)
-      .lte('start_date', today)
-      .gte('end_date', today)
-      .single()
-
-    const { error: insertError } = await supabase.from('leave_approvals').insert({
-      request_id: request.id,
-      approver_id: userProfile.id,
-      original_approver_id: delegate ? currentStep?.approver_id : null,
-      step_order: request.current_step,
-      action,
-      comment: comment.trim() || null
-    })
-    if (insertError) {
-      showToast('送出審核記錄失敗：' + insertError.message, { tone: 'error' })
-      setSubmitting(false)
-      return
-    }
-
-    let updateResult
-    if (action === 'rejected') {
-      updateResult = await supabase.from('leave_requests').update({ status: 'rejected' }).eq('id', request.id).select()
-    } else {
-      const maxStep = Math.max(...request.flow.steps.map(s => s.step_order))
-      updateResult = request.current_step >= maxStep
-        ? await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', request.id).select()
-        : await supabase.from('leave_requests').update({ current_step: request.current_step + 1 }).eq('id', request.id).select()
-    }
-
-    if (updateResult.error) {
-      showToast('更新假單狀態失敗：' + updateResult.error.message, { tone: 'error' })
-      setSubmitting(false)
-      return
-    }
-    if (!updateResult.data || updateResult.data.length === 0) {
-      showToast('更新假單狀態失敗：沒有權限修改這筆假單（可能是資料庫權限規則 RLS 擋下），已通知請檢查', { tone: 'error' })
-      setSubmitting(false)
-      return
-    }
-
-    if (action === 'rejected') {
-      await supabase.functions.invoke('send-slack-notification', { body: { type: 'rejected', request_id: request.id } })
-    } else {
-      const maxStep = Math.max(...request.flow.steps.map(s => s.step_order))
-      await supabase.functions.invoke('send-slack-notification', {
-        body: { type: request.current_step >= maxStep ? 'approved' : 'new_request', request_id: request.id }
-      })
-    }
-
-    showToast(action === 'rejected' ? `已拒絕 ${request.requester?.full_name} 的請假` : `已核准 ${request.requester?.full_name} 的請假`)
-    setComment('')
-    setApprovalSelected(null)
-    setSubmitting(false)
-    fetchPendingRequests()
-    fetchApprovalHistory()
-  }
-
   const pendingOwnCount = leaves.filter(l => l.status === 'pending').length
 
   const balanceRows = leaveTypes.map(lt => {
@@ -344,10 +246,13 @@ function MyLeaves({ userProfile }) {
           <div className="leave-mgmt-stat__value">{leavesLoading ? '—' : pendingOwnCount}</div>
         </Card>
         {isApprover && (
-          <Card className="leave-mgmt-stat">
-            <div className="leave-mgmt-stat__label">待審核（團隊）</div>
-            <div className="leave-mgmt-stat__value">{pendingLoading ? '—' : pendingRequests.length}</div>
-          </Card>
+          <Link to="/#pending-team-approvals" className="leave-mgmt-stat-link">
+            <Card className="leave-mgmt-stat">
+              <div className="leave-mgmt-stat__label">待審核（團隊）</div>
+              <div className="leave-mgmt-stat__value">{pendingLoading ? '—' : pendingRequests.length}</div>
+              <div className="leave-mgmt-stat__hint">前往首頁審核 →</div>
+            </Card>
+          </Link>
         )}
       </div>
 
@@ -371,56 +276,6 @@ function MyLeaves({ userProfile }) {
           </div>
         )}
       </Card>
-
-      {isApprover && (
-        <Card className="leave-mgmt-section" id="pending-team-approvals">
-          <PageHeader title="待審核假單（團隊）" />
-          {pendingLoading ? (
-            <Skeleton height="96px" />
-          ) : pendingRequests.length === 0 ? (
-            <EmptyState icon="✓" title="目前沒有待審核的假單" />
-          ) : (
-            <div className="approval-list">
-              {pendingRequests.map(request => {
-                const days = urgencyDays(request.start_date)
-                const isUrgent = days >= 0 && days < 3
-                const isOpen = approvalSelected?.id === request.id
-                return (
-                  <Card key={request.id} style={{ borderLeft: `4px solid ${request.leave_type?.color || 'var(--sys-color-primary)'}` }}>
-                    <div className="approval-card__row">
-                      <div>
-                        <div className="approval-card__name">
-                          {request.requester?.full_name}
-                          {isUrgent && <Chip tone="error" className="approval-card__urgency">🔥 {days === 0 ? '今天開始' : `${days} 天後開始`}</Chip>}
-                        </div>
-                        <div className="approval-card__meta">{request.leave_type?.name}｜{request.start_date} ～ {request.end_date}</div>
-                        <div className="approval-card__reason">原因：{request.reason}</div>
-                      </div>
-                      <Button onClick={() => { setApprovalSelected(isOpen ? null : request); setComment('') }}>審核</Button>
-                    </div>
-                    {isOpen && (
-                      <div className="approval-card__panel">
-                        <Textarea
-                          label="備註／拒絕原因（拒絕時必填）"
-                          value={comment}
-                          onChange={e => setComment(e.target.value)}
-                          rows={3}
-                          placeholder="請輸入備註，若要拒絕請填寫原因"
-                        />
-                        <div className="approval-card__panel-actions">
-                          <Button variant="filled" style={{ background: 'var(--sys-color-success)' }} disabled={submitting} onClick={() => handleAction(request, 'approved')}>✓ 核准</Button>
-                          <Button variant="danger" disabled={submitting} onClick={() => handleAction(request, 'rejected')}>✗ 拒絕</Button>
-                          <Button variant="text" onClick={() => { setApprovalSelected(null); setComment('') }}>取消</Button>
-                        </div>
-                      </div>
-                    )}
-                  </Card>
-                )
-              })}
-            </div>
-          )}
-        </Card>
-      )}
 
       <Card className="leave-mgmt-section">
         {isApprover ? (

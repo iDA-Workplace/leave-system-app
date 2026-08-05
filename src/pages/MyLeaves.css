@@ -10,6 +10,17 @@
   margin-bottom: var(--space-200);
 }
 
+.leave-mgmt-stat-link {
+  text-decoration: none;
+  display: block;
+}
+
+.leave-mgmt-stat__hint {
+  margin-top: var(--space-050);
+  font: 500 var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-primary);
+}
+
 .leave-mgmt-stat__label {
   font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
   color: var(--sys-color-on-surface-variant);

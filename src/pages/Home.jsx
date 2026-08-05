@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, Skeleton, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
@@ -86,6 +86,9 @@ function Home({ userProfile }) {
   const [rejectReason, setRejectReason] = useState('')
   const [withdrawTarget, setWithdrawTarget] = useState(null)
   const [actingId, setActingId] = useState(null)
+  const [approvalPage, setApprovalPage] = useState(1)
+  const APPROVAL_PAGE_SIZE = 5
+  const location = useLocation()
 
   const [calendarMonth, setCalendarMonth] = useState(() => {
     const now = new Date()
@@ -105,6 +108,12 @@ function Home({ userProfile }) {
   }, [userProfile])
   useEffect(() => { fetchMonthLeaveDates() }, [calendarMonth])
   useEffect(() => { fetchColleaguesForDate(selectedDate) }, [selectedDate])
+  useEffect(() => {
+    if (location.hash === '#pending-team-approvals' && !queueLoading) {
+      document.getElementById('pending-team-approvals')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [location.hash, queueLoading])
+  useEffect(() => { setApprovalPage(1) }, [approvalQueue.length])
 
   async function fetchEntitlement() {
     if (!userProfile?.id) return
@@ -480,35 +489,47 @@ function Home({ userProfile }) {
             <Skeleton height="120px" />
           ) : approvalQueue.length === 0 ? (
             <p className="dash-empty-hint">目前沒有待審核的假單 🎉</p>
-          ) : (
-            <div className="ui-table-wrap">
-              <table className="ui-table dash-approval-table">
-                <thead>
-                  <tr><th>員工姓名</th><th>假別</th><th>請假日期</th><th>操作</th></tr>
-                </thead>
-                <tbody>
-                  {approvalQueue.slice(0, 5).map(req => (
-                    <tr key={req.id}>
-                      <td>
-                        <div className="dash-approval-table__name">
-                          <span className="dash-approval-table__avatar" style={{ background: avatarColor(req.requester_id) }}>{initials(req.requester?.full_name)}</span>
-                          {req.requester?.full_name}
-                        </div>
-                      </td>
-                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
-                      <td>{req.start_date}</td>
-                      <td>
-                        <div className="dash-approval-table__actions">
-                          <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label="拒絕">✕</Button>
-                          <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label="核准">✓</Button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+          ) : (() => {
+            const totalPages = Math.max(1, Math.ceil(approvalQueue.length / APPROVAL_PAGE_SIZE))
+            const safePage = Math.min(approvalPage, totalPages)
+            const pageRows = approvalQueue.slice((safePage - 1) * APPROVAL_PAGE_SIZE, safePage * APPROVAL_PAGE_SIZE)
+            return (
+              <>
+                <div className="ui-table-wrap">
+                  <table className="ui-table dash-approval-table">
+                    <thead>
+                      <tr><th>員工姓名</th><th>假別</th><th>請假日期</th><th>操作</th></tr>
+                    </thead>
+                    <tbody>
+                      {pageRows.map(req => (
+                        <tr key={req.id}>
+                          <td>
+                            <div className="dash-approval-table__name">
+                              <span className="dash-approval-table__avatar" style={{ background: avatarColor(req.requester_id) }}>{initials(req.requester?.full_name)}</span>
+                              {req.requester?.full_name}
+                            </div>
+                          </td>
+                          <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                          <td>{req.start_date}</td>
+                          <td>
+                            <div className="dash-approval-table__actions">
+                              <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label="拒絕">✕</Button>
+                              <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label="核准">✓</Button>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div className="leave-mgmt-pagination">
+                  <Button size="sm" variant="outlined" disabled={safePage <= 1} onClick={() => setApprovalPage(p => p - 1)}>上一頁</Button>
+                  <span className="leave-mgmt-pagination__label">第 {safePage} / {totalPages} 頁</span>
+                  <Button size="sm" variant="outlined" disabled={safePage >= totalPages} onClick={() => setApprovalPage(p => p + 1)}>下一頁</Button>
+                </div>
+              </>
+            )
+          })()}
         </Card>
       )}
 
