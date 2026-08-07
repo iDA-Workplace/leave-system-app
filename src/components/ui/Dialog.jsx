@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import Button from './Button'
 import './ui.css'
 
-export function Dialog({ title, children, actions, onClose, labelledBy }) {
+export function Dialog({ title, children, actions, onClose, labelledBy, size }) {
   const dialogRef = useRef(null)
 
   useEffect(() => {
@@ -22,7 +22,7 @@ export function Dialog({ title, children, actions, onClose, labelledBy }) {
   return (
     <div className="ui-dialog-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
       <div
-        className="ui-dialog"
+        className={`ui-dialog${size === 'lg' ? ' ui-dialog--lg' : ''}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby={labelledBy}

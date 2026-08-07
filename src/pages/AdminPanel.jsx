@@ -17,7 +17,7 @@ function UserManagement({ isAdmin, userProfile }) {
   const [annualLeaveMap, setAnnualLeaveMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const [newUser, setNewUser] = useState({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
+  const [newUser, setNewUser] = useState({ email: '', full_name: '', english_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
@@ -68,11 +68,12 @@ function UserManagement({ isAdmin, userProfile }) {
         default_flow_id: newUser.default_flow_id || null,
         is_admin: newUser.is_admin,
         department: newUser.department || null,
-        job_title: newUser.job_title || null
+        job_title: newUser.job_title || null,
+        english_name: newUser.english_name || null
       }).eq('id', data.user.id)
     }
     showToast('員工新增成功！預設密碼為 Welcome@123')
-    setNewUser({ email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
+    setNewUser({ email: '', full_name: '', english_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
     setShowAdd(false)
     setSaving(false)
     setTimeout(() => { fetchUsers(); fetchAnnualLeave() }, 1000)
@@ -94,7 +95,8 @@ function UserManagement({ isAdmin, userProfile }) {
       default_flow_id: editing.default_flow_id || null,
       is_admin: editing.is_admin,
       department: editing.department || null,
-      job_title: editing.job_title || null
+      job_title: editing.job_title || null,
+      english_name: editing.english_name || null
     }).eq('id', user.id)
     setEditing(null)
     setSaving(false)
@@ -115,7 +117,8 @@ function UserManagement({ isAdmin, userProfile }) {
           <h4 className="admin-form-card__title">新增員工</h4>
           <p className="admin-form-card__hint">新員工預設密碼為 <strong>Welcome@123</strong>，登入後可自行修改。</p>
           <div className="admin-form-grid">
-            <TextField label="姓名" required value={newUser.full_name} onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))} placeholder="請輸入姓名" />
+            <TextField label="中文姓名" required value={newUser.full_name} onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))} placeholder="請輸入中文姓名" />
+            <TextField label="英文姓名" value={newUser.english_name} onChange={e => setNewUser(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
             <TextField label="Email" required value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} placeholder="請輸入 Email" />
             <Select label="角色" required value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}>
               {Object.entries(roleMap).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -148,7 +151,8 @@ function UserManagement({ isAdmin, userProfile }) {
               {isAdmin && editing?.id === user.id ? (
                 <div>
                   <div className="admin-form-grid">
-                    <TextField label="姓名" value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} />
+                    <TextField label="中文姓名" value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} />
+                    <TextField label="英文姓名" value={editing.english_name || ''} onChange={e => setEditing(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
                     <Select label="角色" value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))}>
                       {Object.entries(roleMap).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
                     </Select>
@@ -178,7 +182,7 @@ function UserManagement({ isAdmin, userProfile }) {
                 <div className="admin-row">
                   <div>
                     <div className="admin-row__title">
-                      {user.full_name}
+                      {user.full_name}{user.english_name && ` (${user.english_name})`}
                       <Chip tone={roleTone[user.role] || 'neutral'}>{roleMap[user.role]}</Chip>
                       {user.is_admin && <Chip tone="info">管理員</Chip>}
                       {!user.is_active && <Chip tone="error">停用</Chip>}

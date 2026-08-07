@@ -260,6 +260,9 @@ select.ui-field__control {
   max-height: calc(100svh - var(--space-600));
   overflow-y: auto;
 }
+.ui-dialog--lg {
+  max-width: 760px;
+}
 .ui-dialog__title {
   margin: 0 0 var(--space-150);
   font: 600 var(--type-headline-small-size)/var(--type-headline-small-line) var(--font-family-base);
