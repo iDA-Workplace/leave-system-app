@@ -139,9 +139,11 @@ function FlowSteps({ flow }) {
 // ===== 員工資訊 =====
 function EmployeeInfoHeader({ userProfile, year }) {
   const tenure = formatTenure(userProfile.hire_date)
+  const name = userProfile.full_name
+    ? `${userProfile.full_name}${userProfile.english_name ? ` (${userProfile.english_name})` : ''}`
+    : userProfile.english_name
   const items = [
-    ['中文姓名', userProfile.full_name],
-    ['英文姓名', userProfile.english_name],
+    ['姓名', name],
     ['部門', userProfile.department],
     ['職稱', userProfile.job_title],
     ['入職年月日', userProfile.hire_date],
@@ -788,9 +790,12 @@ function ReviewCycles() {
   useEffect(() => { fetchAll() }, [])
 
   async function fetchAll() {
+    // Any existing template can serve as a cycle's fallback default (used
+    // for whichever departments don't have their own dedicated template) --
+    // it doesn't have to be a department-less one itself.
     const [r, t] = await Promise.all([
       supabase.from('annual_reviews').select('*').order('year', { ascending: false }),
-      supabase.from('review_templates').select('*').is('department', null).order('created_at', { ascending: false }),
+      supabase.from('review_templates').select('*').order('created_at', { ascending: false }),
     ])
     setReviews(r.data || [])
     setTemplates(t.data || [])
@@ -802,10 +807,10 @@ function ReviewCycles() {
       showToast('請填寫所有必填欄位', { tone: 'error' }); return
     }
     if (!defaultTemplateId) {
-      showToast('請先在「考核題目」分頁建立至少一份全公司預設模板', { tone: 'error' }); return
+      showToast('請先在「考核題目」分頁建立至少一份考核模板', { tone: 'error' }); return
     }
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('annual_reviews').insert({
+    const { error } = await supabase.from('annual_reviews').insert({
       title: newReview.title,
       year: newReview.year,
       template_id: defaultTemplateId,
@@ -815,6 +820,7 @@ function ReviewCycles() {
       evaluation_deadline: newReview.evaluation_deadline || null,
       created_by: user.id,
     })
+    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
     setNewReview({ title: '', year: new Date().getFullYear(), start_date: '', end_date: '', self_assessment_deadline: '', evaluation_deadline: '' })
     setShowAdd(false)
     fetchAll()
@@ -822,9 +828,10 @@ function ReviewCycles() {
   }
 
   async function handleToggleReviewStatus(review) {
-    await supabase.from('annual_reviews')
+    const { error } = await supabase.from('annual_reviews')
       .update({ status: review.status === 'active' ? 'closed' : 'active' })
       .eq('id', review.id)
+    if (error) { showToast('更新失敗：' + error.message, { tone: 'error' }); return }
     fetchAll()
   }
 
@@ -843,10 +850,10 @@ function ReviewCycles() {
           <div className="review-form-grid">
             <input className="ui-field__control" value={newReview.title} onChange={e => setNewReview(p => ({ ...p, title: e.target.value }))} placeholder="週期名稱，例：2026 年度考核" />
             <input className="ui-field__control" type="number" value={newReview.year} onChange={e => setNewReview(p => ({ ...p, year: Number(e.target.value) }))} />
-            <label className="review-inline-label">全公司預設模板
+            <label className="review-inline-label">預設模板（找不到部門專屬模板的人會用這份）
               <select className="ui-field__control" value={defaultTemplateId} onChange={e => setDefaultTemplateId(e.target.value)}>
                 <option value="">請選擇模板</option>
-                {templates.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name}（{t.department || '全公司預設'}）</option>)}
               </select>
             </label>
             <div />
@@ -923,12 +930,13 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
       showToast('您的帳號尚未設定部門，請聯繫管理員在「員工帳號管理」補上部門資料', { tone: 'error' }); return
     }
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('review_templates').insert({
+    const { error } = await supabase.from('review_templates').insert({
       name: newTemplate.name,
       description: newTemplate.description,
       department: isBoss ? (newTemplate.department || null) : userProfile.department,
       created_by: user.id,
     })
+    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
     setNewTemplate({ name: '', description: '', department: isBoss ? '' : (userProfile.department || '') })
     setShowAdd(false)
     fetchAll()
@@ -945,7 +953,7 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
 
   async function handleAddQuestion() {
     if (!newQuestion.question_text) { showToast('請填寫題目內容', { tone: 'error' }); return }
-    await supabase.from('review_template_questions').insert({
+    const { error } = await supabase.from('review_template_questions').insert({
       question_text: newQuestion.question_text,
       question_type: newQuestion.question_type,
       score_min: newQuestion.question_type === 'score' ? 1 : null,
@@ -953,6 +961,7 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
       template_id: editTemplate.id,
       order_index: questions.length,
     })
+    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
     setNewQuestion({ question_text: '', question_type: 'score' })
     fetchTemplateQuestions(editTemplate.id)
   }
@@ -1075,11 +1084,12 @@ function ReviewFlows({ userProfile, isBoss }) {
       showToast('您的帳號尚未設定部門，請聯繫管理員在「員工帳號管理」補上部門資料', { tone: 'error' }); return
     }
     const { data: { user } } = await supabase.auth.getUser()
-    await supabase.from('review_flows').insert({
+    const { error } = await supabase.from('review_flows').insert({
       name: newFlow.name,
       department: isBoss ? (newFlow.department || null) : userProfile.department,
       created_by: user.id,
     })
+    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
     setNewFlow({ name: '', department: isBoss ? '' : (userProfile.department || '') })
     setShowAdd(false)
     fetchAll()
@@ -1088,10 +1098,12 @@ function ReviewFlows({ userProfile, isBoss }) {
   async function handleSaveSteps(flowId) {
     const validSteps = steps.filter(s => s.evaluator_id)
     if (validSteps.length === 0) { showToast('請至少指定一位評核人', { tone: 'error' }); return }
-    await supabase.from('review_flow_steps').delete().eq('flow_id', flowId)
-    for (const [i, step] of validSteps.entries()) {
-      await supabase.from('review_flow_steps').insert({ flow_id: flowId, step_order: i + 1, evaluator_id: step.evaluator_id })
-    }
+    const { error: delError } = await supabase.from('review_flow_steps').delete().eq('flow_id', flowId)
+    if (delError) { showToast('儲存失敗：' + delError.message, { tone: 'error' }); return }
+    const { error: insError } = await supabase.from('review_flow_steps').insert(
+      validSteps.map((step, i) => ({ flow_id: flowId, step_order: i + 1, evaluator_id: step.evaluator_id }))
+    )
+    if (insError) { showToast('儲存失敗：' + insError.message, { tone: 'error' }); return }
     setEditSteps(null)
     fetchAll()
   }
