@@ -3,7 +3,7 @@ import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { invokeFunction } from '../lib/api'
 import ExportReport from './ExportReport'
-import { Button, Card, Chip, ConfirmDialog, PageHeader, Select, Skeleton, Tabs, TextField } from '../components/ui'
+import { Button, Card, Chip, ConfirmDialog, Dialog, PageHeader, Select, Skeleton, Tabs, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './AdminPanel.css'
 
@@ -11,18 +11,20 @@ const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor
 const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor: 'warning', boss: 'info' }
 
 // ===== 員工管理 =====
+const emptyNewUser = { email: '', full_name: '', english_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' }
+
 function UserManagement({ isAdmin, userProfile }) {
   const [users, setUsers] = useState([])
   const [flows, setFlows] = useState([])
-  const [annualLeaveMap, setAnnualLeaveMap] = useState({})
   const [loading, setLoading] = useState(true)
   const [editing, setEditing] = useState(null)
-  const [newUser, setNewUser] = useState({ email: '', full_name: '', english_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
+  const [newUser, setNewUser] = useState(emptyNewUser)
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [confirmToggle, setConfirmToggle] = useState(null)
   const { showToast } = useToast()
 
-  useEffect(() => { fetchUsers(); fetchFlows(); fetchAnnualLeave() }, [])
+  useEffect(() => { fetchUsers(); fetchFlows() }, [])
 
   async function fetchUsers() {
     const { data } = await supabase
@@ -39,16 +41,6 @@ function UserManagement({ isAdmin, userProfile }) {
       .select('id, name')
       .eq('is_active', true)
     setFlows(data || [])
-  }
-
-  async function fetchAnnualLeave() {
-    const { data } = await supabase
-      .from('annual_leave_summary')
-      .select('*')
-    setAnnualLeaveMap(data?.reduce((acc, item) => {
-      acc[item.user_id] = item
-      return acc
-    }, {}) || {})
   }
 
   async function handleAddUser() {
@@ -73,17 +65,17 @@ function UserManagement({ isAdmin, userProfile }) {
       }).eq('id', data.user.id)
     }
     showToast('員工新增成功！預設密碼為 Welcome@123')
-    setNewUser({ email: '', full_name: '', english_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' })
+    setNewUser(emptyNewUser)
     setShowAdd(false)
     setSaving(false)
-    setTimeout(() => { fetchUsers(); fetchAnnualLeave() }, 1000)
+    setTimeout(fetchUsers, 1000)
   }
 
-  async function handleUpdateUser(user) {
+  async function handleUpdateUser() {
     setSaving(true)
     const { data, error } = await invokeFunction('manage-users', {
       action: 'update',
-      userId: user.id,
+      userId: editing.id,
       full_name: editing.full_name,
       role: editing.role,
       slack_user_id: editing.slack_user_id,
@@ -97,24 +89,89 @@ function UserManagement({ isAdmin, userProfile }) {
       department: editing.department || null,
       job_title: editing.job_title || null,
       english_name: editing.english_name || null
-    }).eq('id', user.id)
+    }).eq('id', editing.id)
     setEditing(null)
     setSaving(false)
     showToast('已更新使用者')
     fetchUsers()
-    fetchAnnualLeave()
   }
+
+  // "刪除離職同仁" reuses the existing 帳號啟用 mechanism (deactivate, not a
+  // hard DB delete) -- per instruction, all historical leave/考核 records
+  // stay intact, the account just stops appearing as selectable elsewhere.
+  // Re-activating is still possible from the same place if needed.
+  async function handleToggleActive() {
+    setSaving(true)
+    const { data, error } = await invokeFunction('manage-users', {
+      action: 'update',
+      userId: confirmToggle.id,
+      full_name: confirmToggle.full_name,
+      role: confirmToggle.role,
+      slack_user_id: confirmToggle.slack_user_id,
+      is_active: !confirmToggle.is_active,
+      hire_date: confirmToggle.hire_date || null
+    })
+    if (error || data?.error) { showToast('操作失敗：' + (data?.error || error.message), { tone: 'error' }); setSaving(false); return }
+    setSaving(false)
+    showToast(confirmToggle.is_active ? '已刪除帳號' : '已恢復帳號')
+    setConfirmToggle(null)
+    setEditing(null)
+    fetchUsers()
+  }
+
+  if (loading) return <div><PageHeader title="員工帳號管理" /><Skeleton height="200px" /></div>
 
   return (
     <div>
       <PageHeader
         title="員工帳號管理"
-        actions={isAdmin && <Button size="sm" onClick={() => setShowAdd(!showAdd)}>+ 新增員工</Button>}
+        actions={isAdmin && <Button size="sm" onClick={() => { setNewUser(emptyNewUser); setShowAdd(true) }}>+ 新增員工</Button>}
       />
 
+      {users.length === 0 ? (
+        <Card><p className="admin-hint">尚無員工資料</p></Card>
+      ) : (
+        <div className="ui-table-wrap">
+          <table className="ui-table">
+            <thead>
+              <tr><th>姓名</th><th>部門</th><th>職稱</th><th>角色</th><th>Slack ID</th><th>入職日期</th><th>審核流程</th>{isAdmin && <th>操作</th>}</tr>
+            </thead>
+            <tbody>
+              {users.map(user => (
+                <tr key={user.id} style={{ opacity: user.is_active ? 1 : 0.6 }}>
+                  <td>
+                    {user.full_name}{user.english_name && ` (${user.english_name})`}
+                    {user.is_admin && <> <Chip tone="info">管理員</Chip></>}
+                    {!user.is_active && <> <Chip tone="error">已刪除</Chip></>}
+                  </td>
+                  <td>{user.department || '—'}</td>
+                  <td>{user.job_title || '—'}</td>
+                  <td><Chip tone={roleTone[user.role] || 'neutral'}>{roleMap[user.role]}</Chip></td>
+                  <td>{user.slack_user_id || '—'}</td>
+                  <td>{user.hire_date || '—'}</td>
+                  <td>{user.default_flow?.name || '—'}</td>
+                  {isAdmin && (
+                    <td><Button size="sm" variant="outlined" onClick={() => setEditing({ ...user })}>編輯</Button></td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
       {isAdmin && showAdd && (
-        <Card className="admin-form-card">
-          <h4 className="admin-form-card__title">新增員工</h4>
+        <Dialog
+          title="新增員工"
+          labelledBy="add-user-dialog-title"
+          onClose={() => setShowAdd(false)}
+          actions={(
+            <>
+              <Button variant="text" onClick={() => setShowAdd(false)}>取消</Button>
+              <Button loading={saving} onClick={handleAddUser}>新增</Button>
+            </>
+          )}
+        >
           <p className="admin-form-card__hint">新員工預設密碼為 <strong>Welcome@123</strong>，登入後可自行修改。</p>
           <div className="admin-form-grid">
             <TextField label="中文姓名" required value={newUser.full_name} onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))} placeholder="請輸入中文姓名" />
@@ -131,95 +188,66 @@ function UserManagement({ isAdmin, userProfile }) {
             <TextField label="部門" value={newUser.department} onChange={e => setNewUser(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
             <TextField label="職稱" value={newUser.job_title} onChange={e => setNewUser(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
           </div>
-          <div className="admin-form-actions">
-            <Button loading={saving} onClick={handleAddUser}>新增</Button>
-            <Button variant="text" onClick={() => setShowAdd(false)}>取消</Button>
-            <label className="admin-checkbox-label">
-              <input type="checkbox" checked={newUser.is_admin} onChange={e => setNewUser(p => ({ ...p, is_admin: e.target.checked }))} />
-              同時為管理員（管理員可與其他角色重疊）
-            </label>
-          </div>
-        </Card>
+          <label className="admin-checkbox-label">
+            <input type="checkbox" checked={newUser.is_admin} onChange={e => setNewUser(p => ({ ...p, is_admin: e.target.checked }))} />
+            同時為管理員（管理員可與其他角色重疊）
+          </label>
+        </Dialog>
       )}
 
-      {loading ? (
-        <div className="admin-list"><Skeleton height="80px" /><Skeleton height="80px" /></div>
-      ) : (
-        <div className="admin-list">
-          {users.map(user => (
-            <Card key={user.id}>
-              {isAdmin && editing?.id === user.id ? (
-                <div>
-                  <div className="admin-form-grid">
-                    <TextField label="中文姓名" value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} />
-                    <TextField label="英文姓名" value={editing.english_name || ''} onChange={e => setEditing(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
-                    <Select label="角色" value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))}>
-                      {Object.entries(roleMap).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-                    </Select>
-                    <Select label="審核流程" value={editing.default_flow_id || ''} onChange={e => setEditing(p => ({ ...p, default_flow_id: e.target.value }))}>
-                      <option value="">請選擇審核流程</option>
-                      {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                    </Select>
-                    <TextField label="Slack User ID" value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} placeholder="U0123ABCD" />
-                    <TextField label="入職日期" type="date" value={editing.hire_date || ''} onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))} />
-                    <TextField label="部門" value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
-                    <TextField label="職稱" value={editing.job_title || ''} onChange={e => setEditing(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
-                  </div>
-                  <div className="admin-form-actions">
-                    <Button loading={saving} onClick={() => handleUpdateUser(user)}>儲存</Button>
-                    <Button variant="text" onClick={() => setEditing(null)}>取消</Button>
-                    <label className="admin-checkbox-label">
-                      <input type="checkbox" checked={editing.is_active} onChange={e => setEditing(p => ({ ...p, is_active: e.target.checked }))} />
-                      帳號啟用
-                    </label>
-                    <label className="admin-checkbox-label">
-                      <input type="checkbox" checked={!!editing.is_admin} onChange={e => setEditing(p => ({ ...p, is_admin: e.target.checked }))} />
-                      同時為管理員
-                    </label>
-                  </div>
-                </div>
-              ) : (
-                <div className="admin-row">
-                  <div>
-                    <div className="admin-row__title">
-                      {user.full_name}{user.english_name && ` (${user.english_name})`}
-                      <Chip tone={roleTone[user.role] || 'neutral'}>{roleMap[user.role]}</Chip>
-                      {user.is_admin && <Chip tone="info">管理員</Chip>}
-                      {!user.is_active && <Chip tone="error">停用</Chip>}
-                    </div>
-                    <div className="admin-row__meta">
-                      {user.email}{user.slack_user_id && ` ｜ Slack: ${user.slack_user_id}`}
-                      {(user.department || user.job_title) && ` ｜ ${[user.department, user.job_title].filter(Boolean).join(' / ')}`}
-                    </div>
-                    {user.default_flow?.name && (
-                      <div className="admin-row__flow">審核流程：{user.default_flow.name}</div>
-                    )}
-                    {isAdmin && user.hire_date && (
-                      <div className="admin-row__service">
-                        <span>入職：{user.hire_date}</span>
-                        {annualLeaveMap[user.id] && (
-                          <>
-                            <span>
-                              年資：
-                              {annualLeaveMap[user.id].service_years > 0 ? `${annualLeaveMap[user.id].service_years}年` : ''}
-                              {annualLeaveMap[user.id].service_months > 0 ? `${annualLeaveMap[user.id].service_months}個月` : ''}
-                              {annualLeaveMap[user.id].service_days > 0 ? `${annualLeaveMap[user.id].service_days}天` : ''}
-                            </span>
-                            <span>今年特休：{annualLeaveMap[user.id].entitled_days} 天</span>
-                            <span className={(annualLeaveMap[user.id].entitled_days - annualLeaveMap[user.id].used_days) <= 0 ? 'admin-row__remaining--low' : 'admin-row__remaining'}>
-                              剩餘：{annualLeaveMap[user.id].entitled_days - annualLeaveMap[user.id].used_days} 天
-                            </span>
-                          </>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                  {isAdmin && <Button variant="outlined" size="sm" onClick={() => setEditing({ ...user })}>編輯</Button>}
-                </div>
-              )}
-            </Card>
-          ))}
-        </div>
+      {isAdmin && editing && (
+        <Dialog
+          title={`編輯員工 — ${editing.full_name}`}
+          labelledBy="edit-user-dialog-title"
+          onClose={() => setEditing(null)}
+          actions={(
+            <>
+              <Button
+                variant={editing.is_active ? 'danger-outlined' : 'outlined'}
+                onClick={() => setConfirmToggle(editing)}
+              >
+                {editing.is_active ? '刪除帳號' : '恢復帳號'}
+              </Button>
+              <Button variant="text" onClick={() => setEditing(null)}>取消</Button>
+              <Button loading={saving} onClick={handleUpdateUser}>儲存</Button>
+            </>
+          )}
+        >
+          <div className="admin-form-grid">
+            <TextField label="中文姓名" value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} />
+            <TextField label="英文姓名" value={editing.english_name || ''} onChange={e => setEditing(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
+            <TextField label="Email" value={editing.email || ''} disabled />
+            <Select label="角色" value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))}>
+              {Object.entries(roleMap).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+            </Select>
+            <Select label="審核流程" value={editing.default_flow_id || ''} onChange={e => setEditing(p => ({ ...p, default_flow_id: e.target.value }))}>
+              <option value="">請選擇審核流程</option>
+              {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+            </Select>
+            <TextField label="Slack User ID" value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} placeholder="U0123ABCD" />
+            <TextField label="入職日期" type="date" value={editing.hire_date || ''} onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))} />
+            <TextField label="部門" value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
+            <TextField label="職稱" value={editing.job_title || ''} onChange={e => setEditing(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
+          </div>
+          <label className="admin-checkbox-label">
+            <input type="checkbox" checked={!!editing.is_admin} onChange={e => setEditing(p => ({ ...p, is_admin: e.target.checked }))} />
+            同時為管理員
+          </label>
+        </Dialog>
+      )}
+
+      {confirmToggle && (
+        <ConfirmDialog
+          title={confirmToggle.is_active ? '刪除帳號' : '恢復帳號'}
+          description={confirmToggle.is_active
+            ? `確定要刪除 ${confirmToggle.full_name} 的帳號嗎？這個人所有的歷史請假／考核紀錄都會保留，只是帳號會停用、不再出現在可選名單中。之後仍可以在這裡重新恢復。`
+            : `確定要恢復 ${confirmToggle.full_name} 的帳號嗎？`}
+          confirmLabel={confirmToggle.is_active ? '刪除' : '恢復'}
+          danger={confirmToggle.is_active}
+          loading={saving}
+          onConfirm={handleToggleActive}
+          onCancel={() => setConfirmToggle(null)}
+        />
       )}
     </div>
   )
@@ -242,16 +270,16 @@ function FlowManagement({ isAdmin }) {
   useEffect(() => { fetchFlows(); fetchUsers() }, [])
 
   async function fetchFlows() {
-    let query = supabase
+    // Retired (is_active = false) flows are never shown here any more --
+    // 封存 used to just grey a flow out; now the retire action tries to
+    // hard-delete it outright and only falls back to is_active=false when
+    // that's blocked by historical data, in which case it should disappear
+    // from this list entirely rather than sit around greyed out.
+    const { data } = await supabase
       .from('approval_flows')
       .select(`*, steps:approval_flow_steps(*, approver:users!approval_flow_steps_approver_id_fkey(full_name))`)
+      .eq('is_active', true)
       .order('created_at')
-
-    if (!isAdmin) {
-      query = query.eq('is_active', true)
-    }
-
-    const { data } = await query
     setFlows(data || [])
     setLoading(false)
   }
@@ -264,9 +292,11 @@ function FlowManagement({ isAdmin }) {
   async function handleAddFlow() {
     if (!newFlow.name) { showToast('請填寫流程名稱', { tone: 'error' }); return }
     if (newFlow.is_default) {
-      await supabase.from('approval_flows').update({ is_default: false }).neq('id', '00000000-0000-0000-0000-000000000000')
+      const { error: clearError } = await supabase.from('approval_flows').update({ is_default: false }).neq('id', '00000000-0000-0000-0000-000000000000')
+      if (clearError) { showToast('新增失敗：' + clearError.message, { tone: 'error' }); return }
     }
-    await supabase.from('approval_flows').insert(newFlow)
+    const { error } = await supabase.from('approval_flows').insert({ ...newFlow, is_active: true })
+    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
     setNewFlow({ name: '', description: '', is_default: false })
     setShowAdd(false)
     fetchFlows()
@@ -274,34 +304,39 @@ function FlowManagement({ isAdmin }) {
 
   async function handleRenameFlow(flowId) {
     if (!newName.trim()) { showToast('請填寫流程名稱', { tone: 'error' }); return }
-    await supabase.from('approval_flows').update({ name: newName.trim() }).eq('id', flowId)
+    const { error } = await supabase.from('approval_flows').update({ name: newName.trim() }).eq('id', flowId)
+    if (error) { showToast('重新命名失敗：' + error.message, { tone: 'error' }); return }
     setEditName(null)
     setNewName('')
     fetchFlows()
   }
 
-  async function handleArchiveFlow(flowId, isActive) {
-    await supabase.from('approval_flows').update({ is_active: !isActive }).eq('id', flowId)
-    fetchFlows()
-  }
-
+  // "刪除" tries a real delete first. If the flow has historical leave
+  // requests (or is still someone's default flow) pointing at it, the
+  // database blocks the delete -- fall back to marking it retired so it at
+  // least disappears from this list without losing that historical data.
   async function handleDeleteFlow(flowId) {
     const { error } = await supabase.from('approval_flows').delete().eq('id', flowId)
     if (error) {
-      showToast('此流程有假單記錄，無法直接刪除。建議使用「封存」功能將其停用。', { tone: 'error' })
+      const { error: retireError } = await supabase.from('approval_flows').update({ is_active: false }).eq('id', flowId)
+      if (retireError) { showToast('刪除失敗：' + retireError.message, { tone: 'error' }); return }
+      showToast('此流程仍有歷史假單紀錄在使用，已從清單移除（歷史資料保留）')
+      fetchFlows()
       return
     }
+    showToast('已刪除流程')
     fetchFlows()
   }
 
   async function handleSaveSteps(flowId) {
-    await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
-    for (const step of steps) {
-      if (step.approver_id) {
-        await supabase.from('approval_flow_steps').insert({
-          flow_id: flowId, step_order: step.step_order, approver_id: step.approver_id
-        })
-      }
+    const { error: delError } = await supabase.from('approval_flow_steps').delete().eq('flow_id', flowId)
+    if (delError) { showToast('儲存失敗：' + delError.message, { tone: 'error' }); return }
+    const validSteps = steps.filter(s => s.approver_id)
+    if (validSteps.length > 0) {
+      const { error: insError } = await supabase.from('approval_flow_steps').insert(
+        validSteps.map(step => ({ flow_id: flowId, step_order: step.step_order, approver_id: step.approver_id }))
+      )
+      if (insError) { showToast('儲存失敗：' + insError.message, { tone: 'error' }); return }
     }
     setEditSteps(null)
     fetchFlows()
@@ -337,7 +372,7 @@ function FlowManagement({ isAdmin }) {
       ) : (
         <div className="admin-list">
           {flows.map(flow => (
-            <Card key={flow.id} style={{ opacity: flow.is_active ? 1 : 0.6 }}>
+            <Card key={flow.id}>
               <div className="admin-flow__header">
                 <div style={{ flex: 1 }}>
                   {editName === flow.id ? (
@@ -350,7 +385,6 @@ function FlowManagement({ isAdmin }) {
                     <div className="admin-row__title">
                       {flow.name}
                       {flow.is_default && <Chip tone="info">預設</Chip>}
-                      {!flow.is_active && <Chip tone="neutral">已封存</Chip>}
                     </div>
                   )}
                   {flow.description && <div className="admin-row__meta">{flow.description}</div>}
@@ -362,9 +396,6 @@ function FlowManagement({ isAdmin }) {
                       setSteps(flow.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ step_order: s.step_order, approver_id: s.approver_id })) || [{ step_order: 1, approver_id: '' }])
                     }}>設定審核人</Button>
                     <Button size="sm" variant="outlined" onClick={() => { setEditName(flow.id); setNewName(flow.name) }}>重新命名</Button>
-                    <Button size="sm" variant="outlined" onClick={() => handleArchiveFlow(flow.id, flow.is_active)}>
-                      {flow.is_active ? '封存' : '啟用'}
-                    </Button>
                     <Button size="sm" variant="danger-outlined" onClick={() => setConfirmTarget(flow)}>刪除</Button>
                   </div>
                 )}
@@ -412,118 +443,12 @@ function FlowManagement({ isAdmin }) {
       {confirmTarget && (
         <ConfirmDialog
           title="刪除審核流程"
-          description="確定要刪除這個流程嗎？此操作無法復原。"
+          description="確定要刪除這個流程嗎？如果這個流程完全沒有歷史假單紀錄，會直接永久刪除；如果曾經被使用過，系統會保留歷史資料、但這個流程會從清單移除、無法再選用。此操作無法復原。"
           confirmLabel="刪除"
           danger
           onConfirm={() => { handleDeleteFlow(confirmTarget.id); setConfirmTarget(null) }}
           onCancel={() => setConfirmTarget(null)}
         />
-      )}
-    </div>
-  )
-}
-
-// ===== 代理審核設定 =====
-function DelegateManagement({ userProfile, isAdmin, isSupervisor }) {
-  const [delegates, setDelegates] = useState([])
-  const [users, setUsers] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [showAdd, setShowAdd] = useState(false)
-  const [newDelegate, setNewDelegate] = useState({ original_approver_id: '', delegate_user_id: '', start_date: '', end_date: '' })
-  const { showToast } = useToast()
-
-  useEffect(() => { fetchDelegates(); fetchUsers() }, [])
-
-  async function fetchDelegates() {
-    let query = supabase
-      .from('approval_delegates')
-      .select(`*, original:users!approval_delegates_original_approver_id_fkey(full_name), delegate:users!approval_delegates_delegate_user_id_fkey(full_name)`)
-      .order('created_at', { ascending: false })
-
-    if (isSupervisor && !isAdmin) {
-      query = query.eq('original_approver_id', userProfile.id)
-    }
-
-    const { data } = await query
-    setDelegates(data || [])
-    setLoading(false)
-  }
-
-  async function fetchUsers() {
-    const { data } = await supabase.from('users').select('id, full_name').eq('is_active', true)
-    setUsers(data || [])
-  }
-
-  async function handleAdd() {
-    if (!newDelegate.delegate_user_id || !newDelegate.start_date || !newDelegate.end_date) {
-      showToast('請填寫所有欄位', { tone: 'error' }); return
-    }
-    const originalId = isAdmin && !isSupervisor ? newDelegate.original_approver_id : userProfile.id
-    if (!originalId) { showToast('請選擇被代理的主管', { tone: 'error' }); return }
-    await supabase.from('approval_delegates').insert({
-      original_approver_id: originalId,
-      delegate_user_id: newDelegate.delegate_user_id,
-      start_date: newDelegate.start_date,
-      end_date: newDelegate.end_date,
-      created_by: userProfile.id
-    })
-    setNewDelegate({ original_approver_id: '', delegate_user_id: '', start_date: '', end_date: '' })
-    setShowAdd(false)
-    fetchDelegates()
-  }
-
-  async function toggleActive(delegate) {
-    await supabase.from('approval_delegates').update({ is_active: !delegate.is_active }).eq('id', delegate.id)
-    fetchDelegates()
-  }
-
-  return (
-    <div>
-      <PageHeader title="代理審核設定" actions={<Button size="sm" onClick={() => setShowAdd(!showAdd)}>+ 新增代理</Button>} />
-
-      {showAdd && (
-        <Card className="admin-form-card">
-          <h4 className="admin-form-card__title">新增代理設定</h4>
-          <div className="admin-form-grid">
-            {isAdmin && (
-              <Select label="被代理的主管" required value={newDelegate.original_approver_id} onChange={e => setNewDelegate(p => ({ ...p, original_approver_id: e.target.value }))}>
-                <option value="">請選擇</option>
-                {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-              </Select>
-            )}
-            <Select label="代理人" required value={newDelegate.delegate_user_id} onChange={e => setNewDelegate(p => ({ ...p, delegate_user_id: e.target.value }))}>
-              <option value="">請選擇</option>
-              {users.filter(u => u.id !== (isAdmin ? newDelegate.original_approver_id : userProfile.id)).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
-            </Select>
-            <TextField label="開始日期" required type="date" value={newDelegate.start_date} onChange={e => setNewDelegate(p => ({ ...p, start_date: e.target.value }))} />
-            <TextField label="結束日期" required type="date" value={newDelegate.end_date} min={newDelegate.start_date} onChange={e => setNewDelegate(p => ({ ...p, end_date: e.target.value }))} />
-          </div>
-          <div className="admin-form-actions">
-            <Button onClick={handleAdd}>新增</Button>
-            <Button variant="text" onClick={() => setShowAdd(false)}>取消</Button>
-          </div>
-        </Card>
-      )}
-
-      {loading ? (
-        <div className="admin-list"><Skeleton height="72px" /></div>
-      ) : (
-        <div className="admin-list">
-          {delegates.map(d => (
-            <Card key={d.id} style={{ opacity: d.is_active ? 1 : 0.6 }}>
-              <div className="admin-row">
-                <div>
-                  <div className="admin-row__title">{d.original?.full_name} → 由 {d.delegate?.full_name} 代理</div>
-                  <div className="admin-row__meta">{d.start_date} ～ {d.end_date}</div>
-                </div>
-                <div className="admin-flow__actions">
-                  <Chip tone={d.is_active ? 'success' : 'neutral'}>{d.is_active ? '啟用中' : '已停用'}</Chip>
-                  <Button size="sm" variant="outlined" onClick={() => toggleActive(d)}>{d.is_active ? '停用' : '啟用'}</Button>
-                </div>
-              </div>
-            </Card>
-          ))}
-        </div>
       )}
     </div>
   )
@@ -703,24 +628,18 @@ function AdminPanel({ userProfile }) {
   const location = useLocation()
 
   const isAdmin = !!userProfile?.is_admin
-  const isSupervisor = userProfile?.role === 'supervisor'
 
-  if (!isAdmin && !isSupervisor) return <Navigate to="/" replace />
+  // 代理審核設定 was the only thing a non-admin supervisor could reach in
+  // here; now that it's removed, 管理後台 is admin-only.
+  if (!isAdmin) return <Navigate to="/" replace />
 
-  const tabs = []
-
-  if (isAdmin) {
-    tabs.push({ key: 'users', path: '/admin', label: '員工帳號管理' })
-    tabs.push({ key: 'flows', path: '/admin/flows', label: '審核流程' })
-    tabs.push({ key: 'notifications', path: '/admin/notifications', label: '通知對象' })
-    tabs.push({ key: 'leave-types', path: '/admin/leave-types', label: '假別管理' })
-  }
-  if (isAdmin || isSupervisor) {
-    tabs.push({ key: 'delegates', path: '/admin/delegates', label: '代理審核設定' })
-  }
-  if (isAdmin) {
-    tabs.push({ key: 'export', path: '/admin/export', label: '匯出報表' })
-  }
+  const tabs = [
+    { key: 'users', path: '/admin', label: '員工帳號管理' },
+    { key: 'flows', path: '/admin/flows', label: '審核流程' },
+    { key: 'notifications', path: '/admin/notifications', label: '通知對象' },
+    { key: 'leave-types', path: '/admin/leave-types', label: '假別管理' },
+    { key: 'export', path: '/admin/export', label: '匯出報表' },
+  ]
 
   return (
     <div>
@@ -728,21 +647,12 @@ function AdminPanel({ userProfile }) {
       <Tabs tabs={tabs.map(t => ({ ...t, to: t.path, active: location.pathname === t.path }))} />
 
       <Routes>
-        <Route index element={
-          isAdmin
-            ? <UserManagement isAdmin={isAdmin} userProfile={userProfile} />
-            : <Navigate to="delegates" replace />
-        } />
-        {isAdmin && <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />}
-        {isAdmin && <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />}
-        {isAdmin && <Route path="leave-types" element={<LeaveTypeManagement />} />}
+        <Route index element={<UserManagement isAdmin={isAdmin} userProfile={userProfile} />} />
+        <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />
+        <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />
+        <Route path="leave-types" element={<LeaveTypeManagement />} />
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
-        {(isAdmin || isSupervisor) && (
-          <Route path="delegates" element={<DelegateManagement userProfile={userProfile} isAdmin={isAdmin} isSupervisor={isSupervisor} />} />
-        )}
-        {isAdmin && (
-          <Route path="export" element={<ExportReport />} />
-        )}
+        <Route path="export" element={<ExportReport />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     </div>

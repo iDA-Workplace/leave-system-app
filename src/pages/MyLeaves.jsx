@@ -121,32 +121,13 @@ function MyLeaves({ userProfile }) {
 
   async function fetchPendingRequests() {
     setPendingLoading(true)
-    const today = new Date().toISOString().split('T')[0]
 
     const { data: flowSteps } = await supabase
       .from('approval_flow_steps')
       .select('flow_id, step_order')
       .eq('approver_id', userProfile.id)
 
-    const { data: delegateFor } = await supabase
-      .from('approval_delegates')
-      .select('original_approver_id')
-      .eq('delegate_user_id', userProfile.id)
-      .eq('is_active', true)
-      .lte('start_date', today)
-      .gte('end_date', today)
-
-    const originalApproverIds = delegateFor?.map(d => d.original_approver_id) || []
-    let delegateSteps = []
-    if (originalApproverIds.length > 0) {
-      const { data } = await supabase
-        .from('approval_flow_steps')
-        .select('flow_id, step_order')
-        .in('approver_id', originalApproverIds)
-      delegateSteps = data || []
-    }
-
-    const allSteps = [...(flowSteps || []), ...delegateSteps]
+    const allSteps = flowSteps || []
     if (allSteps.length === 0) {
       setPendingRequests([])
       setPendingLoading(false)
