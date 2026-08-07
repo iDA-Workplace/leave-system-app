@@ -84,7 +84,7 @@ begin
         where kcu.table_name = 'review_evaluations'
           and kcu.table_schema = 'public'
         group by kcu.constraint_name
-        having array_agg(kcu.column_name order by kcu.column_name) = array['participant_id', 'question_id']
+        having array_agg(kcu.column_name::text order by kcu.column_name::text) = array['participant_id', 'question_id']
       )
   loop
     execute format('alter table public.review_evaluations drop constraint %I', con.constraint_name);
