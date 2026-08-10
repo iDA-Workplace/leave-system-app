@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
-  Button, Card, Chip, Dialog, EmptyState, PageHeader, Skeleton, Tabs, Textarea,
+  Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, PageHeader, Skeleton, Tabs, Textarea,
 } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './Review.css'
@@ -785,6 +785,9 @@ function ReviewCycles() {
   const [newReview, setNewReview] = useState({ title: '', year: new Date().getFullYear(), start_date: '', end_date: '', self_assessment_deadline: '', evaluation_deadline: '' })
   const [defaultTemplateId, setDefaultTemplateId] = useState('')
   const [templates, setTemplates] = useState([])
+  const [editingReview, setEditingReview] = useState(null)
+  const [confirmDeleteReview, setConfirmDeleteReview] = useState(null)
+  const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
 
   useEffect(() => { fetchAll() }, [])
@@ -832,6 +835,56 @@ function ReviewCycles() {
       .update({ status: review.status === 'active' ? 'closed' : 'active' })
       .eq('id', review.id)
     if (error) { showToast('更新失敗：' + error.message, { tone: 'error' }); return }
+    fetchAll()
+  }
+
+  function openEdit(review) {
+    setEditingReview({
+      id: review.id,
+      title: review.title,
+      year: review.year,
+      template_id: review.template_id || '',
+      start_date: review.start_date || '',
+      end_date: review.end_date || '',
+      self_assessment_deadline: review.self_assessment_deadline || '',
+      evaluation_deadline: review.evaluation_deadline || '',
+    })
+  }
+
+  async function handleSaveEdit() {
+    if (!editingReview.title || !editingReview.start_date || !editingReview.end_date || !editingReview.template_id) {
+      showToast('請填寫所有必填欄位', { tone: 'error' }); return
+    }
+    setSaving(true)
+    const { data: updated, error } = await supabase.from('annual_reviews').update({
+      title: editingReview.title,
+      year: editingReview.year,
+      template_id: editingReview.template_id,
+      start_date: editingReview.start_date,
+      end_date: editingReview.end_date,
+      self_assessment_deadline: editingReview.self_assessment_deadline || null,
+      evaluation_deadline: editingReview.evaluation_deadline || null,
+    }).eq('id', editingReview.id).select()
+    setSaving(false)
+    if (error || !updated?.length) {
+      showToast('儲存失敗：' + (error?.message || '沒有權限寫入'), { tone: 'error' }); return
+    }
+    setEditingReview(null)
+    showToast('已更新考核週期')
+    fetchAll()
+  }
+
+  async function handleDeleteReview() {
+    setSaving(true)
+    const { error } = await supabase.from('annual_reviews').delete().eq('id', confirmDeleteReview.id)
+    setSaving(false)
+    if (error) {
+      showToast('刪除失敗：這個週期已經有員工參與考核，無法刪除，請改用「結束週期」。', { tone: 'error' })
+      setConfirmDeleteReview(null)
+      return
+    }
+    showToast('已刪除考核週期')
+    setConfirmDeleteReview(null)
     fetchAll()
   }
 
@@ -889,11 +942,55 @@ function ReviewCycles() {
                 <Button size="sm" variant="outlined" onClick={() => handleToggleReviewStatus(r)}>
                   {r.status === 'active' ? '結束週期' : '重新開放'}
                 </Button>
+                <Button size="sm" variant="outlined" onClick={() => openEdit(r)}>編輯</Button>
+                <Button size="sm" variant="danger-outlined" onClick={() => setConfirmDeleteReview(r)}>刪除</Button>
               </div>
             </div>
           </Card>
         ))}
       </div>
+
+      {editingReview && (
+        <Dialog
+          title="編輯考核週期"
+          labelledBy="edit-review-dialog-title"
+          onClose={() => setEditingReview(null)}
+          actions={(
+            <>
+              <Button variant="text" onClick={() => setEditingReview(null)}>取消</Button>
+              <Button loading={saving} onClick={handleSaveEdit}>儲存</Button>
+            </>
+          )}
+        >
+          <div className="review-form-grid">
+            <input className="ui-field__control" value={editingReview.title} onChange={e => setEditingReview(p => ({ ...p, title: e.target.value }))} placeholder="週期名稱" />
+            <input className="ui-field__control" type="number" value={editingReview.year} onChange={e => setEditingReview(p => ({ ...p, year: Number(e.target.value) }))} />
+            <label className="review-inline-label">預設模板
+              <select className="ui-field__control" value={editingReview.template_id} onChange={e => setEditingReview(p => ({ ...p, template_id: e.target.value }))}>
+                <option value="">請選擇模板</option>
+                {templates.map(t => <option key={t.id} value={t.id}>{t.name}（{t.department || '全公司預設'}）</option>)}
+              </select>
+            </label>
+            <div />
+            <label className="review-inline-label">自評期間開始<input className="ui-field__control" type="date" value={editingReview.start_date} onChange={e => setEditingReview(p => ({ ...p, start_date: e.target.value }))} /></label>
+            <label className="review-inline-label">整體結束日<input className="ui-field__control" type="date" value={editingReview.end_date} min={editingReview.start_date} onChange={e => setEditingReview(p => ({ ...p, end_date: e.target.value }))} /></label>
+            <label className="review-inline-label">自評截止日<input className="ui-field__control" type="date" value={editingReview.self_assessment_deadline} onChange={e => setEditingReview(p => ({ ...p, self_assessment_deadline: e.target.value }))} /></label>
+            <label className="review-inline-label">評分截止日<input className="ui-field__control" type="date" value={editingReview.evaluation_deadline} onChange={e => setEditingReview(p => ({ ...p, evaluation_deadline: e.target.value }))} /></label>
+          </div>
+        </Dialog>
+      )}
+
+      {confirmDeleteReview && (
+        <ConfirmDialog
+          title="刪除考核週期"
+          description={`確定要刪除「${confirmDeleteReview.title}」嗎？如果已經有員工被加入這個週期的考核，會刪除失敗，請改用「結束週期」。此操作無法復原。`}
+          confirmLabel="刪除"
+          danger
+          loading={saving}
+          onConfirm={handleDeleteReview}
+          onCancel={() => setConfirmDeleteReview(null)}
+        />
+      )}
     </div>
   )
 }
@@ -907,6 +1004,9 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
   const [editTemplate, setEditTemplate] = useState(null)
   const [questions, setQuestions] = useState([])
   const [newQuestion, setNewQuestion] = useState({ question_text: '', question_type: 'score' })
+  const [editingMeta, setEditingMeta] = useState(null)
+  const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState(null)
+  const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
 
   useEffect(() => { fetchAll() }, [])
@@ -967,8 +1067,49 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
   }
 
   async function handleDeleteQuestion(id) {
-    await supabase.from('review_template_questions').delete().eq('id', id)
+    const { error } = await supabase.from('review_template_questions').delete().eq('id', id)
+    if (error) { showToast('刪除失敗：' + error.message, { tone: 'error' }); return }
     fetchTemplateQuestions(editTemplate.id)
+  }
+
+  function openEditMeta(t) {
+    setEditingMeta({ id: t.id, name: t.name, description: t.description || '', department: t.department || '' })
+  }
+
+  async function handleSaveMeta() {
+    if (!editingMeta.name) { showToast('請填寫模板名稱', { tone: 'error' }); return }
+    setSaving(true)
+    const { data: updated, error } = await supabase.from('review_templates').update({
+      name: editingMeta.name,
+      description: editingMeta.description || null,
+      department: isBoss ? (editingMeta.department || null) : userProfile.department,
+    }).eq('id', editingMeta.id).select()
+    setSaving(false)
+    if (error || !updated?.length) {
+      showToast('儲存失敗：' + (error?.message || '沒有權限寫入'), { tone: 'error' }); return
+    }
+    setEditingMeta(null)
+    showToast('已更新模板')
+    fetchAll()
+  }
+
+  async function handleDeleteTemplate() {
+    setSaving(true)
+    // Defensive: delete this template's own questions first rather than
+    // assuming the DB cascades, then the template itself. If some
+    // annual_reviews cycle still points at this template as its default,
+    // the second delete will fail and we surface that clearly.
+    await supabase.from('review_template_questions').delete().eq('template_id', confirmDeleteTemplate.id)
+    const { error } = await supabase.from('review_templates').delete().eq('id', confirmDeleteTemplate.id)
+    setSaving(false)
+    if (error) {
+      showToast('刪除失敗：這個模板還被某個考核週期設為預設模板，請先到「考核週期」更換預設模板再刪除。', { tone: 'error' })
+      setConfirmDeleteTemplate(null)
+      return
+    }
+    showToast('已刪除模板')
+    setConfirmDeleteTemplate(null)
+    fetchAll()
   }
 
   if (loading) return <Skeleton height="120px" />
@@ -1015,7 +1156,11 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
                   <div className="review-row__title">{t.name}</div>
                   <div className="review-row__meta">{t.department || '全公司預設'}{t.description ? `｜${t.description}` : ''}</div>
                 </div>
-                <Button size="sm" variant="outlined" onClick={() => { setEditTemplate(t); fetchTemplateQuestions(t.id) }}>設定題目</Button>
+                <div className="review-row__actions">
+                  <Button size="sm" variant="outlined" onClick={() => { setEditTemplate(t); fetchTemplateQuestions(t.id) }}>設定題目</Button>
+                  <Button size="sm" variant="outlined" onClick={() => openEditMeta(t)}>編輯</Button>
+                  <Button size="sm" variant="danger-outlined" onClick={() => setConfirmDeleteTemplate(t)}>刪除</Button>
+                </div>
               </div>
 
               {editTemplate?.id === t.id && (
@@ -1047,6 +1192,45 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
             </Card>
           ))}
         </div>
+      )}
+
+      {editingMeta && (
+        <Dialog
+          title="編輯模板"
+          labelledBy="edit-template-dialog-title"
+          onClose={() => setEditingMeta(null)}
+          actions={(
+            <>
+              <Button variant="text" onClick={() => setEditingMeta(null)}>取消</Button>
+              <Button loading={saving} onClick={handleSaveMeta}>儲存</Button>
+            </>
+          )}
+        >
+          <div className="review-form-grid review-form-grid--single">
+            <input className="ui-field__control" value={editingMeta.name} onChange={e => setEditingMeta(p => ({ ...p, name: e.target.value }))} placeholder="模板名稱" />
+            <input className="ui-field__control" value={editingMeta.description} onChange={e => setEditingMeta(p => ({ ...p, description: e.target.value }))} placeholder="說明（選填）" />
+            {isBoss ? (
+              <select className="ui-field__control" value={editingMeta.department} onChange={e => setEditingMeta(p => ({ ...p, department: e.target.value }))}>
+                <option value="">全公司預設（無特定部門）</option>
+                {departments.map(d => <option key={d} value={d}>{d}</option>)}
+              </select>
+            ) : (
+              <div className="review-hint">部門：{userProfile.department || '（尚未設定，請聯繫管理員）'}</div>
+            )}
+          </div>
+        </Dialog>
+      )}
+
+      {confirmDeleteTemplate && (
+        <ConfirmDialog
+          title="刪除模板"
+          description={`確定要刪除「${confirmDeleteTemplate.name}」嗎？裡面的所有題目也會一起刪除。如果這個模板還被某個考核週期設為預設模板，會刪除失敗。此操作無法復原。`}
+          confirmLabel="刪除"
+          danger
+          loading={saving}
+          onConfirm={handleDeleteTemplate}
+          onCancel={() => setConfirmDeleteTemplate(null)}
+        />
       )}
     </div>
   )
