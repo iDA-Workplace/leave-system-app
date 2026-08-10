@@ -63,12 +63,20 @@ function UserManagement({ isAdmin, userProfile }) {
     })
     if (error || data?.error) { showToast('新增失敗：' + (data?.error || error.message), { tone: 'error' }); setSaving(false); return }
     if (data?.user?.id) {
-      await supabase.from('users').update({
+      const { error: updateError } = await supabase.from('users').update({
         default_flow_id: newUser.default_flow_id || null,
         is_admin: newUser.is_admin,
         department: newUser.department || null,
         job_title: newUser.job_title || null
       }).eq('id', data.user.id)
+      if (updateError) {
+        showToast('員工帳號已建立，但部門/職稱/審核流程/管理員設定寫入失敗：' + updateError.message, { tone: 'error' })
+        setSaving(false)
+        setNewUser(emptyNewUser)
+        setShowAdd(false)
+        setTimeout(fetchUsers, 1000)
+        return
+      }
     }
     showToast('員工新增成功！預設密碼為 Welcome@123')
     setNewUser(emptyNewUser)
@@ -89,14 +97,19 @@ function UserManagement({ isAdmin, userProfile }) {
       hire_date: editing.hire_date || null
     })
     if (error || data?.error) { showToast('更新失敗：' + (data?.error || error.message), { tone: 'error' }); setSaving(false); return }
-    await supabase.from('users').update({
+    const { error: updateError } = await supabase.from('users').update({
       default_flow_id: editing.default_flow_id || null,
       is_admin: editing.is_admin,
       department: editing.department || null,
       job_title: editing.job_title || null
     }).eq('id', editing.id)
-    setEditing(null)
     setSaving(false)
+    if (updateError) {
+      showToast('部門/職稱/審核流程/管理員設定儲存失敗：' + updateError.message, { tone: 'error' })
+      fetchUsers()
+      return
+    }
+    setEditing(null)
     showToast('已更新使用者')
     fetchUsers()
   }
