@@ -7,8 +7,13 @@ import { Button, Card, Chip, ConfirmDialog, Dialog, PageHeader, Select, Skeleton
 import { useToast } from '../context/ToastContext'
 import './AdminPanel.css'
 
+// deputy_supervisor stays here (and in roleTone) purely so any existing
+// user who already has that role still displays a proper label/Chip --
+// it's just no longer offered as a choice when adding/editing someone
+// (see assignableRoles below).
 const roleMap = { employee: '員工', deputy_supervisor: '副主管', supervisor: '主管', boss: '老闆' }
 const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor: 'warning', boss: 'info' }
+const assignableRoles = { employee: '員工', supervisor: '主管', boss: '老闆' }
 
 // ===== 員工管理 =====
 const emptyNewUser = { email: '', full_name: '', english_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' }
@@ -22,6 +27,7 @@ function UserManagement({ isAdmin, userProfile }) {
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
   const [confirmToggle, setConfirmToggle] = useState(null)
+  const [showDeleted, setShowDeleted] = useState(false)
   const { showToast } = useToast()
 
   useEffect(() => { fetchUsers(); fetchFlows() }, [])
@@ -121,6 +127,9 @@ function UserManagement({ isAdmin, userProfile }) {
 
   if (loading) return <div><PageHeader title="員工帳號管理" /><Skeleton height="200px" /></div>
 
+  const deletedCount = users.filter(u => !u.is_active).length
+  const visibleUsers = showDeleted ? users : users.filter(u => u.is_active)
+
   return (
     <div>
       <PageHeader
@@ -128,8 +137,13 @@ function UserManagement({ isAdmin, userProfile }) {
         actions={isAdmin && <Button size="sm" onClick={() => { setNewUser(emptyNewUser); setShowAdd(true) }}>+ 新增員工</Button>}
       />
 
-      {users.length === 0 ? (
-        <Card><p className="admin-hint">尚無員工資料</p></Card>
+      <label className="admin-checkbox-label" style={{ marginBottom: 'var(--space-150)' }}>
+        <input type="checkbox" checked={showDeleted} onChange={e => setShowDeleted(e.target.checked)} />
+        顯示已刪除的帳號（{deletedCount}）
+      </label>
+
+      {visibleUsers.length === 0 ? (
+        <Card><p className="admin-hint">{showDeleted ? '尚無員工資料' : '沒有在職員工資料'}</p></Card>
       ) : (
         <div className="ui-table-wrap">
           <table className="ui-table">
@@ -137,7 +151,7 @@ function UserManagement({ isAdmin, userProfile }) {
               <tr><th>姓名</th><th>部門</th><th>職稱</th><th>角色</th><th>Slack ID</th><th>入職日期</th><th>審核流程</th>{isAdmin && <th>操作</th>}</tr>
             </thead>
             <tbody>
-              {users.map(user => (
+              {visibleUsers.map(user => (
                 <tr key={user.id} style={{ opacity: user.is_active ? 1 : 0.6 }}>
                   <td>
                     {user.full_name}{user.english_name && ` (${user.english_name})`}
@@ -178,7 +192,7 @@ function UserManagement({ isAdmin, userProfile }) {
             <TextField label="英文姓名" value={newUser.english_name} onChange={e => setNewUser(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
             <TextField label="Email" required value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} placeholder="請輸入 Email" />
             <Select label="角色" required value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}>
-              {Object.entries(roleMap).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              {Object.entries(assignableRoles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </Select>
             <Select label="審核流程" value={newUser.default_flow_id} onChange={e => setNewUser(p => ({ ...p, default_flow_id: e.target.value }))}>
               <option value="">請選擇審核流程</option>
@@ -218,7 +232,7 @@ function UserManagement({ isAdmin, userProfile }) {
             <TextField label="英文姓名" value={editing.english_name || ''} onChange={e => setEditing(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
             <TextField label="Email" value={editing.email || ''} disabled />
             <Select label="角色" value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))}>
-              {Object.entries(roleMap).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              {Object.entries(assignableRoles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
             </Select>
             <Select label="審核流程" value={editing.default_flow_id || ''} onChange={e => setEditing(p => ({ ...p, default_flow_id: e.target.value }))}>
               <option value="">請選擇審核流程</option>
