@@ -16,7 +16,7 @@ const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor
 const assignableRoles = { employee: '員工', supervisor: '主管', boss: '老闆' }
 
 // ===== 員工管理 =====
-const emptyNewUser = { email: '', full_name: '', english_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' }
+const emptyNewUser = { email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' }
 
 function UserManagement({ isAdmin, userProfile }) {
   const [users, setUsers] = useState([])
@@ -27,7 +27,8 @@ function UserManagement({ isAdmin, userProfile }) {
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
   const [confirmToggle, setConfirmToggle] = useState(null)
-  const [showDeleted, setShowDeleted] = useState(false)
+  const [filterDept, setFilterDept] = useState('')
+  const [filterStatus, setFilterStatus] = useState('')
   const { showToast } = useToast()
 
   useEffect(() => { fetchUsers(); fetchFlows() }, [])
@@ -66,8 +67,7 @@ function UserManagement({ isAdmin, userProfile }) {
         default_flow_id: newUser.default_flow_id || null,
         is_admin: newUser.is_admin,
         department: newUser.department || null,
-        job_title: newUser.job_title || null,
-        english_name: newUser.english_name || null
+        job_title: newUser.job_title || null
       }).eq('id', data.user.id)
     }
     showToast('員工新增成功！預設密碼為 Welcome@123')
@@ -93,8 +93,7 @@ function UserManagement({ isAdmin, userProfile }) {
       default_flow_id: editing.default_flow_id || null,
       is_admin: editing.is_admin,
       department: editing.department || null,
-      job_title: editing.job_title || null,
-      english_name: editing.english_name || null
+      job_title: editing.job_title || null
     }).eq('id', editing.id)
     setEditing(null)
     setSaving(false)
@@ -127,8 +126,12 @@ function UserManagement({ isAdmin, userProfile }) {
 
   if (loading) return <div><PageHeader title="員工帳號管理" /><Skeleton height="200px" /></div>
 
-  const deletedCount = users.filter(u => !u.is_active).length
-  const visibleUsers = showDeleted ? users : users.filter(u => u.is_active)
+  const departments = [...new Set(users.map(u => u.department).filter(Boolean))].sort()
+  const visibleUsers = users.filter(u => {
+    if (filterStatus === 'deleted' ? u.is_active : !u.is_active) return false
+    if (filterDept && u.department !== filterDept) return false
+    return true
+  })
 
   return (
     <div>
@@ -137,13 +140,19 @@ function UserManagement({ isAdmin, userProfile }) {
         actions={isAdmin && <Button size="sm" onClick={() => { setNewUser(emptyNewUser); setShowAdd(true) }}>+ 新增員工</Button>}
       />
 
-      <label className="admin-checkbox-label" style={{ marginBottom: 'var(--space-150)' }}>
-        <input type="checkbox" checked={showDeleted} onChange={e => setShowDeleted(e.target.checked)} />
-        顯示已刪除的帳號（{deletedCount}）
-      </label>
+      <div className="admin-inline-form">
+        <Select value={filterDept} onChange={e => setFilterDept(e.target.value)} style={{ maxWidth: '200px' }}>
+          <option value="">所有部門</option>
+          {departments.map(d => <option key={d} value={d}>{d}</option>)}
+        </Select>
+        <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ maxWidth: '160px' }}>
+          <option value="">在職</option>
+          <option value="deleted">已刪除</option>
+        </Select>
+      </div>
 
       {visibleUsers.length === 0 ? (
-        <Card><p className="admin-hint">{showDeleted ? '尚無員工資料' : '沒有在職員工資料'}</p></Card>
+        <Card><p className="admin-hint">{filterStatus === 'deleted' ? '沒有已刪除的帳號' : '沒有符合條件的員工資料'}</p></Card>
       ) : (
         <div className="ui-table-wrap">
           <table className="ui-table">
@@ -188,8 +197,7 @@ function UserManagement({ isAdmin, userProfile }) {
         >
           <p className="admin-form-card__hint">新員工預設密碼為 <strong>Welcome@123</strong>，登入後可自行修改。</p>
           <div className="admin-form-grid">
-            <TextField label="中文姓名" required value={newUser.full_name} onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))} placeholder="請輸入中文姓名" />
-            <TextField label="英文姓名" value={newUser.english_name} onChange={e => setNewUser(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
+            <TextField label="姓名" required value={newUser.full_name} onChange={e => setNewUser(p => ({ ...p, full_name: e.target.value }))} placeholder="請輸入姓名" />
             <TextField label="Email" required value={newUser.email} onChange={e => setNewUser(p => ({ ...p, email: e.target.value }))} placeholder="請輸入 Email" />
             <Select label="角色" required value={newUser.role} onChange={e => setNewUser(p => ({ ...p, role: e.target.value }))}>
               {Object.entries(assignableRoles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -228,8 +236,7 @@ function UserManagement({ isAdmin, userProfile }) {
           )}
         >
           <div className="admin-form-grid">
-            <TextField label="中文姓名" value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} />
-            <TextField label="英文姓名" value={editing.english_name || ''} onChange={e => setEditing(p => ({ ...p, english_name: e.target.value }))} placeholder="選填" />
+            <TextField label="姓名" value={editing.full_name} onChange={e => setEditing(p => ({ ...p, full_name: e.target.value }))} />
             <TextField label="Email" value={editing.email || ''} disabled />
             <Select label="角色" value={editing.role} onChange={e => setEditing(p => ({ ...p, role: e.target.value }))}>
               {Object.entries(assignableRoles).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -299,7 +306,13 @@ function FlowManagement({ isAdmin }) {
   }
 
   async function fetchUsers() {
-    const { data } = await supabase.from('users').select('id, full_name, role').eq('is_active', true).in('role', ['supervisor', 'admin'])
+    // Was .in('role', ['supervisor', 'admin']) -- 'admin' hasn't been a
+    // valid role value since the is_admin-flag refactor (admin-ness is a
+    // separate boolean now, not a role), so that half of the filter never
+    // matched anyone, and 'boss' was missing entirely. Approver candidates
+    // should be anyone with supervisor/boss authority, or anyone flagged
+    // as admin regardless of their primary role.
+    const { data } = await supabase.from('users').select('id, full_name, role').eq('is_active', true).or('role.in.(supervisor,boss),is_admin.eq.true')
     setUsers(data || [])
   }
 
