@@ -150,6 +150,7 @@ function UserManagement({ isAdmin, userProfile }) {
   if (loading) return <div><PageHeader title="員工帳號管理" /><Skeleton height="200px" /></div>
 
   const departments = [...new Set(users.map(u => u.department).filter(Boolean))].sort()
+  const managerNameById = Object.fromEntries(users.map(u => [u.id, u.full_name]))
   const visibleUsers = users.filter(u => {
     if (filterStatus === 'deleted' ? u.is_active : !u.is_active) return false
     if (filterDept && u.department !== filterDept) return false
@@ -180,7 +181,7 @@ function UserManagement({ isAdmin, userProfile }) {
         <div className="ui-table-wrap">
           <table className="ui-table">
             <thead>
-              <tr><th>姓名</th><th>部門</th><th>職稱</th><th>角色</th><th>Slack ID</th><th>入職日期</th><th>審核流程</th>{isAdmin && <th>操作</th>}</tr>
+              <tr><th>姓名</th><th>部門</th><th>職稱</th><th>角色</th><th>Slack ID</th><th>入職日期</th><th>審核流程</th><th>直屬主管</th>{isAdmin && <th>操作</th>}</tr>
             </thead>
             <tbody>
               {visibleUsers.map(user => (
@@ -196,6 +197,7 @@ function UserManagement({ isAdmin, userProfile }) {
                   <td>{user.slack_user_id || '—'}</td>
                   <td>{user.hire_date || '—'}</td>
                   <td>{user.default_flow?.name || '—'}</td>
+                  <td>{user.manager_id ? (managerNameById[user.manager_id] || '—') : '—'}</td>
                   {isAdmin && (
                     <td><Button size="sm" variant="outlined" onClick={() => setEditing({ ...user })}>編輯</Button></td>
                   )}
