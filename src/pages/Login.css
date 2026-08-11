@@ -10,7 +10,36 @@
 .login-card {
   width: 100%;
   max-width: 400px;
-  padding: var(--space-500) var(--space-400);
+  /* the brand band bleeds to the card's edges, so padding moves to __body */
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The logo artwork is white, so it needs the brand red behind it. Uses the
+   logo's own red (#fc4237) rather than --sys-color-primary (#dc2626) so the
+   band matches the supplied asset exactly instead of looking like a slightly
+   different red sitting behind it. */
+.login-card__brand {
+  background: #fc4237;
+  padding: var(--space-400) var(--space-300);
+  display: flex;
+  justify-content: center;
+}
+
+.login-card__logo {
+  display: block;
+  width: 168px;
+  height: auto;
+}
+
+.login-card__body {
+  padding: var(--space-300) var(--space-400) var(--space-400);
+}
+
+@media (max-width: 420px) {
+  .login-card__brand { padding: var(--space-300) var(--space-200); }
+  .login-card__logo { width: 140px; }
+  .login-card__body { padding: var(--space-300) var(--space-200) var(--space-400); }
 }
 
 .login-card__title {

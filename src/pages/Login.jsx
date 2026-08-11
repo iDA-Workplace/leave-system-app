@@ -28,43 +28,55 @@ function Login() {
   return (
     <div className="login-page">
       <Card className="login-card">
-        <h1 className="login-card__title">{t('login_title')}</h1>
-        <p className="login-card__subtitle">{t('login_subtitle')}</p>
-
-        {error && <div className="login-card__error" role="alert">{error}</div>}
-
-        <form onSubmit={handleLogin}>
-          <TextField
-            label={t('login_email')}
-            type="email"
-            value={email}
-            onChange={e => setEmail(e.target.value)}
-            required
-            placeholder={t('login_email_placeholder')}
+        <div className="login-card__brand">
+          <img
+            className="login-card__logo"
+            src="/ida-logo-white.png"
+            alt="iDA Workplace"
+            width="900"
+            height="487"
           />
+        </div>
 
-          <div className="login-card__password-field">
+        <div className="login-card__body">
+          <h1 className="login-card__title">{t('login_title')}</h1>
+          <p className="login-card__subtitle">{t('login_subtitle')}</p>
+
+          {error && <div className="login-card__error" role="alert">{error}</div>}
+
+          <form onSubmit={handleLogin}>
             <TextField
-              label={t('login_password')}
-              type={showPassword ? 'text' : 'password'}
-              value={password}
-              onChange={e => setPassword(e.target.value)}
+              label={t('login_email')}
+              type="email"
+              value={email}
+              onChange={e => setEmail(e.target.value)}
               required
-              placeholder={t('login_password_placeholder')}
+              placeholder={t('login_email_placeholder')}
             />
-            <button
-              type="button"
-              className="login-card__toggle-password"
-              onClick={() => setShowPassword(!showPassword)}
-            >
-              {showPassword ? t('login_hide') : t('login_show')}
-            </button>
-          </div>
 
-          <Button type="submit" block loading={loading} style={{ marginTop: 'var(--space-100)' }}>
-            {loading ? t('login_submitting') : t('login_submit')}
-          </Button>
-        </form>
+            <div className="login-card__password-field">
+              <TextField
+                label={t('login_password')}
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                placeholder={t('login_password_placeholder')}
+              />
+              <button
+                type="button"
+                className="login-card__toggle-password"
+                onClick={() => setShowPassword(!showPassword)}
+              >
+                {showPassword ? t('login_hide') : t('login_show')}
+              </button>
+            </div>
+
+            <Button type="submit" block loading={loading} style={{ marginTop: 'var(--space-100)' }}>
+              {loading ? t('login_submitting') : t('login_submit')}
+            </Button>
+          </form>
+        </div>
       </Card>
     </div>
   )
