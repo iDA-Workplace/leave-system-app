@@ -30,7 +30,7 @@ function toHours(value, annual) {
   return annual ? n * HOURS_PER_DAY : n
 }
 
-// ===== 員工假期管理（財務專用）=====
+// ===== 員工假期管理（HR 專用）=====
 function EmployeeLeaveManagement({ userProfile }) {
   const [users, setUsers] = useState([])
   const [leaveTypes, setLeaveTypes] = useState([])

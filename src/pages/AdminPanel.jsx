@@ -198,7 +198,7 @@ function UserManagement({ isAdmin, userProfile }) {
                   <td>
                     {user.full_name}{user.english_name && ` (${user.english_name})`}
                     {user.is_admin && <> <Chip tone="info">管理員</Chip></>}
-                    {user.is_finance && <> <Chip tone="warning">財務</Chip></>}
+                    {user.is_finance && <> <Chip tone="warning">HR</Chip></>}
                     {!user.is_active && <> <Chip tone="error">已刪除</Chip></>}
                   </td>
                   <td>{user.department || '—'}</td>
@@ -247,14 +247,14 @@ function UserManagement({ isAdmin, userProfile }) {
               {users.filter(u => u.is_active).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
             </Select>
           </div>
-          <p className="admin-form-card__hint">入職日期與假期額度請由財務於「員工假期管理」設定。</p>
+          <p className="admin-form-card__hint">入職日期與假期額度請由 HR 於「員工假期管理」設定。</p>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={newUser.is_admin} onChange={e => setNewUser(p => ({ ...p, is_admin: e.target.checked }))} />
             同時為管理員（可與其他角色重疊）
           </label>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={newUser.is_finance} onChange={e => setNewUser(p => ({ ...p, is_finance: e.target.checked }))} />
-            同時為財務（可管理員工假期額度與入職日期、匯出報表）
+            同時為HR（可管理員工假期額度與入職日期、匯出報表）
           </label>
         </Dialog>
       )}
@@ -295,14 +295,14 @@ function UserManagement({ isAdmin, userProfile }) {
               {users.filter(u => u.is_active && u.id !== editing.id).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
             </Select>
           </div>
-          <p className="admin-form-card__hint">入職日期與假期額度請由財務於「員工假期管理」設定。</p>
+          <p className="admin-form-card__hint">入職日期與假期額度請由 HR 於「員工假期管理」設定。</p>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={!!editing.is_admin} onChange={e => setEditing(p => ({ ...p, is_admin: e.target.checked }))} />
             同時為管理員
           </label>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={!!editing.is_finance} onChange={e => setEditing(p => ({ ...p, is_finance: e.target.checked }))} />
-            同時為財務（可管理員工假期額度與入職日期、匯出報表）
+            同時為HR（可管理員工假期額度與入職日期、匯出報表）
           </label>
         </Dialog>
       )}
