@@ -35,7 +35,7 @@ function buildNavItems(userProfile, t) {
     { path: '/review', label: t('nav_review'), icon: ReviewIcon },
   ]
 
-  if (userProfile?.is_admin) {
+  if (userProfile?.is_admin || userProfile?.is_finance) {
     items.push({ path: '/admin', label: t('nav_admin'), icon: AdminIcon })
   }
 

@@ -3,6 +3,7 @@ import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { invokeFunction } from '../lib/api'
 import ExportReport from './ExportReport'
+import EmployeeLeaveManagement from './EmployeeLeaveManagement'
 import { Button, Card, Chip, ConfirmDialog, Dialog, PageHeader, Select, Skeleton, Tabs, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './AdminPanel.css'
@@ -16,7 +17,10 @@ const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor
 const assignableRoles = { employee: '員工', supervisor: '主管', boss: '老闆' }
 
 // ===== 員工管理 =====
-const emptyNewUser = { email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '', manager_id: '' }
+// 入職日期 is deliberately absent: it's 財務-owned now (員工假期管理), since
+// 年資 -- and therefore 特休 -- is derived from it. Admins neither see nor
+// set it; finance fills it in after the account is created.
+const emptyNewUser = { email: '', full_name: '', role: 'employee', default_flow_id: '', is_admin: false, is_finance: false, department: '', job_title: '', manager_id: '' }
 
 function UserManagement({ isAdmin, userProfile }) {
   const [users, setUsers] = useState([])
@@ -59,7 +63,7 @@ function UserManagement({ isAdmin, userProfile }) {
       full_name: newUser.full_name,
       role: newUser.role,
       password: 'Welcome@123',
-      hire_date: newUser.hire_date || null
+      hire_date: null
     })
     if (error || data?.error) { showToast('新增失敗：' + (data?.error || error.message), { tone: 'error' }); setSaving(false); return }
     if (data?.user?.id) {
@@ -70,12 +74,13 @@ function UserManagement({ isAdmin, userProfile }) {
       const { data: updated, error: updateError } = await supabase.from('users').update({
         default_flow_id: newUser.default_flow_id || null,
         is_admin: newUser.is_admin,
+        is_finance: newUser.is_finance,
         department: newUser.department || null,
         job_title: newUser.job_title || null,
         manager_id: newUser.manager_id || null
       }).eq('id', data.user.id).select()
       if (updateError || !updated?.length) {
-        showToast('員工帳號已建立，但部門/職稱/審核流程/直屬主管/管理員設定寫入失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
+        showToast('員工帳號已建立，但部門/職稱/審核流程/直屬主管/權限設定寫入失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
         setSaving(false)
         setNewUser(emptyNewUser)
         setShowAdd(false)
@@ -99,6 +104,9 @@ function UserManagement({ isAdmin, userProfile }) {
       role: editing.role,
       slack_user_id: editing.slack_user_id,
       is_active: editing.is_active,
+      // Passed back unchanged, never edited here -- 入職日期 belongs to
+      // 財務 now. Sending the existing value (rather than omitting the
+      // field) keeps the edge function from treating it as "clear this".
       hire_date: editing.hire_date || null
     })
     if (error || data?.error) { showToast('更新失敗：' + (data?.error || error.message), { tone: 'error' }); setSaving(false); return }
@@ -109,13 +117,14 @@ function UserManagement({ isAdmin, userProfile }) {
     const { data: updated, error: updateError } = await supabase.from('users').update({
       default_flow_id: editing.default_flow_id || null,
       is_admin: editing.is_admin,
+      is_finance: editing.is_finance,
       department: editing.department || null,
       job_title: editing.job_title || null,
       manager_id: editing.manager_id || null
     }).eq('id', editing.id).select()
     setSaving(false)
     if (updateError || !updated?.length) {
-      showToast('部門/職稱/審核流程/直屬主管/管理員設定儲存失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
+      showToast('部門/職稱/審核流程/直屬主管/權限設定儲存失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
       fetchUsers()
       return
     }
@@ -181,7 +190,7 @@ function UserManagement({ isAdmin, userProfile }) {
         <div className="ui-table-wrap">
           <table className="ui-table">
             <thead>
-              <tr><th>姓名</th><th>部門</th><th>職稱</th><th>角色</th><th>Slack ID</th><th>入職日期</th><th>審核流程</th><th>直屬主管</th>{isAdmin && <th>操作</th>}</tr>
+              <tr><th>姓名</th><th>部門</th><th>職稱</th><th>角色</th><th>Slack ID</th><th>審核流程</th><th>直屬主管</th>{isAdmin && <th>操作</th>}</tr>
             </thead>
             <tbody>
               {visibleUsers.map(user => (
@@ -189,13 +198,13 @@ function UserManagement({ isAdmin, userProfile }) {
                   <td>
                     {user.full_name}{user.english_name && ` (${user.english_name})`}
                     {user.is_admin && <> <Chip tone="info">管理員</Chip></>}
+                    {user.is_finance && <> <Chip tone="warning">財務</Chip></>}
                     {!user.is_active && <> <Chip tone="error">已刪除</Chip></>}
                   </td>
                   <td>{user.department || '—'}</td>
                   <td>{user.job_title || '—'}</td>
                   <td><Chip tone={roleTone[user.role] || 'neutral'}>{roleMap[user.role]}</Chip></td>
                   <td>{user.slack_user_id || '—'}</td>
-                  <td>{user.hire_date || '—'}</td>
                   <td>{user.default_flow?.name || '—'}</td>
                   <td>{user.manager_id ? (managerNameById[user.manager_id] || '—') : '—'}</td>
                   {isAdmin && (
@@ -231,7 +240,6 @@ function UserManagement({ isAdmin, userProfile }) {
               <option value="">請選擇審核流程</option>
               {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </Select>
-            <TextField label="入職日期" type="date" value={newUser.hire_date} onChange={e => setNewUser(p => ({ ...p, hire_date: e.target.value }))} />
             <TextField label="部門" value={newUser.department} onChange={e => setNewUser(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
             <TextField label="職稱" value={newUser.job_title} onChange={e => setNewUser(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
             <Select label="直屬主管" value={newUser.manager_id} onChange={e => setNewUser(p => ({ ...p, manager_id: e.target.value }))}>
@@ -239,9 +247,14 @@ function UserManagement({ isAdmin, userProfile }) {
               {users.filter(u => u.is_active).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
             </Select>
           </div>
+          <p className="admin-form-card__hint">入職日期與假期額度請由財務於「員工假期管理」設定。</p>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={newUser.is_admin} onChange={e => setNewUser(p => ({ ...p, is_admin: e.target.checked }))} />
-            同時為管理員（管理員可與其他角色重疊）
+            同時為管理員（可與其他角色重疊）
+          </label>
+          <label className="admin-checkbox-label">
+            <input type="checkbox" checked={newUser.is_finance} onChange={e => setNewUser(p => ({ ...p, is_finance: e.target.checked }))} />
+            同時為財務（可管理員工假期額度與入職日期、匯出報表）
           </label>
         </Dialog>
       )}
@@ -275,7 +288,6 @@ function UserManagement({ isAdmin, userProfile }) {
               {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </Select>
             <TextField label="Slack User ID" value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} placeholder="U0123ABCD" />
-            <TextField label="入職日期" type="date" value={editing.hire_date || ''} onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))} />
             <TextField label="部門" value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
             <TextField label="職稱" value={editing.job_title || ''} onChange={e => setEditing(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
             <Select label="直屬主管" value={editing.manager_id || ''} onChange={e => setEditing(p => ({ ...p, manager_id: e.target.value }))}>
@@ -283,9 +295,14 @@ function UserManagement({ isAdmin, userProfile }) {
               {users.filter(u => u.is_active && u.id !== editing.id).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
             </Select>
           </div>
+          <p className="admin-form-card__hint">入職日期與假期額度請由財務於「員工假期管理」設定。</p>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={!!editing.is_admin} onChange={e => setEditing(p => ({ ...p, is_admin: e.target.checked }))} />
             同時為管理員
+          </label>
+          <label className="admin-checkbox-label">
+            <input type="checkbox" checked={!!editing.is_finance} onChange={e => setEditing(p => ({ ...p, is_finance: e.target.checked }))} />
+            同時為財務（可管理員工假期額度與入職日期、匯出報表）
           </label>
         </Dialog>
       )}
@@ -596,110 +613,33 @@ function NotificationTargets({ isAdmin }) {
   )
 }
 
-// ===== 假別管理（各假別年度可使用時數）=====
-function LeaveTypeManagement() {
-  const [types, setTypes] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [editingId, setEditingId] = useState(null)
-  const [editValue, setEditValue] = useState('')
-  const [saving, setSaving] = useState(false)
-  const { showToast } = useToast()
-
-  useEffect(() => { fetchTypes() }, [])
-
-  async function fetchTypes() {
-    const { data } = await supabase.from('leave_types').select('*').order('name')
-    setTypes(data || [])
-    setLoading(false)
-  }
-
-  function startEdit(t) {
-    setEditingId(t.id)
-    setEditValue(t.annual_quota_hours != null ? String(t.annual_quota_hours) : '')
-  }
-
-  async function handleSave(t) {
-    setSaving(true)
-    const value = editValue.trim() === '' ? null : Number(editValue)
-    if (value !== null && (Number.isNaN(value) || value < 0)) {
-      showToast('請輸入有效的時數', { tone: 'error' })
-      setSaving(false)
-      return
-    }
-    const { error } = await supabase.from('leave_types').update({ annual_quota_hours: value }).eq('id', t.id)
-    if (error) {
-      showToast('儲存失敗：' + error.message, { tone: 'error' })
-    } else {
-      showToast('已更新')
-      setEditingId(null)
-      fetchTypes()
-    }
-    setSaving(false)
-  }
-
-  if (loading) return <div><PageHeader title="假別管理" /><Skeleton height="120px" /></div>
-
-  return (
-    <div>
-      <PageHeader title="假別管理" />
-      <p className="admin-hint">設定各假別每年度可使用的時數，「假單管理」的假期明細會依此顯示。留白表示依勞基法（不顯示固定時數）。</p>
-      <div className="admin-list">
-        {types.map(t => (
-          <Card key={t.id}>
-            <div className="admin-row">
-              <div>
-                <div className="admin-row__title">
-                  {t.name}
-                  {!t.is_active && <Chip tone="error">停用</Chip>}
-                </div>
-                <div className="admin-row__meta">
-                  年度可使用時數：{editingId === t.id ? (
-                    <TextField
-                      type="number"
-                      min="0"
-                      value={editValue}
-                      onChange={e => setEditValue(e.target.value)}
-                      placeholder="留白＝依勞基法"
-                      style={{ display: 'inline-block', width: '140px', marginLeft: 'var(--space-100)' }}
-                    />
-                  ) : (
-                    t.annual_quota_hours != null ? `${t.annual_quota_hours} 小時` : '依勞基法（未設定）'
-                  )}
-                </div>
-              </div>
-              {editingId === t.id ? (
-                <div className="admin-form-actions">
-                  <Button size="sm" loading={saving} onClick={() => handleSave(t)}>儲存</Button>
-                  <Button size="sm" variant="text" onClick={() => setEditingId(null)}>取消</Button>
-                </div>
-              ) : (
-                <Button size="sm" variant="outlined" onClick={() => startEdit(t)}>編輯</Button>
-              )}
-            </div>
-          </Card>
-        ))}
-      </div>
-    </div>
-  )
-}
-
 // ===== AdminPanel 主元件 =====
 function AdminPanel({ userProfile }) {
   const location = useLocation()
 
   const isAdmin = !!userProfile?.is_admin
+  const isFinance = !!userProfile?.is_finance
 
-  // 代理審核設定 was the only thing a non-admin supervisor could reach in
-  // here; now that it's removed, 管理後台 is admin-only.
-  if (!isAdmin) return <Navigate to="/" replace />
+  if (!isAdmin && !isFinance) return <Navigate to="/" replace />
 
-  const tabs = [
-    { key: 'users', path: '/admin', label: '員工帳號管理' },
-    { key: 'flows', path: '/admin/flows', label: '審核流程' },
-    { key: 'notifications', path: '/admin/notifications', label: '通知對象' },
-    { key: 'leave-types', path: '/admin/leave-types', label: '假別管理' },
-    { key: 'export', path: '/admin/export', label: '匯出報表' },
-  ]
+  // 管理員 owns the system settings; 財務 owns 假期/入職日期. The two sets
+  // are disjoint apart from 匯出報表, which both need. Someone flagged as
+  // both simply sees the union.
+  const tabs = []
+  if (isAdmin) {
+    tabs.push({ key: 'users', path: '/admin', label: '員工帳號管理' })
+    tabs.push({ key: 'flows', path: '/admin/flows', label: '審核流程' })
+    tabs.push({ key: 'notifications', path: '/admin/notifications', label: '通知對象' })
+  }
+  if (isFinance) {
+    tabs.push({ key: 'leave-entitlements', path: '/admin/leave-entitlements', label: '員工假期管理' })
+  }
+  tabs.push({ key: 'export', path: '/admin/export', label: '匯出報表' })
+
+  // Finance-only users have no 員工帳號管理, so the index route can't land there.
+  const indexElement = isAdmin
+    ? <UserManagement isAdmin={isAdmin} userProfile={userProfile} />
+    : <Navigate to="/admin/leave-entitlements" replace />
 
   return (
     <div>
@@ -707,10 +647,10 @@ function AdminPanel({ userProfile }) {
       <Tabs tabs={tabs.map(t => ({ ...t, to: t.path, active: location.pathname === t.path }))} />
 
       <Routes>
-        <Route index element={<UserManagement isAdmin={isAdmin} userProfile={userProfile} />} />
-        <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />
-        <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />
-        <Route path="leave-types" element={<LeaveTypeManagement />} />
+        <Route index element={indexElement} />
+        {isAdmin && <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />}
+        {isAdmin && <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />}
+        {isFinance && <Route path="leave-entitlements" element={<EmployeeLeaveManagement userProfile={userProfile} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
         <Route path="export" element={<ExportReport />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />

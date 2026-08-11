@@ -3,6 +3,7 @@ import { Link, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, Skeleton, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
+import { fetchAnnualLeaveDays } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import './Home.css'
 
@@ -117,18 +118,10 @@ function Home({ userProfile }) {
 
   async function fetchEntitlement() {
     if (!userProfile?.id) return
-    const { data } = await supabase
-      .from('annual_leave_summary')
-      .select('*')
-      .eq('user_id', userProfile.id)
-      .single()
-    if (data) {
-      setAnnualLeave({
-        entitled: data.entitled_days || 0,
-        used: data.used_days || 0,
-        remaining: (data.entitled_days || 0) - (data.used_days || 0),
-      })
-    }
+    // Resolves 財務's per-employee 特休 override, falling back to the
+    // seniority-based annual_leave_summary when there isn't one.
+    const days = await fetchAnnualLeaveDays(userProfile.id)
+    if (days) setAnnualLeave(days)
     setStatsLoading(false)
   }
 

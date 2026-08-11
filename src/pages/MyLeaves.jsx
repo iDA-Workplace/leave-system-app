@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs } from '../components/ui'
 import { useToast } from '../context/ToastContext'
+import { buildBalanceRows, fetchEntitlementOverrides } from '../lib/leaveEntitlements'
 import './MyLeaves.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
@@ -28,6 +29,7 @@ function MyLeaves({ userProfile }) {
   // 假期明細
   const [leaveTypes, setLeaveTypes] = useState([])
   const [annualLeave, setAnnualLeave] = useState(null)
+  const [entitlementOverrides, setEntitlementOverrides] = useState({})
   const [leaveStats, setLeaveStats] = useState([])
   const [balanceLoading, setBalanceLoading] = useState(true)
 
@@ -116,6 +118,7 @@ function MyLeaves({ userProfile }) {
     if (summary) {
       setAnnualLeave({ entitled: summary.entitled_days || 0, used: summary.used_days || 0 })
     }
+    setEntitlementOverrides(await fetchEntitlementOverrides(userProfile.id))
     setBalanceLoading(false)
   }
 
@@ -206,16 +209,7 @@ function MyLeaves({ userProfile }) {
 
   const pendingOwnCount = leaves.filter(l => l.status === 'pending').length
 
-  const balanceRows = leaveTypes.map(lt => {
-    const isAnnual = lt.name.includes('特休')
-    if (isAnnual) {
-      const usedHours = (annualLeave?.used || 0) * 8
-      const totalHours = (annualLeave?.entitled || 0) * 8
-      return { id: lt.id, name: lt.name, color: lt.color, used: usedHours, total: totalHours }
-    }
-    const stat = leaveStats.find(s => s.name === lt.name)
-    return { id: lt.id, name: lt.name, color: lt.color, used: stat?.totalHours || 0, total: lt.annual_quota_hours ?? null }
-  })
+  const balanceRows = buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides: entitlementOverrides })
 
   return (
     <div>

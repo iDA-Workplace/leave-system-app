@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Dialog, Select, Textarea, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
+import { buildBalanceRows, fetchEntitlementOverrides } from '../lib/leaveEntitlements'
 import './LeaveForm.css'
 
 const TIME_OPTIONS = []
@@ -58,6 +59,7 @@ function LeaveForm({ userProfile }) {
 
   const [leaveTypes, setLeaveTypes] = useState([])
   const [annualLeave, setAnnualLeave] = useState(null)
+  const [entitlementOverrides, setEntitlementOverrides] = useState({})
   const [flowSteps, setFlowSteps] = useState([])
   const [colleagues, setColleagues] = useState([])
   const [leaveStats, setLeaveStats] = useState([])
@@ -148,6 +150,7 @@ function LeaveForm({ userProfile }) {
       const entitledDays = summary.entitled_days || 0
       setAnnualLeave({ entitled: entitledDays, used: usedDays })
     }
+    setEntitlementOverrides(await fetchEntitlementOverrides(userProfile.id))
   }
 
   async function handleFileSelected(file) {
@@ -246,16 +249,7 @@ function LeaveForm({ userProfile }) {
     setSuccessInfo({ leaveTypeName, dateLabel, hoursLabel })
   }
 
-  const balanceRows = leaveTypes.map(lt => {
-    const isAnnual = lt.name.includes('特休')
-    if (isAnnual) {
-      const usedHours = (annualLeave?.used || 0) * 8
-      const totalHours = (annualLeave?.entitled || 0) * 8
-      return { id: lt.id, name: lt.name, color: lt.color, used: usedHours, total: totalHours }
-    }
-    const stat = leaveStats.find(s => s.name === lt.name)
-    return { id: lt.id, name: lt.name, color: lt.color, used: stat?.totalHours || 0, total: lt.annual_quota_hours ?? null }
-  })
+  const balanceRows = buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides: entitlementOverrides })
 
   return (
     <>
