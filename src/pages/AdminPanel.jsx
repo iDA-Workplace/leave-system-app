@@ -16,7 +16,7 @@ const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor
 const assignableRoles = { employee: '員工', supervisor: '主管', boss: '老闆' }
 
 // ===== 員工管理 =====
-const emptyNewUser = { email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '' }
+const emptyNewUser = { email: '', full_name: '', role: 'employee', default_flow_id: '', hire_date: '', is_admin: false, department: '', job_title: '', manager_id: '' }
 
 function UserManagement({ isAdmin, userProfile }) {
   const [users, setUsers] = useState([])
@@ -71,10 +71,11 @@ function UserManagement({ isAdmin, userProfile }) {
         default_flow_id: newUser.default_flow_id || null,
         is_admin: newUser.is_admin,
         department: newUser.department || null,
-        job_title: newUser.job_title || null
+        job_title: newUser.job_title || null,
+        manager_id: newUser.manager_id || null
       }).eq('id', data.user.id).select()
       if (updateError || !updated?.length) {
-        showToast('員工帳號已建立，但部門/職稱/審核流程/管理員設定寫入失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
+        showToast('員工帳號已建立，但部門/職稱/審核流程/直屬主管/管理員設定寫入失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
         setSaving(false)
         setNewUser(emptyNewUser)
         setShowAdd(false)
@@ -109,11 +110,12 @@ function UserManagement({ isAdmin, userProfile }) {
       default_flow_id: editing.default_flow_id || null,
       is_admin: editing.is_admin,
       department: editing.department || null,
-      job_title: editing.job_title || null
+      job_title: editing.job_title || null,
+      manager_id: editing.manager_id || null
     }).eq('id', editing.id).select()
     setSaving(false)
     if (updateError || !updated?.length) {
-      showToast('部門/職稱/審核流程/管理員設定儲存失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
+      showToast('部門/職稱/審核流程/直屬主管/管理員設定儲存失敗：' + (updateError?.message || '沒有權限寫入（可能缺少資料庫權限設定）'), { tone: 'error' })
       fetchUsers()
       return
     }
@@ -230,6 +232,10 @@ function UserManagement({ isAdmin, userProfile }) {
             <TextField label="入職日期" type="date" value={newUser.hire_date} onChange={e => setNewUser(p => ({ ...p, hire_date: e.target.value }))} />
             <TextField label="部門" value={newUser.department} onChange={e => setNewUser(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
             <TextField label="職稱" value={newUser.job_title} onChange={e => setNewUser(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
+            <Select label="直屬主管" value={newUser.manager_id} onChange={e => setNewUser(p => ({ ...p, manager_id: e.target.value }))}>
+              <option value="">未指定</option>
+              {users.filter(u => u.is_active).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+            </Select>
           </div>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={newUser.is_admin} onChange={e => setNewUser(p => ({ ...p, is_admin: e.target.checked }))} />
@@ -270,6 +276,10 @@ function UserManagement({ isAdmin, userProfile }) {
             <TextField label="入職日期" type="date" value={editing.hire_date || ''} onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))} />
             <TextField label="部門" value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))} placeholder="選填" />
             <TextField label="職稱" value={editing.job_title || ''} onChange={e => setEditing(p => ({ ...p, job_title: e.target.value }))} placeholder="選填" />
+            <Select label="直屬主管" value={editing.manager_id || ''} onChange={e => setEditing(p => ({ ...p, manager_id: e.target.value }))}>
+              <option value="">未指定</option>
+              {users.filter(u => u.is_active && u.id !== editing.id).map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+            </Select>
           </div>
           <label className="admin-checkbox-label">
             <input type="checkbox" checked={!!editing.is_admin} onChange={e => setEditing(p => ({ ...p, is_admin: e.target.checked }))} />

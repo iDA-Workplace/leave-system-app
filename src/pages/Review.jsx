@@ -1450,6 +1450,17 @@ function ReviewParticipants({ userProfile, isBoss }) {
     fetchParticipants()
   }
 
+  // 直屬主管 comes from users.manager_id, set in 員工帳號管理 -- but that
+  // wasn't wired up until now, so anyone added before it existed (or
+  // added by 老闆 for someone whose manager_id was never set) is stuck
+  // showing 未指定 forever unless it can be fixed here directly.
+  async function handleChangeSupervisor(participantId, supervisorId) {
+    const { error } = await supabase.from('annual_review_participants')
+      .update({ supervisor_id: supervisorId || null }).eq('id', participantId)
+    if (error) { showToast('設定失敗：' + error.message, { tone: 'error' }); return }
+    fetchParticipants()
+  }
+
   if (loading) return <Skeleton height="120px" />
 
   return (
@@ -1497,7 +1508,13 @@ function ReviewParticipants({ userProfile, isBoss }) {
               {participants.map(p => (
                 <tr key={p.id}>
                   <td>{p.user?.full_name}</td>
-                  <td>{p.supervisor?.full_name || <span className="review-missing-manager">⚠ 未指定</span>}</td>
+                  <td>
+                    <select className="ui-field__control" value={p.supervisor_id || ''} onChange={e => handleChangeSupervisor(p.id, e.target.value)}>
+                      <option value="">未指定</option>
+                      {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+                    </select>
+                    {!p.supervisor_id && <div className="review-missing-manager">⚠ 未指定，也可以到「員工帳號管理」設定這個人的直屬主管</div>}
+                  </td>
                   <td><Button size="sm" variant="danger-outlined" onClick={() => handleRemove(p.id)}>移除</Button></td>
                 </tr>
               ))}
@@ -1552,7 +1569,12 @@ function Review({ userProfile }) {
     tabs.push({ key: 'setup', path: '/review/setup', label: '部門考核設定' })
     tabs.push({ key: 'team', path: '/review/team', label: isBoss ? '團隊管理' : '團隊管理與年度考核' })
   }
-  if (isBoss) tabs.push({ key: 'team-annual', path: '/review/team/annual', label: '團隊年度考核' })
+  // Was "/review/team/annual" -- a sibling page nested under the same URL
+  // segment as "/review/team" (團隊管理), so a plain startsWith() prefix
+  // match marked BOTH tabs active whenever viewing 團隊年度考核 (its path
+  // literally starts with the other tab's path). Hyphenated instead of
+  // nested so the two can never collide as prefixes of each other.
+  if (isBoss) tabs.push({ key: 'team-annual', path: '/review/team-annual', label: '團隊年度考核' })
 
   return (
     <div>
@@ -1560,7 +1582,7 @@ function Review({ userProfile }) {
       <Tabs tabs={tabs.map(t => ({
         ...t,
         to: t.path,
-        active: t.end ? location.pathname === t.path : location.pathname.startsWith(t.path),
+        active: t.end ? location.pathname === t.path : (location.pathname === t.path || location.pathname.startsWith(t.path + '/')),
       }))} />
 
       <Routes>
@@ -1571,7 +1593,7 @@ function Review({ userProfile }) {
         } />
         {isTeamManager && <Route path="setup/*" element={<DepartmentReviewSetup userProfile={userProfile} isBoss={isBoss} />} />}
         {isTeamManager && <Route path="team" element={<TeamReviewManagement userProfile={userProfile} isBoss={isBoss} />} />}
-        {isBoss && <Route path="team/annual" element={<CompanyReviewRoster />} />}
+        {isBoss && <Route path="team-annual" element={<CompanyReviewRoster />} />}
         <Route path="*" element={<Navigate to="/review" replace />} />
       </Routes>
     </div>
