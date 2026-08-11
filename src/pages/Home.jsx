@@ -222,7 +222,18 @@ function Home({ userProfile }) {
       .eq('status', 'approved')
       .lte('start_date', dateISO)
       .gte('end_date', dateISO)
-    setSelectedDateColleagues((data || []).map(d => d.requester).filter(Boolean))
+
+    // One row per approved request, but one person can hold several requests
+    // covering the same day (a long multi-day leave plus a separate part-day
+    // one, say), and this widget answers "who is away", not "how many
+    // requests exist". Without collapsing per person they showed up once per
+    // request -- which also produced duplicate React keys and made expanding
+    // one avatar expand every copy of that person.
+    const byId = new Map()
+    for (const row of data || []) {
+      if (row.requester && !byId.has(row.requester.id)) byId.set(row.requester.id, row.requester)
+    }
+    setSelectedDateColleagues([...byId.values()])
   }
 
   function toggleColleagueExpanded(id) {
