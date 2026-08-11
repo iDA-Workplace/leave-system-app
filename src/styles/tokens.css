@@ -8,18 +8,25 @@
 */
 
 :root {
-  /* ---- Reference: Primary (Brand red/coral, seed ~#DC2626) ----
-     Matches the iDA Workplace reference (red accent buttons/badges/
-     progress bars). The reference uses one red for both brand actions
+  /* ---- Reference: Primary (Brand red/coral, seed #FC4237) ----
+     Anchored on the exact red of the supplied iDA Workplace logo
+     (hsl 3.4 97% 60%), so brand surfaces sit on the same red as the
+     artwork instead of a near-miss. The remaining tones are derived at
+     that same hue. The reference uses one red for both brand actions
      and destructive actions (its reject button is red-outlined, its
      approve button is red-filled) so Error below intentionally reuses
-     this same ramp rather than a separate hue. */
-  --ref-primary-10: #7f1d1d;
-  --ref-primary-20: #991b1b;
-  --ref-primary-30: #b91c1c;
-  --ref-primary-40: #dc2626;
-  --ref-primary-80: #fca5a5;
-  --ref-primary-90: #fee2e2;
+     this same ramp rather than a separate hue.
+
+     Contrast note: white on tone 40 is 3.52:1 — enough for large text
+     and UI components, short of the 4.5:1 AA bar for normal-size text.
+     That is inherent to the brand red (the previous #dc2626 gave 4.83)
+     and was accepted deliberately in favour of matching the logo. */
+  --ref-primary-10: #571814;
+  --ref-primary-20: #7b1f19;
+  --ref-primary-30: #b6241b;
+  --ref-primary-40: #fc4237;
+  --ref-primary-80: #ff908a;
+  --ref-primary-90: #ffe2e0;
   --ref-primary-100: #ffffff;
 
   /* ---- Reference: Secondary (cool neutral blue-gray) ----

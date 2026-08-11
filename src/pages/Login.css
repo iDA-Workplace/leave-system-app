@@ -15,12 +15,13 @@
   overflow: hidden;
 }
 
-/* The logo artwork is white, so it needs the brand red behind it. Uses the
-   logo's own red (#fc4237) rather than --sys-color-primary (#dc2626) so the
-   band matches the supplied asset exactly instead of looking like a slightly
-   different red sitting behind it. */
+/* The logo artwork is white, so it always needs the deep brand red behind it.
+   Deliberately the *reference* token, not --sys-color-primary: the system
+   token flips to a pale salmon in dark mode (so it can sit on a dark
+   background), which would leave the white logo almost invisible. The
+   reference tone is theme-independent and is exactly the logo's own red. */
 .login-card__brand {
-  background: #fc4237;
+  background: var(--ref-primary-40);
   padding: var(--space-400) var(--space-300);
   display: flex;
   justify-content: center;
