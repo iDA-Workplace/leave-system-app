@@ -68,10 +68,16 @@ async function fetchQuestionsAndResponses(templateId, participantId) {
     .select('*')
     .eq('participant_id', participantId)
 
+  // question_type lives on the QUESTION, never on the answer row -- we don't
+  // write it there and no migration adds it, so `r.question_type` was always
+  // undefined and every score answer silently fell through to text_answer
+  // (which is null for score questions) and rendered as "—". Since each write
+  // fills exactly one of the two columns, reading them in order is both
+  // correct and independent of the question template.
   const responseMap = {}
   for (const r of rs || []) {
     responseMap[r.question_id] = {
-      answer: r.question_type === 'score' ? r.score_answer : r.text_answer,
+      answer: r.score_answer ?? r.text_answer,
       example_note: r.example_note || '',
     }
   }
@@ -277,7 +283,9 @@ function EmployeeReviewSection({ userProfile }) {
         stepsMap[key].overall_score = e.overall_score
         stepsMap[key].overall_comment = e.overall_comment
       } else if (e.question_id) {
-        stepsMap[key].answers[e.question_id] = { answer: e.question_type === 'score' ? e.score_answer : e.text_answer, example_note: e.example_note || '' }
+        // see fetchQuestionsAndResponses: score_answer first, question_type
+        // is not a column on this table
+        stepsMap[key].answers[e.question_id] = { answer: e.score_answer ?? e.text_answer, example_note: e.example_note || '' }
       }
     }
     setDetailSteps(Object.values(stepsMap).sort((a, b) => a.step_order - b.step_order))
@@ -549,7 +557,7 @@ function TeamReviewManagement({ userProfile, isBoss }) {
       if (key === participant.current_step && !viewOnly) continue // this is my step being filled in now, not "prior"
       if (!stepsMap[key]) stepsMap[key] = { step_order: key, evaluator_name: e.evaluator?.full_name, answers: {}, overall_score: null, overall_comment: null }
       if (e.is_overall) { stepsMap[key].overall_score = e.overall_score; stepsMap[key].overall_comment = e.overall_comment }
-      else if (e.question_id) stepsMap[key].answers[e.question_id] = { answer: e.question_type === 'score' ? e.score_answer : e.text_answer, example_note: e.example_note || '' }
+      else if (e.question_id) stepsMap[key].answers[e.question_id] = { answer: e.score_answer ?? e.text_answer, example_note: e.example_note || '' }
     }
     setPriorSteps(Object.values(stepsMap).sort((a, b) => a.step_order - b.step_order))
   }
