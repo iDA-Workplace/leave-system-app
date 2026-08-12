@@ -124,6 +124,23 @@ CLI 會自動處理 `_shared/` 資料夾的共用程式碼，不需要 `standalo
 
 ## 四、把每日公告排進 9 點
 
+### 新制金鑰專案要注意：兩個 header 都要帶
+
+Supabase 現在有新舊兩種金鑰制度。**Project Settings → API Keys** 如果分頁是
+**「Publishable and secret API keys」**（而不是「Legacy anon, service_role
+API keys」），代表這個專案是**新制**，這裡要用新制的做法：
+
+- 拿 **Secret key**（`sb_secret_...` 開頭，在 Publishable and secret API keys
+  頁面的「Secret keys」區塊，點眼睛圖示顯示）
+- 呼叫時 **`apikey` 與 `Authorization` 兩個 header 都要帶**，值都是這把
+  Secret key（只帶 `Authorization` 會被閘道擋下，回
+  `{"message":"Invalid credentials","code":"INVALID_CREDENTIALS"}`——這個錯誤
+  在函式本身的程式碼跑起來之前就發生，Logs 分頁完全不會留下任何呼叫紀錄，
+  是排查這個問題的關鍵線索）
+
+如果是**舊制**專案（分頁停在「Legacy anon, service_role API keys」），沿用
+`service_role key`，`apikey` 就不是必要的，但兩個都帶也不會錯。
+
 Supabase SQL Editor 執行一次（`pg_cron` 的時間是 **UTC**，台北 09:00 = UTC 01:00）：
 
 ```sql
@@ -138,7 +155,8 @@ select cron.schedule(
     url     := 'https://<你的專案ref>.supabase.co/functions/v1/daily-leave-digest',
     headers := jsonb_build_object(
       'Content-Type',  'application/json',
-      'Authorization', 'Bearer <你的 service_role key>'
+      'apikey',        '<你的 secret key（新制）或 service_role key（舊制）>',
+      'Authorization', 'Bearer <同一把 key>'
     )
   );
   $$
@@ -146,6 +164,10 @@ select cron.schedule(
 ```
 
 只想上班日發就維持 `1-5`；要含週末改成 `*`。
+
+`daily-leave-job`（逾期假單自動退回＋提醒主管）如果也要排程，同樣的寫法，
+`cron.schedule` 的第一個參數換成 `'daily-leave-job'`，`url` 換成
+`.../functions/v1/daily-leave-job`，時間可以自訂（例如同樣訂在每天早上）。
 
 ## 五、員工要填 Slack ID
 
@@ -159,17 +181,34 @@ select cron.schedule(
 
 ## 六、測試
 
+**沒有終端機也能測**：Supabase 後台 → 該支 function → **Overview** →
+右上角 **Test** → **Add Headers** 加 `apikey` 與 `Authorization: Bearer <key>`
+（新舊制金鑰的差異見上方「四」）→ **Send Request**。
+
+用終端機的話：
+
 ```bash
 # 每日公告（今天沒人請假時會安靜跳過，回傳 posted:false）
 curl -X POST 'https://<ref>.supabase.co/functions/v1/daily-leave-digest' \
-  -H 'Authorization: Bearer <service_role key>'
+  -H 'apikey: <secret key 或 service_role key>' \
+  -H 'Authorization: Bearer <同一把 key>'
 
 # 假單通知
 curl -X POST 'https://<ref>.supabase.co/functions/v1/send-slack-notification' \
-  -H 'Authorization: Bearer <service_role key>' \
+  -H 'apikey: <secret key 或 service_role key>' \
+  -H 'Authorization: Bearer <同一把 key>' \
   -H 'Content-Type: application/json' \
   -d '{"type":"new_request","request_id":"<某張假單的 id>"}'
 ```
+
+### 部署後一定要重新確認 Code 分頁的內容
+
+網頁編輯器「Deploy a new function」有時會先帶出一份範例模板（`Hello
+${name}!` 那種），如果貼上我們的程式碼時沒有先把範例整個刪乾淨、或部署
+沒有真的存到，測試會回傳範例的訊息（例如 `{"message":"Hello Functions!"}`）
+而不是報錯 —— 很容易誤以為「有回應就是成功」。**部署後第一次測試，除了看
+有沒有噴錯，也要確認回傳的欄位長得像我們的程式碼會回的格式**
+（`daily-leave-digest` 是 `{date, count, posted}`），不是範例的 `{message}`。
 
 ---
 
