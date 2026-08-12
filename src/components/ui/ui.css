@@ -363,6 +363,21 @@ select.ui-field__control {
   margin-bottom: var(--space-300);
   flex-wrap: wrap;
 }
+.ui-tab__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  margin-left: var(--space-050);
+  border-radius: 9px;
+  background: var(--sys-color-error);
+  color: var(--sys-color-on-error);
+  font: 600 var(--type-label-small-size)/1 var(--font-family-base);
+  vertical-align: middle;
+}
+
 .ui-tab {
   padding: var(--space-150) var(--space-200);
   font: 500 var(--type-title-small-size)/var(--type-title-small-line) var(--font-family-base);

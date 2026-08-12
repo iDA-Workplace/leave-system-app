@@ -170,7 +170,11 @@ function EmployeeInfoHeader({ userProfile, year }) {
 
 // ===== 員工的年度自評／過往考核紀錄（可自由切換） =====
 function EmployeeReviewSection({ userProfile }) {
-  const [tab, setTab] = useState('self')
+  // 首頁的「查看評分結果 →」帶 ?tab=past 過來，要直接落在過往考核紀錄這一頁。
+  const location = useLocation()
+  const [tab, setTab] = useState(
+    new URLSearchParams(location.search).get('tab') === 'past' ? 'past' : 'self'
+  )
   const [activeParticipants, setActiveParticipants] = useState([])
   const [pastParticipants, setPastParticipants] = useState([])
   const [headerYear, setHeaderYear] = useState(null)
@@ -290,10 +294,23 @@ function EmployeeReviewSection({ userProfile }) {
     }
     setDetailSteps(Object.values(stepsMap).sort((a, b) => a.step_order - b.step_order))
     setDetailModal(participant)
+
+    // 看過就把這筆的未讀標記掉。刻意走 RPC 而不是直接 update：那支函式是
+    // SECURITY DEFINER，只會寫 result_viewed_at 這一個欄位，不必為了標記已讀
+    // 而開放員工更新自己整列資料（連 final_score 都能改）。
+    if (!participant.result_viewed_at) {
+      const { error } = await supabase.rpc('mark_review_result_viewed', { p_participant_id: participant.id })
+      if (!error) {
+        const now = new Date().toISOString()
+        setPastParticipants(prev => prev.map(p => (p.id === participant.id ? { ...p, result_viewed_at: now } : p)))
+      }
+    }
   }
 
   if (loading) return <div><Skeleton height="120px" /></div>
 
+  // 未讀 = 評分流程已跑完、但員工還沒點開看過結果的筆數。
+  const unreadCount = pastParticipants.filter(p => !p.result_viewed_at).length
   const totalPages = Math.max(1, Math.ceil(pastParticipants.length / PAGE_SIZE))
   const pageItems = pastParticipants.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
@@ -303,7 +320,7 @@ function EmployeeReviewSection({ userProfile }) {
 
       <Tabs tabs={[
         { key: 'self', label: '年度自評', active: tab === 'self', onClick: () => setTab('self') },
-        { key: 'past', label: '過往考核紀錄', active: tab === 'past', onClick: () => setTab('past') },
+        { key: 'past', label: '過往考核紀錄', active: tab === 'past', onClick: () => setTab('past'), badge: unreadCount },
       ]} />
 
       {tab === 'self' && (

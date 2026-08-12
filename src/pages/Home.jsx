@@ -348,6 +348,9 @@ function Home({ userProfile }) {
 
   const canSelfAssess = userProfile?.role !== 'boss'
   const reviewActive = reviewParticipant?.review?.status === 'active'
+  // supervisor_submitted 只有在簽核鏈「最後一關」送出時才會變 true，所以它
+  // 就等於「整個評分流程已完成、結果已經可以看了」。
+  const reviewScored = reviewParticipant?.supervisor_submitted === true
   const reviewDeadline = reviewParticipant?.review
     ? (reviewParticipant.review.self_assessment_deadline || reviewParticipant.review.evaluation_deadline || reviewParticipant.review.end_date)
     : null
@@ -388,10 +391,16 @@ function Home({ userProfile }) {
                 <div className="dash-review-card__grid">
                   {canSelfAssess && (
                     <div className="dash-review-card__tile">
-                      <div className="dash-review-card__tile-label">📝 {t('home_review_self_progress')}</div>
-                      <div className="dash-review-card__tile-value">{reviewParticipant.self_submitted ? '已提交' : '待提交'}</div>
+                      {/* 評分跑完後這格改講整體流程狀態。分數刻意不放在首頁
+                          （首頁常被同事看到／投影），要看分數得點進考核管理。 */}
+                      <div className="dash-review-card__tile-label">
+                        {reviewScored ? '✅ 考核狀態' : `📝 ${t('home_review_self_progress')}`}
+                      </div>
+                      <div className="dash-review-card__tile-value">
+                        {reviewScored ? '已完成' : reviewParticipant.self_submitted ? '已提交' : '待提交'}
+                      </div>
                       <div className="dash-stat-card__progress-track">
-                        <div className="dash-stat-card__progress-fill" style={{ width: reviewParticipant.self_submitted ? '100%' : '6%' }} />
+                        <div className="dash-stat-card__progress-fill" style={{ width: reviewScored || reviewParticipant.self_submitted ? '100%' : '6%' }} />
                       </div>
                     </div>
                   )}
@@ -403,7 +412,13 @@ function Home({ userProfile }) {
                   )}
                 </div>
                 <div className="dash-review-card__footer">
-                  {canSelfAssess && <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>}
+                  {/* 評分完成後自評表單早就不能再改了，還掛「填寫考核表單」會誤導，
+                      所以整個換掉，直接把人帶到過往考核紀錄那一頁。 */}
+                  {canSelfAssess && (
+                    reviewScored
+                      ? <Link to="/review?tab=past" className="dash-card-header__link">查看評分結果 →</Link>
+                      : <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>
+                  )}
                   {isApprover && <Link to="/review/team" className="dash-card-header__link">{t('home_review_give_evaluation')} →</Link>}
                 </div>
               </>
