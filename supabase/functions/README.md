@@ -1,15 +1,42 @@
 # Slack 通知（Edge Functions）
 
-兩支 function：
+三支 function：
 
 | 目錄 | 做什麼 | 誰觸發 |
 |---|---|---|
 | `send-slack-notification` | 假單送出／核准／拒絕的即時通知 | 前端在動作完成後呼叫 |
 | `daily-leave-digest` | 每天上午 9:00 發「今日請假名單」到公開頻道 | 排程（pg_cron） |
+| `daily-leave-job` | 待審假單逾期 7 天自動退回；未逾期的每天提醒該簽核的主管 | 排程（pg_cron） |
 
 **目前只做「往外送通知」，沒有做「在 Slack 上直接審核」。** 互動功能會讓 Slack
 反過來寫進資料庫，那條路徑沒有登入狀態、繞過 RLS，必須自行驗簽章與權限，
-風險和工作量都完全不同，等前面兩件穩定後再獨立評估。
+風險和工作量都完全不同，等前面幾件穩定後再獨立評估。
+
+## `daily-leave-job` 是既有的功能，這次是修好它，不是新寫的
+
+這支 function 在這次改動之前就存在，跟「每日請假名單」公告完全是兩回事，
+只是名字相近容易搞混。它原本會查 `approval_delegates`（代理審核人）這張表，
+但那張表已經在 `20260810_remove_approval_delegates.sql` 被整個刪掉 —— 使用者
+當時明確要求「代理審核設定這個功能連資料庫也一起刪」。所以這支 function
+只要被觸發就會直接查詢失敗，等於一直是壞的，也解釋了「Slack 通知從來沒有
+真正運作過」這件事。
+
+修法很單純：拿掉查 `approval_delegates` 的那一段，簽核人一律用
+`approval_flow_steps` 上原本設定的人。其餘的 7 天逾期天數、退回訊息、提醒
+文字，全部照舊，**沒有跟著調整任何規則** —— 那些是要改的話再另外決定的事。
+
+部署方式：Supabase 後台點進**既有的** `daily-leave-job` → 用
+`daily-leave-job/standalone.ts` 的內容整個蓋掉 → Deploy。**不要新建一支**，
+沿用原名才能保留可能已經存在的排程設定。
+
+⚠️ **有一件事我沒辦法幫你確認**：這支 function 會寫入 `leave_requests` 的
+`returned_at`、`returned_reason`、`last_reminded_at` 三個欄位。這幾個欄位
+不在任何一份 migration 檔案裡，代表它們是在專案更早期、開始用 migration
+追蹤變更之前就直接建在資料庫裡的（前端 `MyLeaves.jsx` 已經有處理
+`status === 'returned'` 的「重新送出」按鈕，所以這個欄位多半本來就存在）。
+但我沒有資料庫存取權限，沒辦法百分之百確認。**部署後第一次手動觸發時**，
+如果回應是 `Internal error`，去 Logs 分頁看實際錯誤訊息貼給我，多半就是
+這幾個欄位不存在，需要另外補一支 migration。
 
 ---
 
@@ -60,15 +87,28 @@ supabase secrets set SLACK_LEAVE_CHANNEL=C01234ABCDE
 每支 function 都準備了一份 **`standalone.ts`**（跟 `index.ts` 內容相同，
 只是把共用程式碼合併進單一檔案，因為網頁編輯器不支援多檔案匯入）：
 
-1. Supabase 後台左側選單 → **Edge Functions**
-2. 點 **Deploy a new function** → **Via Editor**（不要選 CLI / Terminal 那個選項）
-3. 函式名稱填 `send-slack-notification`（**必須完全一樣**，前端呼叫時用這個名字找它）
-4. 把 `supabase/functions/send-slack-notification/standalone.ts` 的**全部內容**複製貼進編輯器，蓋掉預設的範例程式碼
-5. 按 **Deploy**
-6. 重複第 2～5 步，這次函式名稱填 `daily-leave-digest`，貼
-   `supabase/functions/daily-leave-digest/standalone.ts` 的內容
+**新建的兩支**（`send-slack-notification`、`daily-leave-job` 若已存在，
+見下方「更新既有 function」，不要用這裡的步驟新建重複的）：
 
-部署完成後，Edge Functions 列表應該會看到這兩支，狀態顯示為運作中。
+1. Supabase 後台左側選單 → **Edge Functions**
+2. 點 **Deploy a new function** → **Via Editor**（不要選 CLI / Terminal 那個選項，
+   也不要選任何範例模板）
+3. **先把函式名稱欄位改成正確名字**，這一步最容易漏：`send-slack-notification`
+   或 `daily-leave-digest`（**必須跟這兩個字串完全一樣**，前端是照名字去呼叫的，
+   名字錯了會整個找不到函式）
+4. 把對應資料夾的 `standalone.ts` **全部內容**複製貼進編輯器，蓋掉預設的範例程式碼
+5. 按 **Deploy**
+
+**更新既有的 function**（`send-slack-notification`、`daily-leave-job` 這兩支
+在此次改動之前就已經存在）：
+
+1. Edge Functions 列表點進該支 function
+2. 上方分頁選 **Code**
+3. 把裡面的內容全部刪掉，貼上對應資料夾的 `standalone.ts` 內容
+4. 按 **Deploy**（這樣會在原本的名字／URL 上更新，不會產生新的一支）
+
+部署完成後，Edge Functions 列表應該會看到 `send-slack-notification`、
+`daily-leave-digest`、`daily-leave-job` 這三支，狀態顯示為運作中。
 
 ⚠️ `standalone.ts` 只給網頁編輯器用。程式邏輯跟 `index.ts` 完全一樣，只是重複
 了一份共用程式碼；以後若要改動通知邏輯，`index.ts` 和 `standalone.ts` 要一起改。
