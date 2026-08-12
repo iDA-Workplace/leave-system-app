@@ -421,3 +421,10 @@
   font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
   opacity: 0.85;
 }
+
+.review-filters {
+  display: flex;
+  gap: var(--space-100);
+  flex-wrap: wrap;
+  margin-bottom: var(--space-200);
+}

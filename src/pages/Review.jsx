@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import {
-  Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, PageHeader, Skeleton, Tabs, Textarea,
+  Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea,
 } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './Review.css'
@@ -108,6 +108,76 @@ async function computeFinalScore(participantId, scoreQuestionIds) {
     .map(arr => 100 * arr.reduce((s, v) => s + v, 0) / (scoreQuestionIds.length * 10))
   if (stepPercents.length === 0) return null
   return Math.round(stepPercents.reduce((s, v) => s + v, 0) / stepPercents.length)
+}
+
+// 讀出一位參與者的完整考核結果：題目、他的自評、各關評分與總評。
+// 員工自己的「查看詳情」與主管／老闆的「團隊年度考核」用的是同一份資料，
+// 所以抽出來共用，免得同一段解析邏輯散在三個地方各自長歪
+// （question_type 那個 bug 就是這樣一次錯在三處的）。
+async function fetchReviewResult(participant, department) {
+  const templateId = await resolveTemplateId(participant.review, department)
+  const { questions, responses } = await fetchQuestionsAndResponses(templateId, participant.id)
+
+  const { data: evals } = await supabase
+    .from('review_evaluations')
+    .select('*, evaluator:users!review_evaluations_evaluator_id_fkey(full_name)')
+    .eq('participant_id', participant.id)
+    .order('step_order')
+
+  const stepsMap = {}
+  for (const e of evals || []) {
+    const key = e.step_order ?? 0
+    if (!stepsMap[key]) stepsMap[key] = { step_order: key, evaluator_name: e.evaluator?.full_name, answers: {}, overall_score: null, overall_comment: null }
+    if (e.is_overall) {
+      stepsMap[key].overall_score = e.overall_score
+      stepsMap[key].overall_comment = e.overall_comment
+    } else if (e.question_id) {
+      // score_answer 優先：question_type 不是這張表的欄位
+      stepsMap[key].answers[e.question_id] = { answer: e.score_answer ?? e.text_answer, example_note: e.example_note || '' }
+    }
+  }
+  return { questions, responses, steps: Object.values(stepsMap).sort((a, b) => a.step_order - b.step_order) }
+}
+
+// 考核結果 modal 的內容（員工看自己的、主管／老闆看部屬的，版面一致）
+function ReviewResultBody({ questions, responses, steps, finalScore, selfLabel = '我的自評' }) {
+  return (
+    <>
+      {questions.map((q, i) => (
+        <div key={q.id} className="review-result-question">
+          <div className="review-result-question__title">{i + 1}. {q.question_text}</div>
+          <div className="review-result-box">
+            <div className="review-result-box__label">{selfLabel}</div>
+            <div>{responses[q.id]?.answer ?? '—'}</div>
+            {responses[q.id]?.example_note && <div className="review-result-box__note">相關事例：{responses[q.id].example_note}</div>}
+          </div>
+          {steps.map(step => step.answers[q.id] && (
+            <div key={step.step_order} className="review-result-box review-result-box--eval">
+              <div className="review-result-box__label review-result-box__label--eval">{step.evaluator_name || `第${step.step_order}關`} 的評分</div>
+              <div>{step.answers[q.id].answer ?? '—'}</div>
+              {step.answers[q.id].example_note && <div className="review-result-box__note">相關事例：{step.answers[q.id].example_note}</div>}
+            </div>
+          ))}
+        </div>
+      ))}
+      {steps.map(step => (
+        <div key={step.step_order} className="review-overall">
+          <div className="review-overall__title">{step.evaluator_name || `第${step.step_order}關`} 的總評</div>
+          <div className="review-overall__score">總評分數：<strong>{step.overall_score ?? '—'}</strong> 分</div>
+          {step.overall_comment && <div className="review-overall__comment">{step.overall_comment}</div>}
+        </div>
+      ))}
+      {finalScore != null && (
+        <div className="review-overall">
+          <div className="review-overall__title">最終等級</div>
+          <div className="review-overall__score">
+            {finalScore} 分
+            {(() => { const r = ratingFor(finalScore); return r ? `｜${r.label}` : '' })()}
+          </div>
+        </div>
+      )}
+    </>
+  )
 }
 
 function ScoreButtons({ min, max, value, onChange }) {
@@ -268,31 +338,10 @@ function EmployeeReviewSection({ userProfile }) {
   }
 
   async function openDetailModal(participant) {
-    const templateId = await resolveTemplateId(participant.review, userProfile.department)
-    const { questions, responses } = await fetchQuestionsAndResponses(templateId, participant.id)
+    const { questions, responses, steps } = await fetchReviewResult(participant, userProfile.department)
     setDetailQuestions(questions)
     setDetailResponses(responses)
-
-    const { data: evals } = await supabase
-      .from('review_evaluations')
-      .select('*, evaluator:users!review_evaluations_evaluator_id_fkey(full_name)')
-      .eq('participant_id', participant.id)
-      .order('step_order')
-
-    const stepsMap = {}
-    for (const e of evals || []) {
-      const key = e.step_order ?? 0
-      if (!stepsMap[key]) stepsMap[key] = { step_order: key, evaluator_name: e.evaluator?.full_name, answers: {}, overall_score: null, overall_comment: null }
-      if (e.is_overall) {
-        stepsMap[key].overall_score = e.overall_score
-        stepsMap[key].overall_comment = e.overall_comment
-      } else if (e.question_id) {
-        // see fetchQuestionsAndResponses: score_answer first, question_type
-        // is not a column on this table
-        stepsMap[key].answers[e.question_id] = { answer: e.score_answer ?? e.text_answer, example_note: e.example_note || '' }
-      }
-    }
-    setDetailSteps(Object.values(stepsMap).sort((a, b) => a.step_order - b.step_order))
+    setDetailSteps(steps)
     setDetailModal(participant)
 
     // 看過就把這筆的未讀標記掉。刻意走 RPC 而不是直接 update：那支函式是
@@ -440,39 +489,12 @@ function EmployeeReviewSection({ userProfile }) {
           labelledBy="detail-dialog-title"
           actions={<Button variant="text" onClick={() => setDetailModal(null)}>關閉</Button>}
         >
-          {detailQuestions.map((q, i) => (
-            <div key={q.id} className="review-result-question">
-              <div className="review-result-question__title">{i + 1}. {q.question_text}</div>
-              <div className="review-result-box">
-                <div className="review-result-box__label">我的自評</div>
-                <div>{detailResponses[q.id]?.answer ?? '—'}</div>
-                {detailResponses[q.id]?.example_note && <div className="review-result-box__note">相關事例：{detailResponses[q.id].example_note}</div>}
-              </div>
-              {detailSteps.map(step => step.answers[q.id] && (
-                <div key={step.step_order} className="review-result-box review-result-box--eval">
-                  <div className="review-result-box__label review-result-box__label--eval">{step.evaluator_name || `第${step.step_order}關`} 的評分</div>
-                  <div>{step.answers[q.id].answer ?? '—'}</div>
-                  {step.answers[q.id].example_note && <div className="review-result-box__note">相關事例：{step.answers[q.id].example_note}</div>}
-                </div>
-              ))}
-            </div>
-          ))}
-          {detailSteps.map(step => (
-            <div key={step.step_order} className="review-overall">
-              <div className="review-overall__title">{step.evaluator_name || `第${step.step_order}關`} 的總評</div>
-              <div className="review-overall__score">總評分數：<strong>{step.overall_score ?? '—'}</strong> 分</div>
-              {step.overall_comment && <div className="review-overall__comment">{step.overall_comment}</div>}
-            </div>
-          ))}
-          {detailModal.final_score != null && (
-            <div className="review-overall">
-              <div className="review-overall__title">最終等級</div>
-              <div className="review-overall__score">
-                {detailModal.final_score} 分
-                {(() => { const r = ratingFor(detailModal.final_score); return r ? `｜${r.label}` : '' })()}
-              </div>
-            </div>
-          )}
+          <ReviewResultBody
+            questions={detailQuestions}
+            responses={detailResponses}
+            steps={detailSteps}
+            finalScore={detailModal.final_score}
+          />
         </Dialog>
       )}
     </div>
@@ -802,44 +824,141 @@ function TeamReviewManagement({ userProfile, isBoss }) {
 }
 
 // ===== 團隊年度考核（老闆：全公司名冊） =====
-function CompanyReviewRoster() {
+function CompanyReviewRoster({ userProfile, isBoss }) {
   const [rows, setRows] = useState([])
   const [loading, setLoading] = useState(true)
+  const [dept, setDept] = useState('all')
+  const [year, setYear] = useState('all')
+  const [detail, setDetail] = useState(null)
+  const [detailData, setDetailData] = useState(null)
+  const { showToast } = useToast()
 
   useEffect(() => { fetchRows() }, [])
 
   async function fetchRows() {
-    const { data } = await supabase
-      .from('users')
-      .select('id, full_name, department, job_title')
-      .eq('is_active', true)
-      .order('full_name')
-    setRows(data || [])
+    setLoading(true)
+
+    // 老闆看全公司；主管只看自己是評核人的那些簽核鏈 —— 跟「團隊管理」
+    // 判定「我的團隊」的方式一致，兩個畫面才不會各講各話。
+    let flowIds = null
+    if (!isBoss) {
+      const { data: mySteps } = await supabase
+        .from('review_flow_steps').select('flow_id').eq('evaluator_id', userProfile.id)
+      flowIds = [...new Set((mySteps || []).map(s => s.flow_id))]
+      if (flowIds.length === 0) { setRows([]); setLoading(false); return }
+    }
+
+    // 只列出「跑完整條簽核鏈」的紀錄 —— 這頁看的是歷年考核結果，
+    // 評分還沒跑完的人屬於「團隊管理」那一頁的事。
+    let query = supabase
+      .from('annual_review_participants')
+      .select(`
+        *,
+        review:annual_reviews(title, year),
+        user:users!annual_review_participants_user_id_fkey(full_name, department, job_title)
+      `)
+      .eq('supervisor_submitted', true)
+    if (flowIds) query = query.in('flow_id', flowIds)
+
+    const { data, error } = await query
+    if (error) {
+      showToast('讀取歷年考核資料失敗：' + error.message, { tone: 'error' })
+      setRows([]); setLoading(false); return
+    }
+
+    // 年度新到舊、同年度依姓名排序（前端排，理由同「團隊管理」）
+    const list = data || []
+    list.sort((a, b) =>
+      (b.review?.year || 0) - (a.review?.year || 0) ||
+      (a.user?.full_name || '').localeCompare(b.user?.full_name || '')
+    )
+    setRows(list)
     setLoading(false)
   }
+
+  async function openDetail(row) {
+    setDetail(row)
+    setDetailData(null)
+    const result = await fetchReviewResult(row, row.user?.department)
+    setDetailData(result)
+  }
+
+  const departments = [...new Set(rows.map(r => r.user?.department).filter(Boolean))].sort()
+  const years = [...new Set(rows.map(r => r.review?.year).filter(Boolean))].sort((a, b) => b - a)
+  const visible = rows.filter(r =>
+    (dept === 'all' || r.user?.department === dept) &&
+    (year === 'all' || String(r.review?.year) === year)
+  )
 
   if (loading) return <div><PageHeader title="團隊年度考核" /><Skeleton height="80px" /></div>
 
   return (
     <div>
       <PageHeader title="團隊年度考核" />
-      {rows.length === 0 ? (
-        <Card><EmptyState title="尚無員工資料" /></Card>
+
+      <div className="review-filters">
+        <Select value={dept} onChange={e => setDept(e.target.value)} style={{ maxWidth: '200px' }} aria-label="依部門篩選">
+          <option value="all">所有部門</option>
+          {departments.map(d => <option key={d} value={d}>{d}</option>)}
+        </Select>
+        <Select value={year} onChange={e => setYear(e.target.value)} style={{ maxWidth: '160px' }} aria-label="依年份篩選">
+          <option value="all">所有年份</option>
+          {years.map(y => <option key={y} value={String(y)}>{y} 年度</option>)}
+        </Select>
+      </div>
+
+      {visible.length === 0 ? (
+        <Card><EmptyState
+          title={rows.length === 0 ? '尚無已完成的考核紀錄' : '沒有符合篩選條件的紀錄'}
+          description={rows.length === 0
+            ? (isBoss ? '考核流程全部跑完後，結果就會出現在這裡。' : '您擔任評核人的考核流程全部跑完後，結果就會出現在這裡。')
+            : undefined}
+        /></Card>
       ) : (
         <div className="ui-table-wrap">
           <table className="ui-table">
-            <thead><tr><th>員工姓名</th><th>部門</th><th>職稱</th></tr></thead>
+            <thead>
+              <tr><th>員工姓名</th><th>部門</th><th>職稱</th><th>考核年度</th><th>最終等級</th><th>操作</th></tr>
+            </thead>
             <tbody>
-              {rows.map(u => (
-                <tr key={u.id}>
-                  <td>{u.full_name}</td>
-                  <td>{u.department || '—'}</td>
-                  <td>{u.job_title || '—'}</td>
-                </tr>
-              ))}
+              {visible.map(r => {
+                const rating = ratingFor(r.final_score)
+                return (
+                  <tr key={r.id}>
+                    <td>{r.user?.full_name || '—'}</td>
+                    <td>{r.user?.department || '—'}</td>
+                    <td>{r.user?.job_title || '—'}</td>
+                    <td>{r.review?.year ? `${r.review.year} 年度` : '—'}</td>
+                    <td>
+                      {r.final_score != null ? `${r.final_score} 分` : '—'}
+                      {rating && <Chip tone={rating.tone}>{rating.label}</Chip>}
+                    </td>
+                    <td><Button size="sm" variant="outlined" onClick={() => openDetail(r)}>查看詳情</Button></td>
+                  </tr>
+                )
+              })}
             </tbody>
           </table>
         </div>
+      )}
+
+      {detail && (
+        <Dialog
+          size="lg"
+          title={`考核結果 — ${detail.user?.full_name}｜${detail.review?.year} 年度`}
+          onClose={() => setDetail(null)}
+          actions={<Button variant="text" onClick={() => setDetail(null)}>關閉</Button>}
+        >
+          {!detailData ? <Skeleton height="200px" /> : (
+            <ReviewResultBody
+              questions={detailData.questions}
+              responses={detailData.responses}
+              steps={detailData.steps}
+              finalScore={detail.final_score}
+              selfLabel="員工自評"
+            />
+          )}
+        </Dialog>
       )}
     </div>
   )
@@ -1635,14 +1754,17 @@ function Review({ userProfile }) {
   if (canSelfAssess) tabs.push({ key: 'mine', path: '/review', label: '年度自評', end: true })
   if (isTeamManager) {
     tabs.push({ key: 'setup', path: '/review/setup', label: '部門考核設定' })
-    tabs.push({ key: 'team', path: '/review/team', label: isBoss ? '團隊管理' : '團隊管理與年度考核' })
+    // 主管以前沒有獨立的「團隊年度考核」分頁，所以標籤叫「團隊管理與年度考核」；
+    // 現在兩個分頁都有了，再留著那個名字只會跟隔壁分頁混淆。
+    tabs.push({ key: 'team', path: '/review/team', label: '團隊管理' })
   }
   // Was "/review/team/annual" -- a sibling page nested under the same URL
   // segment as "/review/team" (團隊管理), so a plain startsWith() prefix
   // match marked BOTH tabs active whenever viewing 團隊年度考核 (its path
   // literally starts with the other tab's path). Hyphenated instead of
   // nested so the two can never collide as prefixes of each other.
-  if (isBoss) tabs.push({ key: 'team-annual', path: '/review/team-annual', label: '團隊年度考核' })
+  // 主管也看得到，只是範圍縮到自己擔任評核人的簽核鏈
+  if (isTeamManager) tabs.push({ key: 'team-annual', path: '/review/team-annual', label: '團隊年度考核' })
 
   return (
     <div>
@@ -1661,7 +1783,7 @@ function Review({ userProfile }) {
         } />
         {isTeamManager && <Route path="setup/*" element={<DepartmentReviewSetup userProfile={userProfile} isBoss={isBoss} />} />}
         {isTeamManager && <Route path="team" element={<TeamReviewManagement userProfile={userProfile} isBoss={isBoss} />} />}
-        {isBoss && <Route path="team-annual" element={<CompanyReviewRoster />} />}
+        {isTeamManager && <Route path="team-annual" element={<CompanyReviewRoster userProfile={userProfile} isBoss={isBoss} />} />}
         <Route path="*" element={<Navigate to="/review" replace />} />
       </Routes>
     </div>
