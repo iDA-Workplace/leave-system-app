@@ -330,13 +330,6 @@ function EmployeeReviewSection({ userProfile }) {
       await supabase.from('annual_review_participants')
         .update({ self_submitted: true, self_submitted_at: new Date().toISOString() })
         .eq('id', assessModal.id)
-      // 通知這一關的評核人。Slack 送不出去不該讓自評看起來像沒送成功
-      // （自評其實已經存進資料庫了），所以失敗只記在 console。
-      supabase.functions
-        .invoke('send-slack-notification', {
-          body: { type: 'self_assessment_submitted', participant_id: assessModal.id },
-        })
-        .catch(err => console.error('Slack 自評通知發送失敗', err))
     }
     setAssessSaving(false)
     showToast(submit ? '自評已送出！' : '已儲存')

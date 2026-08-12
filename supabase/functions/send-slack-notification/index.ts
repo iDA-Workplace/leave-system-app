@@ -4,7 +4,6 @@
 //   approved                    假單最後一關核准     → 私訊申請人＋通知對象；
 //                                                     若假期涵蓋今天則另外公告到頻道
 //   rejected                    假單被拒絕           → 私訊申請人
-//   self_assessment_submitted   員工送出年度自評     → 私訊目前這一關的評核人
 //
 // 前面三種的呼叫點在 LeaveForm.jsx / MyLeaves.jsx / Home.jsx，呼叫格式已經
 // 存在於前端，這支 function 是照著那個既有的 { type, request_id } 契約寫的。
@@ -32,12 +31,8 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
 
   try {
-    const { type, request_id, participant_id } = await req.json()
+    const { type, request_id } = await req.json()
     const db = adminClient()
-
-    if (type === 'self_assessment_submitted') {
-      return json(await notifyReviewEvaluators(db, participant_id))
-    }
 
     if (!request_id) return json({ error: '缺少 request_id' }, 400)
 
@@ -116,40 +111,5 @@ async function notifyRejected(_db: ReturnType<typeof adminClient>, leave: LeaveR
   return await dmMany([leave.requester.slack_user_id], '您的假單已被拒絕', [
     section(`:x: *假單未通過*\n${leaveSummary(leave)}`),
     contextLine('詳細原因請到請假系統的「假單管理」查看。'),
-  ])
-}
-
-async function notifyReviewEvaluators(db: ReturnType<typeof adminClient>, participantId: string) {
-  if (!participantId) return { error: '缺少 participant_id' }
-
-  const { data: p, error } = await db
-    .from('annual_review_participants')
-    .select(`
-      id, flow_id, current_step,
-      review:annual_reviews(title, year, evaluation_deadline),
-      user:users!annual_review_participants_user_id_fkey(full_name, department)
-    `)
-    .eq('id', participantId)
-    .single()
-  if (error) return { error: `讀取考核參與者失敗：${error.message}` }
-  if (!p.flow_id) return { skipped: '此員工尚未設定考核流程' }
-
-  const { data: steps, error: stepErr } = await db
-    .from('review_flow_steps')
-    .select('evaluator:users(slack_user_id)')
-    .eq('flow_id', p.flow_id)
-    .eq('step_order', p.current_step)
-  if (stepErr) return { error: `讀取考核關卡失敗：${stepErr.message}` }
-
-  const slackIds = (steps ?? [])
-    .map((s: { evaluator?: { slack_user_id?: string } }) => s.evaluator?.slack_user_id)
-    .filter(Boolean) as string[]
-  if (slackIds.length === 0) return { skipped: '這一關的評核人沒有設定 Slack ID' }
-
-  const dept = p.user?.department ? `（${p.user.department}）` : ''
-  return await dmMany(slackIds, `${p.user?.full_name ?? ''} 已送出年度自評，待您評分`, [
-    section(`:clipboard: *有一份年度自評待您評分*\n*${p.user?.full_name ?? ''}*${dept}　${p.review?.title ?? ''}`),
-    ...(p.review?.evaluation_deadline ? [contextLine(`評分截止：${p.review.evaluation_deadline}`)] : []),
-    contextLine('請到請假系統的「考核管理 → 團隊管理」進行評分。'),
   ])
 }
