@@ -478,23 +478,50 @@ function TeamReviewManagement({ userProfile, isBoss }) {
 
     if (!isBoss && myFlowIds.length === 0) { setParticipants([]); setLoading(false); return }
 
+    // Deliberately conservative: only columns and relationships we know
+    // exist. PostgREST fails the WHOLE request if any one embed or ordering
+    // column can't be resolved, and it returns no rows rather than partial
+    // data -- which is exactly how this screen ended up silently showing an
+    // empty team list. Ordering is done client-side for the same reason
+    // (annual_review_participants predates this project and its columns
+    // aren't all ours to assume).
     let query = supabase
       .from('annual_review_participants')
       .select(`
         *,
         review:annual_reviews(*),
-        user:users!annual_review_participants_user_id_fkey(full_name, email, role, department),
-        flow:review_flows(name, steps:review_flow_steps(step_order, evaluator:users(full_name)))
+        user:users!annual_review_participants_user_id_fkey(full_name, email, role, department)
       `)
-      .order('created_at', { ascending: false })
     if (!isBoss) query = query.in('flow_id', myFlowIds)
-    const { data } = await query
+    const { data, error } = await query
+    if (error) {
+      showToast('讀取團隊考核資料失敗：' + error.message, { tone: 'error' })
+      setParticipants([])
+      setLoading(false)
+      return
+    }
 
     const rows = data || []
+
+    // Flows are fetched separately so a problem resolving them degrades to
+    // "no flow shown" instead of blanking the entire team list.
+    const flowIds = [...new Set(rows.map(r => r.flow_id).filter(Boolean))]
+    let flowsById = {}
+    if (flowIds.length > 0) {
+      const { data: flows } = await supabase
+        .from('review_flows')
+        .select('id, name, steps:review_flow_steps(step_order, evaluator:users(full_name))')
+        .in('id', flowIds)
+      flowsById = Object.fromEntries((flows || []).map(f => [f.id, f]))
+    }
+
     const myStepSet = new Set(myFlowStepPairs.map(s => `${s.flow_id}:${s.step_order}`))
     for (const p of rows) {
+      p.flow = flowsById[p.flow_id] || null
       p._myTurn = p.self_submitted && !p.supervisor_submitted && p.flow_id && myStepSet.has(`${p.flow_id}:${p.current_step}`)
     }
+    rows.sort((a, b) => (a.user?.full_name || '').localeCompare(b.user?.full_name || ''))
+
     setParticipants(rows)
     setLoading(false)
   }
@@ -634,13 +661,29 @@ function TeamReviewManagement({ userProfile, isBoss }) {
                 </div>
                 <div className="review-row__actions">
                   <Chip tone={p.supervisor_submitted ? 'success' : p._myTurn ? 'warning' : 'neutral'}>
-                    {p.supervisor_submitted ? '已完成評分' : p._myTurn ? '待我評分' : p.self_submitted ? `待第${p.current_step}關評分` : '待員工自評'}
+                    {p.supervisor_submitted ? '已完成評分'
+                      : !p.self_submitted ? '待員工自評'
+                      : p._myTurn ? '待我評分'
+                      : !p.flow_id ? '尚未設定考核流程'
+                      : `待第${p.current_step}關評分`}
                   </Chip>
                   {p.supervisor_submitted && (
                     <Button size="sm" variant="outlined" onClick={() => handleSelect(p, true)}>查看結果</Button>
                   )}
                   {!p.supervisor_submitted && p._myTurn && p.review?.status === 'active' && (
                     <Button size="sm" onClick={() => handleSelect(p, false)}>開始評分</Button>
+                  )}
+                  {/* Without this, "self-assessment submitted but no 開始評分
+                      button" looks like a broken screen rather than a setup
+                      gap the user can actually go and fix. */}
+                  {!p.supervisor_submitted && p.self_submitted && !p._myTurn && (
+                    <div className="review-row__sub">
+                      {!p.flow_id
+                        ? '此員工沒有考核流程，請到「部門考核設定 → 考核流程」建立後，移除再重新加入參與者'
+                        : p.review?.status !== 'active'
+                          ? '此考核週期已結束，請到「考核週期」重新開放'
+                          : `目前輪到第 ${p.current_step} 關的評核人，不是您`}
+                    </div>
                   )}
                 </div>
               </div>
