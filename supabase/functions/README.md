@@ -53,10 +53,34 @@ supabase secrets set SLACK_LEAVE_CHANNEL=C01234ABCDE
 
 ## 三、部署
 
+有兩種部署方式，**只需要選一種**：
+
+### 方式 A：在 Supabase 網頁後台部署（不需要裝任何東西，推薦一般情況使用）
+
+每支 function 都準備了一份 **`standalone.ts`**（跟 `index.ts` 內容相同，
+只是把共用程式碼合併進單一檔案，因為網頁編輯器不支援多檔案匯入）：
+
+1. Supabase 後台左側選單 → **Edge Functions**
+2. 點 **Deploy a new function** → **Via Editor**（不要選 CLI / Terminal 那個選項）
+3. 函式名稱填 `send-slack-notification`（**必須完全一樣**，前端呼叫時用這個名字找它）
+4. 把 `supabase/functions/send-slack-notification/standalone.ts` 的**全部內容**複製貼進編輯器，蓋掉預設的範例程式碼
+5. 按 **Deploy**
+6. 重複第 2～5 步，這次函式名稱填 `daily-leave-digest`，貼
+   `supabase/functions/daily-leave-digest/standalone.ts` 的內容
+
+部署完成後，Edge Functions 列表應該會看到這兩支，狀態顯示為運作中。
+
+⚠️ `standalone.ts` 只給網頁編輯器用。程式邏輯跟 `index.ts` 完全一樣，只是重複
+了一份共用程式碼；以後若要改動通知邏輯，`index.ts` 和 `standalone.ts` 要一起改。
+
+### 方式 B：用 Supabase CLI 部署（需要終端機）
+
 ```bash
 supabase functions deploy send-slack-notification
 supabase functions deploy daily-leave-digest
 ```
+
+CLI 會自動處理 `_shared/` 資料夾的共用程式碼，不需要 `standalone.ts`。
 
 ## 四、把每日公告排進 9 點
 
