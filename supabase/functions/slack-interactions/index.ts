@@ -447,7 +447,7 @@ Deno.serve(async (req) => {
 
 // ---- Events API ----
 
-async function handleEvent(db: SupabaseClient, body: Record<string, any>) {
+function handleEvent(db: SupabaseClient, body: Record<string, any>) {
   if (body.type === 'url_verification') {
     return new Response(body.challenge, { headers: { 'Content-Type': 'text/plain' } })
   }
@@ -456,10 +456,15 @@ async function handleEvent(db: SupabaseClient, body: Record<string, any>) {
   // bot_id 用來擋掉「bot 自己發的訊息」，否則我們回的訊息會再觸發自己
   if (event?.type === 'message' && event.channel_type === 'im' && !event.bot_id && !event.subtype) {
     const text: string = event.text ?? ''
-    if (text.includes('請假') || text.toLowerCase().includes('leave')) {
+
+    // 回訊息一律走背景：Slack 沒在 3 秒內收到 200 就會「重送同一個事件」，
+    // 而我們在等 Slack API 回應，很容易超過 —— 結果就是 bot 回了兩次。
+    if (text.includes('假期查詢') || text.includes('假期') || text.includes('額度')) {
+      background(replyWithBalance(db, event))
+    } else if (text.includes('請假') || text.toLowerCase().includes('leave')) {
       // 打字不會給 trigger_id，沒有 trigger_id 就不能直接彈出表單，
       // 所以只能先回一顆按鈕 —— 點按鈕才會產生 trigger_id。
-      await callSlack('chat.postMessage', {
+      background(callSlack('chat.postMessage', {
         channel: event.channel,
         text: '要請假嗎？點下面的按鈕填寫假單。',
         blocks: [
@@ -473,10 +478,85 @@ async function handleEvent(db: SupabaseClient, body: Record<string, any>) {
             }],
           },
         ],
-      })
+      }))
     }
   }
   return new Response('ok')
+}
+
+// ---- 假期查詢 ----
+
+/**
+ * 回傳這位員工各假別的可用額度。
+ *
+ * 額度的判定規則跟送出假單時的檢查完全一致（財務個人設定 > 公司預設；
+ * 已使用時數含審核中；沒設額度視為無上限），兩邊算出來的數字才不會打架。
+ */
+async function replyWithBalance(db: SupabaseClient, event: Record<string, any>) {
+  const me = await resolveUser(db, event.user)
+  if (!me) {
+    await callSlack('chat.postMessage', {
+      channel: event.channel,
+      text: '找不到您的系統帳號',
+      blocks: [section(':warning: 找不到對應的系統帳號，請聯繫管理員在「員工帳號管理」補上您的 Slack User ID。')],
+    })
+    return
+  }
+
+  const year = new Date().getFullYear()
+  const [typesRes, overridesRes, summaryRes, usedRes] = await Promise.all([
+    db.from('leave_types').select('id, name, annual_quota_hours').eq('is_active', true).order('name'),
+    db.from('user_leave_entitlements').select('leave_type_id, quota_hours')
+      .eq('user_id', me.id).eq('mode', 'manual'),
+    db.from('annual_leave_summary').select('entitled_days').eq('user_id', me.id).maybeSingle(),
+    db.from('leave_requests').select('leave_type_id, hours, start_date, end_date')
+      .eq('requester_id', me.id).in('status', ['approved', 'pending'])
+      .gte('start_date', `${year}-01-01`).lte('start_date', `${year}-12-31`),
+  ])
+
+  const overrides = new Map<string, number>()
+  for (const r of overridesRes.data ?? []) {
+    if (r.quota_hours != null) overrides.set(r.leave_type_id, Number(r.quota_hours))
+  }
+
+  const usedByType = new Map<string, number>()
+  for (const r of usedRes.data ?? []) {
+    usedByType.set(r.leave_type_id, (usedByType.get(r.leave_type_id) ?? 0) + leaveRequestHours(r))
+  }
+
+  const f = (h: number) => (Number.isInteger(h) ? String(h) : h.toFixed(1))
+  const lines: string[] = []
+  for (const t of typesRes.data ?? []) {
+    let quota = overrides.get(t.id) ?? null
+    if (quota == null) {
+      quota = t.name.includes('特休')
+        ? (summaryRes.data?.entitled_days != null ? Number(summaryRes.data.entitled_days) * HOURS_PER_DAY : null)
+        : (t.annual_quota_hours ?? null)
+    }
+    const used = usedByType.get(t.id) ?? 0
+
+    if (quota == null) {
+      // 沒有設額度＝不受年度上限限制，這種寫「無上限」比寫 0 或空白清楚
+      lines.push(`• *${t.name}*　無年度上限${used > 0 ? `（今年已使用 ${f(used)} 小時）` : ''}`)
+      continue
+    }
+    const remaining = Math.max(0, quota - used)
+    // 特休大家習慣用「天」在講，所以額外換算一份放在括號裡
+    const asDays = t.name.includes('特休') ? `（${f(remaining / HOURS_PER_DAY)} 天）` : ''
+    lines.push(
+      `• *${t.name}*　可用 ${f(remaining)} 小時${asDays}` +
+      `　／　年度 ${f(quota)} 小時，已使用或審核中 ${f(used)} 小時`,
+    )
+  }
+
+  await callSlack('chat.postMessage', {
+    channel: event.channel,
+    text: `${me.full_name} 的假期額度`,
+    blocks: [
+      section(`:bar_chart: *您的假期額度*（${year} 年度）\n${lines.join('\n')}`),
+      contextLine('「已使用或審核中」包含還在等簽核的假單，所以可用額度已經先扣掉了。'),
+    ],
+  })
 }
 
 // ---- Interactivity ----
