@@ -72,6 +72,24 @@ async function replaceMessage(responseUrl: string, text: string, blocks: unknown
 const section = (md: string) => ({ type: 'section', text: { type: 'mrkdwn', text: md } })
 const contextLine = (md: string) => ({ type: 'context', elements: [{ type: 'mrkdwn', text: md }] })
 
+// ===== 背景工作 =====
+
+declare const EdgeRuntime: { waitUntil?: (p: Promise<unknown>) => void } | undefined
+
+/**
+ * 把工作丟到「回應送出之後」才跑。
+ *
+ * Slack 規定表單送出（view_submission）與按鈕點擊（block_actions）都必須在
+ * 3 秒內收到回應，否則使用者畫面會跳出「連線時遇到一些問題」—— 即使我們的
+ * 工作其實已經成功。發通知要打好幾次 Slack API，很容易就超過 3 秒，所以
+ * 凡是「使用者不需要等結果」的事（發通知、更新原訊息）一律丟到背景，
+ * 只有「決定表單要不要關掉／顯示錯誤」的事才同步做完。
+ */
+function background(p: Promise<unknown>) {
+  const task = p.catch(e => console.error('背景工作失敗：', e))
+  if (typeof EdgeRuntime !== 'undefined' && EdgeRuntime?.waitUntil) EdgeRuntime.waitUntil(task)
+}
+
 // ===== 簽章驗證 =====
 
 async function verifySignature(req: Request, rawBody: string): Promise<boolean> {
@@ -140,33 +158,33 @@ async function checkQuota(
   leaveType: { id: string; name: string; annual_quota_hours: number | null },
   requestedHours: number,
 ): Promise<string | null> {
-  const { data: override } = await db
-    .from('user_leave_entitlements')
-    .select('quota_hours')
-    .eq('user_id', userId).eq('leave_type_id', leaveType.id).eq('mode', 'manual')
-    .maybeSingle()
+  // 三個查詢一次發出去，不要一個等一個 —— 這段在「送出表單」的同步路徑上，
+  // 必須在 Slack 的 3 秒限制內跑完。特休的年度天數即使用不到也一起抓，
+  // 多一個查詢的成本遠低於多一輪來回等待。
+  const year = new Date().getFullYear()
+  const [overrideRes, summaryRes, rowsRes] = await Promise.all([
+    db.from('user_leave_entitlements').select('quota_hours')
+      .eq('user_id', userId).eq('leave_type_id', leaveType.id).eq('mode', 'manual').maybeSingle(),
+    db.from('annual_leave_summary').select('entitled_days').eq('user_id', userId).maybeSingle(),
+    db.from('leave_requests').select('hours, start_date, end_date')
+      .eq('requester_id', userId).eq('leave_type_id', leaveType.id)
+      .in('status', ['approved', 'pending'])
+      .gte('start_date', `${year}-01-01`).lte('start_date', `${year}-12-31`),
+  ])
 
+  const override = overrideRes.data
   let quota: number | null = override?.quota_hours != null ? Number(override.quota_hours) : null
   if (quota == null) {
     if (leaveType.name.includes('特休')) {
-      const { data: summary } = await db
-        .from('annual_leave_summary').select('entitled_days').eq('user_id', userId).maybeSingle()
-      quota = summary?.entitled_days != null ? Number(summary.entitled_days) * HOURS_PER_DAY : null
+      const days = summaryRes.data?.entitled_days
+      quota = days != null ? Number(days) * HOURS_PER_DAY : null
     } else {
       quota = leaveType.annual_quota_hours ?? null
     }
   }
   if (quota == null) return null
 
-  const year = new Date().getFullYear()
-  const { data: rows } = await db
-    .from('leave_requests')
-    .select('hours, start_date, end_date')
-    .eq('requester_id', userId).eq('leave_type_id', leaveType.id)
-    .in('status', ['approved', 'pending'])
-    .gte('start_date', `${year}-01-01`).lte('start_date', `${year}-12-31`)
-
-  const used = (rows ?? []).reduce((s, r) => s + leaveRequestHours(r), 0)
+  const used = (rowsRes.data ?? []).reduce((s, r) => s + leaveRequestHours(r), 0)
   const remaining = quota - used
   if (requestedHours <= remaining) return null
 
@@ -576,76 +594,88 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, p: Record<string, 
     return json({ response_action: 'errors', errors: { reason: '送出失敗：' + error.message } })
   }
 
-  const { data: leave } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', created.id).single()
-  const row = leave as unknown as LeaveRow
+  // 假單已經寫進資料庫，剩下的通知使用者不需要等 —— 全部丟到背景，
+  // 讓 Slack 立刻收到「關閉表單」的回應，避免 3 秒逾時跳出「連線時遇到
+  // 一些問題」（工作其實有做完，只是回應太慢）。
+  background((async () => {
+    const { data: leave } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', created.id).single()
+    const row = leave as unknown as LeaveRow
 
-  const steps = await approversForStep(db, me.default_flow_id, 1)
-  if (steps.length === 0) {
-    // 沒有設定任何簽核關卡＝不需審核（目前只有老闆是這種設定），與網頁版一致。
-    // 這條路徑一樣要走完「核准後」該做的事 —— 之前這裡直接改狀態就結束，
-    // 導致這種員工當天臨時請假時頻道上沒有任何人知道。
-    await db.from('leave_requests').update({ status: 'approved' }).eq('id', created.id)
-    await notifyProxy(db, row)
-    await notifyChannelIfToday(db, row)
-  } else {
-    await notifyApprovers(db, row)
-  }
+    const steps = await approversForStep(db, me.default_flow_id, 1)
+    if (steps.length === 0) {
+      // 沒有設定任何簽核關卡＝不需審核（目前只有老闆是這種設定），與網頁版一致。
+      // 這條路徑一樣要走完「核准後」該做的事 —— 之前這裡直接改狀態就結束，
+      // 導致這種員工當天臨時請假時頻道上沒有任何人知道。
+      await db.from('leave_requests').update({ status: 'approved' }).eq('id', created.id)
+      await notifyProxy(db, row)
+      await notifyChannelIfToday(db, row)
+    } else {
+      await notifyApprovers(db, row)
+    }
 
-  if (me.slack_user_id) {
-    await dm(me.slack_user_id, '假單已送出', [
-      section(`:white_check_mark: *假單已送出*\n${leaveDetailLines(row)}`),
-      contextLine(steps.length === 0 ? '此流程不需簽核，已自動核准。' : '已通知簽核人，審核結果會在這裡通知您。'),
-    ])
-  }
+    if (me.slack_user_id) {
+      await dm(me.slack_user_id, '假單已送出', [
+        section(`:white_check_mark: *假單已送出*\n${leaveDetailLines(row)}`),
+        contextLine(steps.length === 0 ? '此流程不需簽核，已自動核准。' : '已通知簽核人，審核結果會在這裡通知您。'),
+      ])
+    }
+  })())
+
   return json({ response_action: 'clear' })
 }
 
 // ---- 核准 ----
 
-async function handleApprove(db: SupabaseClient, me: any, requestId: string, responseUrl: string) {
-  const { data } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', requestId).single()
-  const leave = data as unknown as LeaveRow
+function handleApprove(db: SupabaseClient, me: any, requestId: string, responseUrl: string) {
+  // 按鈕點擊同樣有 3 秒回應限制，所以整段做完再回應會逾時。改成立刻回應、
+  // 實際處理走背景 —— 使用者看到的結果是原訊息被改寫（透過 response_url），
+  // 那個動作本來就是非同步的，不需要卡在這次 HTTP 回應裡。
+  background((async () => {
+    const { data } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', requestId).single()
+    const leave = data as unknown as LeaveRow
 
-  const guard = await guardApproval(db, me, leave)
-  if (guard) {
-    await replaceMessage(responseUrl, guard, [section(`:information_source: ${guard}`)])
-    return new Response('')
-  }
-
-  await db.from('leave_approvals').insert({
-    request_id: leave.id, approver_id: me.id, step_order: leave.current_step, action: 'approved',
-  })
-
-  const { data: allSteps } = await db
-    .from('approval_flow_steps').select('step_order').eq('flow_id', leave.flow_id)
-  const maxStep = Math.max(...(allSteps ?? []).map(s => s.step_order))
-  const isFinal = (leave.current_step ?? 1) >= maxStep
-
-  if (isFinal) {
-    await db.from('leave_requests').update({ status: 'approved' }).eq('id', leave.id)
-  } else {
-    await db.from('leave_requests').update({ current_step: (leave.current_step ?? 1) + 1 }).eq('id', leave.id)
-  }
-
-  const now = new Date(Date.now() + 8 * 3600 * 1000)
-  const stamp = `${now.getUTCMonth() + 1}月${now.getUTCDate()}日 ${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`
-
-  // 按鈕換成結果文字，避免重複點或看不出自己按過了
-  await replaceMessage(responseUrl, '已核准', [
-    section(`:white_check_mark: *已核准*\n${leaveDetailLines(leave)}`),
-    contextLine(isFinal ? `您已於 ${stamp} 核准，流程已完成` : `您已於 ${stamp} 核准，已轉交下一關`),
-  ])
-
-  if (isFinal) {
-    if (leave.requester?.slack_user_id) {
-      await dm(leave.requester.slack_user_id, '您的假單已核准',
-        [section(`:white_check_mark: *假單已核准*\n${leaveDetailLines(leave)}`)])
+    const guard = await guardApproval(db, me, leave)
+    if (guard) {
+      await replaceMessage(responseUrl, guard, [section(`:information_source: ${guard}`)])
+      return
     }
-    await notifyProxy(db, leave)
-    await notifyChannelIfToday(db, leave)
-  } else {
-    await notifyApprovers(db, { ...leave, current_step: (leave.current_step ?? 1) + 1 })
-  }
+
+    await db.from('leave_approvals').insert({
+      request_id: leave.id, approver_id: me.id, step_order: leave.current_step, action: 'approved',
+    })
+
+    const { data: allSteps } = await db
+      .from('approval_flow_steps').select('step_order').eq('flow_id', leave.flow_id)
+    const maxStep = Math.max(...(allSteps ?? []).map(s => s.step_order))
+    const isFinal = (leave.current_step ?? 1) >= maxStep
+
+    if (isFinal) {
+      await db.from('leave_requests').update({ status: 'approved' }).eq('id', leave.id)
+    } else {
+      await db.from('leave_requests').update({ current_step: (leave.current_step ?? 1) + 1 }).eq('id', leave.id)
+    }
+
+    const now = new Date(Date.now() + 8 * 3600 * 1000)
+    const stamp = `${now.getUTCMonth() + 1}月${now.getUTCDate()}日 ${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`
+
+    // 按鈕換成結果文字，避免重複點或看不出自己按過了
+    await replaceMessage(responseUrl, '已核准', [
+      section(`:white_check_mark: *已核准*\n${leaveDetailLines(leave)}`),
+      contextLine(isFinal ? `您已於 ${stamp} 核准，流程已完成` : `您已於 ${stamp} 核准，已轉交下一關`),
+    ])
+
+    if (isFinal) {
+      if (leave.requester?.slack_user_id) {
+        await dm(leave.requester.slack_user_id, '您的假單已核准',
+          [section(`:white_check_mark: *假單已核准*\n${leaveDetailLines(leave)}`)])
+      }
+      await notifyProxy(db, leave)
+      await notifyChannelIfToday(db, leave)
+    } else {
+      await notifyApprovers(db, { ...leave, current_step: (leave.current_step ?? 1) + 1 })
+    }
+  })())
+
   return new Response('')
 }
 
@@ -668,15 +698,20 @@ async function handleRejectSubmit(db: SupabaseClient, me: any, p: Record<string,
   })
   await db.from('leave_requests').update({ status: 'rejected' }).eq('id', leave.id)
 
+  // 狀態已經寫進資料庫，通知丟背景讓表單立刻關閉（同樣避免 3 秒逾時）。
+  // 把關與寫入刻意留在同步段：那兩件事的結果決定表單要關掉還是顯示錯誤。
   const detail = leaveDetailLines(leave, [`*駁回原因:* ${comment}`])
-  if (meta.response_url) {
-    await replaceMessage(meta.response_url, '已駁回', [section(`:x: *已駁回*\n${detail}`)])
-  }
-  if (leave.requester?.slack_user_id) {
-    await dm(leave.requester.slack_user_id, '您的假單已被駁回', [
-      section(`:x: *假單未通過*\n${detail}`),
-    ])
-  }
+  background((async () => {
+    if (meta.response_url) {
+      await replaceMessage(meta.response_url, '已駁回', [section(`:x: *已駁回*\n${detail}`)])
+    }
+    if (leave.requester?.slack_user_id) {
+      await dm(leave.requester.slack_user_id, '您的假單已被駁回', [
+        section(`:x: *假單未通過*\n${detail}`),
+      ])
+    }
+  })())
+
   return json({ response_action: 'clear' })
 }
 
