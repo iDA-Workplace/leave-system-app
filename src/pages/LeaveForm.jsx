@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Dialog, Select, Textarea, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
-import { buildBalanceRows, fetchEntitlementOverrides } from '../lib/leaveEntitlements'
+import {
+  buildBalanceRows, fetchEntitlementOverrides, checkQuota, calcHours, countWorkdays,
+} from '../lib/leaveEntitlements'
 import './LeaveForm.css'
 
 const TIME_OPTIONS = []
@@ -19,34 +21,8 @@ for (let h = 8; h <= 18; h++) {
 const MAX_ATTACHMENT_MB = 5
 const ATTACHMENT_ACCEPT = '.jpg,.jpeg,.png,.pdf'
 
-function calcHours(start, end) {
-  if (!start || !end) return 0
-  const [sh, sm] = start.split(':').map(Number)
-  const [eh, em] = end.split(':').map(Number)
-  const startMin = sh * 60 + sm
-  const endMin = eh * 60 + em
-  if (endMin <= startMin) return 0
-  let total = endMin - startMin
-  const lunchStart = 12 * 60
-  const lunchEnd = 13 * 60
-  const overlapStart = Math.max(startMin, lunchStart)
-  const overlapEnd = Math.min(endMin, lunchEnd)
-  if (overlapEnd > overlapStart) total -= (overlapEnd - overlapStart)
-  return Math.max(0, total / 60)
-}
-
-function countWorkdays(startDate, endDate) {
-  let count = 0
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  const current = new Date(start)
-  while (current <= end) {
-    const day = current.getDay()
-    if (day !== 0 && day !== 6) count++
-    current.setDate(current.getDate() + 1)
-  }
-  return count
-}
+// calcHours / countWorkdays 已搬到 lib/leaveEntitlements.js 共用 ——
+// 送出時的額度檢查與 Slack 版送單都要用同一套算法。
 
 function initials(name) {
   return name ? name.trim().slice(0, 1).toUpperCase() : '?'
@@ -197,6 +173,32 @@ function LeaveForm({ userProfile }) {
     }
 
     setLoading(true)
+
+    // 額度檢查。刻意放在 insert 之前而且擋死 —— 沒有額度就是不能送出。
+    // 計算時把「審核中」的假單也算進去，否則同一個人可以連送好幾張各自都
+    // 剛好卡在額度內的假單，等全部核准就超額。
+    const selectedType = leaveTypes.find(lt => lt.id === form.leave_type_id)
+    const requestedHours = isMultiDay
+      ? countWorkdays(form.start_date, form.end_date) * 8
+      : hours
+    if (selectedType) {
+      try {
+        const quota = await checkQuota({
+          userId: userProfile.id,
+          leaveType: selectedType,
+          requestedHours,
+        })
+        if (!quota.ok) {
+          showToast(quota.message, { tone: 'error' })
+          setLoading(false)
+          return
+        }
+      } catch (err) {
+        showToast(err.message, { tone: 'error' })
+        setLoading(false)
+        return
+      }
+    }
 
     const { data, error } = await supabase
       .from('leave_requests')

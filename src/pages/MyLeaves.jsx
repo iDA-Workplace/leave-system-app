@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs } from '../components/ui'
 import { useToast } from '../context/ToastContext'
-import { buildBalanceRows, fetchEntitlementOverrides } from '../lib/leaveEntitlements'
+import {
+  buildBalanceRows, fetchEntitlementOverrides, checkQuota, leaveRequestHours,
+} from '../lib/leaveEntitlements'
 import './MyLeaves.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
@@ -181,6 +183,22 @@ function MyLeaves({ userProfile }) {
   }
 
   async function handleResubmit(leave) {
+    // 重新送出等於開一張新假單，所以跟「請假申請」走同一套額度檢查。
+    // 少了這裡，被退回的假單就成了繞過額度限制的後門。
+    const leaveType = leaveTypes.find(lt => lt.id === leave.leave_type_id)
+    if (leaveType) {
+      try {
+        const quota = await checkQuota({
+          userId: userProfile.id,
+          leaveType,
+          requestedHours: leaveRequestHours(leave),
+        })
+        if (!quota.ok) { showToast(quota.message, { tone: 'error' }); return }
+      } catch (err) {
+        showToast(err.message, { tone: 'error' }); return
+      }
+    }
+
     const { data, error } = await supabase
       .from('leave_requests')
       .insert({
