@@ -525,6 +525,21 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>) 
   }
 
   const f = (h: number) => (Number.isInteger(h) ? String(h) : h.toFixed(1))
+
+  /**
+   * 把時數換算成「N 天 M 小時」放在括號裡。
+   *
+   * 小時才是系統實際記錄、也是擋額度時用的單位，所以永遠放主位；天數只是
+   * 給人快速抓概念用的。不滿一天就回 null 讓呼叫端整個略過括號 —— 5 小時
+   * 寫成「0.6 天」或「0 天 5 小時」都只會更難讀。
+   */
+  const asDays = (h: number) => {
+    const days = Math.floor(h / HOURS_PER_DAY)
+    const rest = h - days * HOURS_PER_DAY
+    if (days === 0) return null
+    return rest === 0 ? `（${days} 天）` : `（${days} 天 ${f(rest)} 小時）`
+  }
+
   const lines: string[] = []
   for (const t of typesRes.data ?? []) {
     let quota = overrides.get(t.id) ?? null
@@ -533,20 +548,16 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>) 
         ? (summaryRes.data?.entitled_days != null ? Number(summaryRes.data.entitled_days) * HOURS_PER_DAY : null)
         : (t.annual_quota_hours ?? null)
     }
-    const used = usedByType.get(t.id) ?? 0
 
     if (quota == null) {
       // 沒有設額度＝不受年度上限限制，這種寫「無上限」比寫 0 或空白清楚
-      lines.push(`• *${t.name}*　無年度上限${used > 0 ? `（今年已使用 ${f(used)} 小時）` : ''}`)
+      lines.push(`• *${t.name}*　無年度上限`)
       continue
     }
-    const remaining = Math.max(0, quota - used)
-    // 特休大家習慣用「天」在講，所以額外換算一份放在括號裡
-    const asDays = t.name.includes('特休') ? `（${f(remaining / HOURS_PER_DAY)} 天）` : ''
-    lines.push(
-      `• *${t.name}*　可用 ${f(remaining)} 小時${asDays}` +
-      `　／　年度 ${f(quota)} 小時，已使用或審核中 ${f(used)} 小時`,
-    )
+    const remaining = Math.max(0, quota - (usedByType.get(t.id) ?? 0))
+    // 特休大家習慣用「天」在講，所以額外換算一份；其他假別只寫時數
+    const days = t.name.includes('特休') ? asDays(remaining) : null
+    lines.push(`• *${t.name}*　可用 ${f(remaining)} 小時${days ?? ''}`)
   }
 
   await callSlack('chat.postMessage', {
@@ -554,7 +565,7 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>) 
     text: `${me.full_name} 的假期額度`,
     blocks: [
       section(`:bar_chart: *您的假期額度*（${year} 年度）\n${lines.join('\n')}`),
-      contextLine('「已使用或審核中」包含還在等簽核的假單，所以可用額度已經先扣掉了。'),
+      contextLine('可用額度已扣除還在等簽核的假單。'),
     ],
   })
 }
