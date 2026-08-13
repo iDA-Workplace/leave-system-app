@@ -8,7 +8,7 @@
 // 決定，這樣手動觸發補發也才有用。
 
 import {
-  adminClient, leaveSummary, taipeiToday, LEAVE_SELECT, type LeaveRow,
+  adminClient, digestLine, groupBySlot, taipeiToday, LEAVE_SELECT, type LeaveRow,
 } from '../_shared/leave.ts'
 import { postToChannel, section, contextLine, requireEnv } from '../_shared/slack.ts'
 
@@ -35,26 +35,28 @@ Deno.serve(async () => {
       })
     }
 
-    // 同一個人可能同時有多張假單涵蓋今天（例如一張多日假再加一張時數假），
-    // 公告要回答的是「今天誰不在」，所以照姓名排序讓同一個人的假單相鄰，
-    // 讀起來才不會東一條西一條。
-    leaves.sort((a, b) =>
-      (a.requester?.department ?? '').localeCompare(b.requester?.department ?? '') ||
-      (a.requester?.full_name ?? '').localeCompare(b.requester?.full_name ?? ''),
-    )
+    // 分成全天／上午／下午三組 —— 大家真正想知道的是「這個人現在找不找得到」，
+    // 全部擠成一串會看不出誰是整天不在、誰只是半天。
+    const { fullDay, morning, afternoon } = groupBySlot(leaves)
 
     const d = new Date(today)
     const weekday = ['日', '一', '二', '三', '四', '五', '六'][d.getUTCDay()]
     const heading = `:palm_tree: *${d.getUTCMonth() + 1}/${d.getUTCDate()}（${weekday}）今日請假名單*`
 
+    const groups: [string, LeaveRow[]][] = [
+      ['全天', fullDay], ['上午', morning], ['下午', afternoon],
+    ]
+    const blocks: unknown[] = [section(heading)]
+    for (const [label, rows] of groups) {
+      if (rows.length === 0) continue   // 空的組別整段不顯示
+      blocks.push(section(`*■ ${label}*\n${rows.map(digestLine).join('\n')}`))
+    }
+    blocks.push(contextLine('由請假系統自動發送。完整行事曆請見系統首頁。'))
+
     await postToChannel(
       requireEnv('SLACK_LEAVE_CHANNEL'),
       `今日請假名單（共 ${leaves.length} 筆）`,
-      [
-        section(heading),
-        section(leaves.map(l => `• ${leaveSummary(l)}`).join('\n')),
-        contextLine('由請假系統自動發送。完整行事曆請見系統首頁。'),
-      ],
+      blocks,
     )
 
     return new Response(JSON.stringify({ date: today, count: leaves.length, posted: true }), {

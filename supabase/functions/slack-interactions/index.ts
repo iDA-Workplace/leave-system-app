@@ -205,21 +205,62 @@ interface LeaveRow {
   leave_type?: { name: string } | null
 }
 
-function periodLabel(l: LeaveRow): string {
-  const short = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
-  if (l.end_date && l.end_date > l.start_date) return `${short(l.start_date)} ～ ${short(l.end_date)}`
-  if (l.start_time && l.end_time) return `${short(l.start_date)} ${l.start_time.slice(0, 5)}～${l.end_time.slice(0, 5)}`
-  return short(l.start_date)
+// ===== 假單的文字呈現（與 _shared/leave.ts 同一套規則）=====
+
+/** 滿 8 小時就算請整天，未滿都算半天（使用者定義）。 */
+const FULL_DAY_HOURS = 8
+
+function isMultiDay(l: LeaveRow): boolean {
+  return !!l.end_date && l.end_date > l.start_date
 }
 
+function isFullDay(l: LeaveRow): boolean {
+  return isMultiDay(l) || (l.hours ?? FULL_DAY_HOURS) >= FULL_DAY_HOURS
+}
+
+const shortDate = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
+const hhmm = (t: string) => t.slice(0, 5)
+
+/** 「8/17」或「8/17 ~ 8/19」 */
+function dateLabel(l: LeaveRow): string {
+  return isMultiDay(l) ? `${shortDate(l.start_date)} ~ ${shortDate(l.end_date)}` : shortDate(l.start_date)
+}
+
+/** 「08:30-17:30」；多日假沒有時間意義，寫「整日」。 */
+function timeLabel(l: LeaveRow): string {
+  if (isMultiDay(l)) return '整日'
+  if (l.start_time && l.end_time) return `${hhmm(l.start_time)}-${hhmm(l.end_time)}`
+  return '整日'
+}
+
+/** 連續一天以上一律用天數表示，單日才用小時。 */
 function durationLabel(l: LeaveRow): string {
-  if (l.end_date && l.end_date > l.start_date) return '整日'
-  return l.hours ? `${l.hours} 小時` : '整日'
+  if (isMultiDay(l)) return `${countWorkdays(l.start_date, l.end_date)} 天`
+  return `${l.hours ?? FULL_DAY_HOURS} 小時`
 }
 
-function leaveSummary(l: LeaveRow): string {
-  const dept = l.requester?.department ? `（${l.requester.department}）` : ''
-  return `*${l.requester?.full_name ?? ''}*${dept}　${l.leave_type?.name ?? '請假'}　${periodLabel(l)}　${durationLabel(l)}`
+/** 單張假單的條列式明細。`extra` 補該情境專屬的欄位（例如駁回原因）。 */
+function leaveDetailLines(l: LeaveRow, extra: string[] = []): string {
+  const lines = [
+    `*申請人:* ${l.requester?.full_name ?? '—'}`,
+    `*假別:* ${l.leave_type?.name ?? '請假'}`,
+    `*休假日期:* ${dateLabel(l)}`,
+    `*休假時間:* ${timeLabel(l)}`,
+    `*時數:* ${durationLabel(l)}`,
+  ]
+  // 沒填代理人就整行不顯示，不要留一行「無」佔版面
+  if (l.proxy?.full_name) lines.push(`*職務代理人:* ${l.proxy.full_name}`)
+  if (l.reason) lines.push(`*事由:* ${l.reason}`)
+  return [...lines, ...extra].join('\n')
+}
+
+/** 頻道公告用的精簡單行（不含部門）。 */
+function digestLine(l: LeaveRow): string {
+  const name = l.requester?.full_name ?? '（未知人員）'
+  const type = l.leave_type?.name ?? '請假'
+  if (isMultiDay(l)) return `• ${name}　${type}（${dateLabel(l)} 連假中）`
+  if (isFullDay(l)) return `• ${name}　${type}`
+  return `• ${name}　${type}　${timeLabel(l)}`
 }
 
 function dm(slackUserId: string, text: string, blocks: unknown[]) {
@@ -240,7 +281,7 @@ async function notifyApprovers(db: SupabaseClient, leave: LeaveRow) {
   if (!leave.flow_id || !leave.current_step) return
   const steps = await approversForStep(db, leave.flow_id, leave.current_step)
   const blocks = [
-    section(`:memo: *有一張假單待您審核*\n${leaveSummary(leave)}`),
+    section(`:memo: *有一張假單待您審核*\n${leaveDetailLines(leave)}`),
     ...(leave.reason ? [section(`*事由*\n${leave.reason}`)] : []),
     ...(leave.proxy?.full_name ? [contextLine(`職務代理人：${leave.proxy.full_name}`)] : []),
     {
@@ -540,15 +581,19 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, p: Record<string, 
 
   const steps = await approversForStep(db, me.default_flow_id, 1)
   if (steps.length === 0) {
-    // 沒有設定任何簽核關卡＝不需審核，與網頁版行為一致
+    // 沒有設定任何簽核關卡＝不需審核（目前只有老闆是這種設定），與網頁版一致。
+    // 這條路徑一樣要走完「核准後」該做的事 —— 之前這裡直接改狀態就結束，
+    // 導致這種員工當天臨時請假時頻道上沒有任何人知道。
     await db.from('leave_requests').update({ status: 'approved' }).eq('id', created.id)
+    await notifyProxy(db, row)
+    await notifyChannelIfToday(db, row)
   } else {
     await notifyApprovers(db, row)
   }
 
   if (me.slack_user_id) {
     await dm(me.slack_user_id, '假單已送出', [
-      section(`:white_check_mark: *假單已送出*\n${leaveSummary(row)}`),
+      section(`:white_check_mark: *假單已送出*\n${leaveDetailLines(row)}`),
       contextLine(steps.length === 0 ? '此流程不需簽核，已自動核准。' : '已通知簽核人，審核結果會在這裡通知您。'),
     ])
   }
@@ -587,15 +632,16 @@ async function handleApprove(db: SupabaseClient, me: any, requestId: string, res
 
   // 按鈕換成結果文字，避免重複點或看不出自己按過了
   await replaceMessage(responseUrl, '已核准', [
-    section(`:white_check_mark: *已核准*\n${leaveSummary(leave)}`),
+    section(`:white_check_mark: *已核准*\n${leaveDetailLines(leave)}`),
     contextLine(isFinal ? `您已於 ${stamp} 核准，流程已完成` : `您已於 ${stamp} 核准，已轉交下一關`),
   ])
 
   if (isFinal) {
     if (leave.requester?.slack_user_id) {
       await dm(leave.requester.slack_user_id, '您的假單已核准',
-        [section(`:white_check_mark: *假單已核准*\n${leaveSummary(leave)}`)])
+        [section(`:white_check_mark: *假單已核准*\n${leaveDetailLines(leave)}`)])
     }
+    await notifyProxy(db, leave)
     await notifyChannelIfToday(db, leave)
   } else {
     await notifyApprovers(db, { ...leave, current_step: (leave.current_step ?? 1) + 1 })
@@ -622,16 +668,13 @@ async function handleRejectSubmit(db: SupabaseClient, me: any, p: Record<string,
   })
   await db.from('leave_requests').update({ status: 'rejected' }).eq('id', leave.id)
 
+  const detail = leaveDetailLines(leave, [`*駁回原因:* ${comment}`])
   if (meta.response_url) {
-    await replaceMessage(meta.response_url, '已駁回', [
-      section(`:x: *已駁回*\n${leaveSummary(leave)}`),
-      contextLine(`駁回原因：${comment}`),
-    ])
+    await replaceMessage(meta.response_url, '已駁回', [section(`:x: *已駁回*\n${detail}`)])
   }
   if (leave.requester?.slack_user_id) {
     await dm(leave.requester.slack_user_id, '您的假單已被駁回', [
-      section(`:x: *假單未通過*\n${leaveSummary(leave)}`),
-      section(`*駁回原因*\n${comment}`),
+      section(`:x: *假單未通過*\n${detail}`),
     ])
   }
   return json({ response_action: 'clear' })
@@ -658,6 +701,26 @@ async function guardApproval(db: SupabaseClient, me: any, leave: LeaveRow | null
   return null
 }
 
+/**
+ * 核准後通知職務代理人。
+ *
+ * 刻意等到核准後才發 —— 假單還沒過就先通知，萬一被駁回，代理人已經以為
+ * 要代班了。代理人的 Slack ID 沒填就安靜略過（跟其他通知一致）。
+ */
+async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
+  const { data } = await db
+    .from('leave_requests')
+    .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id)')
+    .eq('id', leave.id).maybeSingle()
+
+  const slackId = (data as { proxy?: { slack_user_id?: string } } | null)?.proxy?.slack_user_id
+  if (!slackId) return
+  await dm(slackId, `您被指定為 ${leave.requester?.full_name ?? ''} 的職務代理人`, [
+    section(`:handshake: *您被指定為職務代理人*\n${leaveDetailLines(leave)}`),
+    contextLine('這張假單已核准，該時段請協助代理其職務。'),
+  ])
+}
+
 /** 當天臨時請假：核准當下若假期已涵蓋今天且過了每日公告時間，補一則頻道公告。 */
 async function notifyChannelIfToday(db: SupabaseClient, leave: LeaveRow) {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
@@ -671,7 +734,7 @@ async function notifyChannelIfToday(db: SupabaseClient, leave: LeaveRow) {
     channel,
     text: `${leave.requester?.full_name ?? ''} 今天請假`,
     blocks: [
-      section(`:bell: *今日臨時請假*\n${leaveSummary(leave)}`),
+      section(`:bell: *今日臨時請假*\n${digestLine(leave)}`),
       contextLine('此假單於今日上午的請假公告發出後才核准，故補發通知。'),
     ],
   })

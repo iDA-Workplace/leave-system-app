@@ -10,7 +10,7 @@
 
 import {
   adminClient, currentApproverSlackIds, notificationTargetSlackIds,
-  leaveSummary, taipeiNow, taipeiToday, DIGEST_HOUR,
+  leaveDetailLines, digestLine, taipeiNow, taipeiToday, DIGEST_HOUR,
   LEAVE_SELECT, type LeaveRow,
 } from '../_shared/leave.ts'
 import { dmMany, postToChannel, section, contextLine } from '../_shared/slack.ts'
@@ -60,9 +60,7 @@ async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveR
 
   const text = `${leave.requester?.full_name ?? ''} 送出了一張待您審核的假單`
   return await dmMany(slackIds, text, [
-    section(`:memo: *有一張假單待您審核*\n${leaveSummary(leave)}`),
-    ...(leave.reason ? [section(`*事由*\n${leave.reason}`)] : []),
-    ...(leave.proxy?.full_name ? [contextLine(`職務代理人：${leave.proxy.full_name}`)] : []),
+    section(`:memo: *有一張假單待您審核*\n${leaveDetailLines(leave)}`),
     // 按鈕由 slack-interactions 那支處理（Slack 會把所有互動事件送到 App
     // 設定的同一個 Interactivity Request URL），所以這裡只負責把按鈕畫出來。
     {
@@ -87,8 +85,13 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
     ...(await notificationTargetSlackIds(db)),
   ]
   results.dm = await dmMany(recipients, '您的假單已核准', [
-    section(`:white_check_mark: *假單已核准*\n${leaveSummary(leave)}`),
+    section(`:white_check_mark: *假單已核准*\n${leaveDetailLines(leave)}`),
   ])
+
+  // 職務代理人的通知刻意等到「核准後」才發 —— 假單還沒過就先通知，萬一被
+  // 駁回，代理人已經以為要代班了。代理人可能同時是申請人自己選的通知對象，
+  // 所以先確認不是重複的人再發。
+  results.proxy = await notifyProxy(db, leave, recipients)
 
   // 2) 當天臨時請假的補發公告。
   //
@@ -105,7 +108,7 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
       results.channel = '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
     } else {
       await postToChannel(channel, `${leave.requester?.full_name ?? ''} 今天請假`, [
-        section(`:bell: *今日臨時請假*\n${leaveSummary(leave)}`),
+        section(`:bell: *今日臨時請假*\n${digestLine(leave)}`),
         contextLine('此假單於今日上午的請假公告發出後才核准，故補發通知。'),
       ])
       results.channel = 'posted'
@@ -117,10 +120,40 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
   return results
 }
 
-async function notifyRejected(_db: ReturnType<typeof adminClient>, leave: LeaveRow) {
+async function notifyRejected(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
   if (!leave.requester?.slack_user_id) return { skipped: '申請人沒有設定 Slack ID' }
+
+  // 駁回原因存在 leave_approvals，不在假單本身，所以要另外查最後一筆
+  const { data: rejection } = await db
+    .from('leave_approvals')
+    .select('comment')
+    .eq('request_id', leave.id).eq('action', 'rejected')
+    .order('created_at', { ascending: false })
+    .limit(1).maybeSingle()
+
+  const extra = rejection?.comment ? [`*駁回原因:* ${rejection.comment}`] : []
   return await dmMany([leave.requester.slack_user_id], '您的假單已被拒絕', [
-    section(`:x: *假單未通過*\n${leaveSummary(leave)}`),
-    contextLine('詳細原因請到請假系統的「假單管理」查看。'),
+    section(`:x: *假單未通過*\n${leaveDetailLines(leave, extra)}`),
+    ...(rejection?.comment ? [] : [contextLine('詳細原因請到請假系統的「假單管理」查看。')]),
   ])
+}
+
+/** 核准後通知職務代理人。回傳說明字串方便從呼叫端的回應看出結果。 */
+async function notifyProxy(
+  db: ReturnType<typeof adminClient>, leave: LeaveRow, alreadyNotified: string[],
+) {
+  const { data } = await db
+    .from('leave_requests')
+    .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id)')
+    .eq('id', leave.id).maybeSingle()
+
+  const slackId = (data as { proxy?: { slack_user_id?: string } } | null)?.proxy?.slack_user_id
+  if (!slackId) return '沒有職務代理人或代理人未設定 Slack ID'
+  if (alreadyNotified.includes(slackId)) return '代理人已在其他通知對象中，不重複發送'
+
+  await dmMany([slackId], `您被指定為 ${leave.requester?.full_name ?? ''} 的職務代理人`, [
+    section(`:handshake: *您被指定為職務代理人*\n${leaveDetailLines(leave)}`),
+    contextLine('這張假單已核准，該時段請協助代理其職務。'),
+  ])
+  return 'sent'
 }

@@ -63,30 +63,110 @@ export interface LeaveRow {
   leave_type?: { name: string } | null
 }
 
-/** 「8/12 09:00～13:00（4 小時）」或「8/12 ～ 8/15（多日）」 */
-export function periodLabel(leave: LeaveRow): string {
-  const short = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
-  if (leave.end_date && leave.end_date > leave.start_date) {
-    return `${short(leave.start_date)} ～ ${short(leave.end_date)}`
+// ===== 假單的文字呈現 =====
+//
+// 單張假單的通知一律用條列式（申請人／假別／休假日期／休假時間／時數／
+// 職務代理人／事由），每日名單則用精簡單行 —— 名單一次列很多人，展開成
+// 條列式會長到不能看。
+
+/** 跨日請假的工作天數（不含週六日）。與網頁版 lib/leaveEntitlements.js 同一套算法。 */
+export function countWorkdays(startDate: string, endDate: string): number {
+  let count = 0
+  const current = new Date(startDate)
+  const end = new Date(endDate)
+  while (current <= end) {
+    const day = current.getUTCDay()
+    if (day !== 0 && day !== 6) count++
+    current.setUTCDate(current.getUTCDate() + 1)
   }
-  if (leave.start_time && leave.end_time) {
-    const hm = (t: string) => t.slice(0, 5)
-    return `${short(leave.start_date)} ${hm(leave.start_time)}～${hm(leave.end_time)}`
-  }
-  return short(leave.start_date)
+  return count
 }
 
-export function durationLabel(leave: LeaveRow): string {
-  if (leave.end_date && leave.end_date > leave.start_date) return '整日'
-  return leave.hours ? `${leave.hours} 小時` : '整日'
+/** 上班時間中午的分界，用來判定上午／下午。 */
+const NOON = '13:00'
+/** 滿 8 小時就算請整天，未滿都算半天（使用者定義）。 */
+const FULL_DAY_HOURS = 8
+
+export function isMultiDay(l: LeaveRow): boolean {
+  return !!l.end_date && l.end_date > l.start_date
 }
 
-/** 一行摘要，彙整訊息與事件通知都用同一種寫法。 */
-export function leaveSummary(leave: LeaveRow): string {
-  const name = leave.requester?.full_name ?? '（未知人員）'
-  const dept = leave.requester?.department ? `（${leave.requester.department}）` : ''
-  const type = leave.leave_type?.name ?? '請假'
-  return `*${name}*${dept}　${type}　${periodLabel(leave)}　${durationLabel(leave)}`
+/** 全天＝多日連假，或單日請滿 8 小時。 */
+export function isFullDay(l: LeaveRow): boolean {
+  return isMultiDay(l) || (l.hours ?? FULL_DAY_HOURS) >= FULL_DAY_HOURS
+}
+
+const shortDate = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
+const hhmm = (t: string) => t.slice(0, 5)
+
+/** 「8/17」或「8/17 ~ 8/19」 */
+export function dateLabel(l: LeaveRow): string {
+  return isMultiDay(l) ? `${shortDate(l.start_date)} ~ ${shortDate(l.end_date)}` : shortDate(l.start_date)
+}
+
+/** 「08:30-17:30」；多日假沒有時間意義，寫「整日」。 */
+export function timeLabel(l: LeaveRow): string {
+  if (isMultiDay(l)) return '整日'
+  if (l.start_time && l.end_time) return `${hhmm(l.start_time)}-${hhmm(l.end_time)}`
+  return '整日'
+}
+
+/** 連續一天以上一律用天數表示，單日才用小時。 */
+export function durationLabel(l: LeaveRow): string {
+  if (isMultiDay(l)) return `${countWorkdays(l.start_date, l.end_date)} 天`
+  return `${l.hours ?? FULL_DAY_HOURS} 小時`
+}
+
+/**
+ * 單張假單的條列式明細。`extra` 用來補該情境專屬的欄位
+ * （例如駁回通知要多一行駁回原因）。
+ */
+export function leaveDetailLines(l: LeaveRow, extra: string[] = []): string {
+  const lines = [
+    `*申請人:* ${l.requester?.full_name ?? '—'}`,
+    `*假別:* ${l.leave_type?.name ?? '請假'}`,
+    `*休假日期:* ${dateLabel(l)}`,
+    `*休假時間:* ${timeLabel(l)}`,
+    `*時數:* ${durationLabel(l)}`,
+  ]
+  // 沒填代理人就整行不顯示，不要留一行「無」佔版面
+  if (l.proxy?.full_name) lines.push(`*職務代理人:* ${l.proxy.full_name}`)
+  if (l.reason) lines.push(`*事由:* ${l.reason}`)
+  return [...lines, ...extra].join('\n')
+}
+
+/** 每日名單用的精簡單行（不含部門）。 */
+export function digestLine(l: LeaveRow): string {
+  const name = l.requester?.full_name ?? '（未知人員）'
+  const type = l.leave_type?.name ?? '請假'
+  if (isMultiDay(l)) return `• ${name}　${type}（${dateLabel(l)} 連假中）`
+  if (isFullDay(l)) return `• ${name}　${type}`
+  return `• ${name}　${type}　${timeLabel(l)}`
+}
+
+/**
+ * 把今天請假的人分成全天／上午／下午三組。
+ *
+ * 橫跨午休但沒有滿 8 小時的假（例如 10:00-15:00）會「同時」出現在上午與
+ * 下午兩組 —— 那兩個時段都找不到人，只列一次會讓人誤以為另一個時段找得到。
+ */
+export function groupBySlot(leaves: LeaveRow[]) {
+  const fullDay: LeaveRow[] = [], morning: LeaveRow[] = [], afternoon: LeaveRow[] = []
+  for (const l of leaves) {
+    if (isFullDay(l)) { fullDay.push(l); continue }
+    if ((l.start_time ?? '') < NOON) morning.push(l)
+    if ((l.end_time ?? '') > NOON) afternoon.push(l)
+  }
+  const byName = (a: LeaveRow, b: LeaveRow) =>
+    (a.requester?.full_name ?? '').localeCompare(b.requester?.full_name ?? '')
+  // 時段組依開始時間排序，讀起來就是一條時間軸
+  const byTime = (a: LeaveRow, b: LeaveRow) =>
+    (a.start_time ?? '').localeCompare(b.start_time ?? '') || byName(a, b)
+  return {
+    fullDay: fullDay.sort(byName),
+    morning: morning.sort(byTime),
+    afternoon: afternoon.sort(byTime),
+  }
 }
 
 /** 查出某張假單「目前這一關」該簽核的人的 Slack ID。 */

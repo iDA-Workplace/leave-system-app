@@ -233,7 +233,13 @@ function LeaveForm({ userProfile }) {
       .eq('flow_id', userProfile.default_flow_id)
 
     if (!steps || steps.length === 0) {
+      // 沒有簽核關卡＝不需審核（目前只有老闆是這種設定）。這裡一樣要送出
+      // 「已核准」通知，否則這種員工當天臨時請假時，頻道上不會有任何人知道，
+      // 職務代理人也收不到通知。
       await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', data.id)
+      await supabase.functions.invoke('send-slack-notification', {
+        body: { type: 'approved', request_id: data.id }
+      })
     } else {
       await supabase.functions.invoke('send-slack-notification', {
         body: { type: 'new_request', request_id: data.id }
