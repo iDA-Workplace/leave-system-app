@@ -353,7 +353,20 @@ Deno.serve(async (req) => {
   const rawBody = await req.text()
 
   // 先驗簽章再做任何事。少了這一步，任何知道網址的人都能偽造請求核准假單。
-  if (!await verifySignature(req, rawBody)) {
+  //
+  // verifySignature 內部會呼叫 requireEnv('SLACK_SIGNING_SECRET')，如果這個
+  // secret 忘了設定會直接 throw；包一層 try/catch 讓這種設定缺漏回一個看得懂
+  // 的錯誤，而不是讓整個函式崩潰、回一個難以判斷原因的 HTTP 錯誤（Slack 的
+  // Event Subscriptions 驗證網址那一步就是靠這個回應判斷 function 是否正常，
+  // 崩潰的話畫面只會顯示「回應了 HTTP error」，看不出真正原因）。
+  let signatureOk = false
+  try {
+    signatureOk = await verifySignature(req, rawBody)
+  } catch (e) {
+    console.error('簽章驗證失敗（多半是 SLACK_SIGNING_SECRET 沒有設定）：', e)
+    return new Response('signature verification misconfigured, check function secrets', { status: 500 })
+  }
+  if (!signatureOk) {
     return new Response('invalid signature', { status: 401 })
   }
 
