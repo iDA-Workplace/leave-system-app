@@ -204,7 +204,18 @@ async function notifyApprovers(db: SupabaseClient, leave: LeaveRow) {
     section(`:memo: *有一張假單待您審核*\n${leaveSummary(leave)}`),
     ...(leave.reason ? [section(`*事由*\n${leave.reason}`)] : []),
     ...(leave.proxy?.full_name ? [contextLine(`職務代理人：${leave.proxy.full_name}`)] : []),
-    contextLine(`請到請假系統的「首頁 → 待審核假單」進行審核。`),
+    // 按鈕由 slack-interactions 那支處理（Slack 會把所有互動事件送到 App
+    // 設定的同一個 Interactivity Request URL），所以這裡只負責把按鈕畫出來。
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', style: 'primary', text: { type: 'plain_text', text: '核准', emoji: true },
+          action_id: 'approve_leave', value: leave.id },
+        { type: 'button', style: 'danger', text: { type: 'plain_text', text: '駁回', emoji: true },
+          action_id: 'reject_leave', value: leave.id },
+      ],
+    },
+    contextLine(`也可以到請假系統的「首頁 → 待審核假單」處理。`),
   ])
 }
 

@@ -1,16 +1,33 @@
-# Slack 通知（Edge Functions）
+# Slack 整合（Edge Functions）
 
-三支 function：
+四支 function：
 
 | 目錄 | 做什麼 | 誰觸發 |
 |---|---|---|
 | `send-slack-notification` | 假單送出／核准／拒絕的即時通知 | 前端在動作完成後呼叫 |
 | `daily-leave-digest` | 每天上午 9:00 發「今日請假名單」到公開頻道 | 排程（pg_cron） |
 | `daily-leave-job` | 待審假單逾期 7 天自動退回；未逾期的每天提醒該簽核的主管 | 排程（pg_cron） |
+| `slack-interactions` | 在 Slack 裡送假單、在 Slack 裡核准／駁回 | Slack（事件與互動） |
 
-**目前只做「往外送通知」，沒有做「在 Slack 上直接審核」。** 互動功能會讓 Slack
-反過來寫進資料庫，那條路徑沒有登入狀態、繞過 RLS，必須自行驗簽章與權限，
-風險和工作量都完全不同，等前面幾件穩定後再獨立評估。
+## `slack-interactions` 的資安模型
+
+這支跟其他三支方向相反：其他三支是「我們主動打給 Slack」，這支是
+**「Slack 反過來打進我們的資料庫」**，而且那條路徑沒有任何登入狀態，用的是
+service role key（繞過所有 RLS）。所以每個請求都做三件事：
+
+1. **驗證簽章**（HMAC-SHA256，`SLACK_SIGNING_SECRET`）確認真的來自 Slack，
+   並拒收 5 分鐘前的請求防重放。沒有這一步，任何知道網址的人都能偽造請求
+   核准假單。比對簽章時長度相同也要逐字比完不提早跳出，避免用回應時間反推。
+2. **把 Slack user id 對應回系統帳號**（`users.slack_user_id`），對不到、或
+   帳號已停用，一律拒絕。
+3. **動作發生的當下重新檢查權限與狀態**，完全不信任按鈕上帶的資訊 —— 那顆
+   按鈕可能是三天前發出的，假單早就在網頁上被處理掉了，或流程已經走到別關。
+   重複點、或別人已處理過，會換成說明文字而不是重複寫入。
+
+這支**不拆 `_shared` 共用檔，整支是自給自足的單一檔案**（其他三支是
+`index.ts` + `standalone.ts` 兩份）。原因是這支程式碼量大，維護兩份副本
+遲早會改到不一致，而這支牽涉權限判斷，不一致的後果比其他支嚴重。同一個
+`index.ts` 同時適用網頁編輯器貼上與 CLI 部署。
 
 ## `daily-leave-job` 是既有的功能，這次是修好它，不是新寫的
 
@@ -67,13 +84,48 @@
   不存在。看到這個錯誤先確認 App 還在不在頻道裡，不要只檢查 ID 有沒有填錯。
 - **私訊不受影響。** 假單送出／核准／拒絕是直接私訊給個人，跟頻道設定無關。
 
+## 一之二、開啟 Slack 互動功能（只有要用 `slack-interactions` 才需要）
+
+沿用同一個 Slack App，加設定即可。**順序很重要**：Request URL 要填的是
+`slack-interactions` 部署後的網址，所以**先部署那支 function（見「三」）再回來做這段**。
+
+網址長這樣（`<ref>` 是專案 Reference ID）：
+`https://<ref>.supabase.co/functions/v1/slack-interactions`
+
+1. **加權限**：OAuth & Permissions → Bot Token Scopes 加上 **`im:history`**
+   （讓 bot 看得到同事私訊裡打的字）。原本的 `chat:write`、`im:write` 保留。
+   **加完必須重新安裝 App 到 workspace**，權限才會生效 —— 這步最容易漏。
+2. **Interactivity & Shortcuts** → 開啟 → Request URL 填上面那個網址。
+   （按鈕、表單送出都走這裡）
+3. **Event Subscriptions** → 開啟 → Request URL 填**同一個**網址。
+   Slack 會立刻發一個驗證請求，function 已經處理好 `url_verification`，
+   正常會馬上顯示 Verified。→ 展開 **Subscribe to bot events** 加入
+   **`message.im`** → 存檔。
+4. **拿 Signing Secret**：Basic Information → App Credentials → Signing Secret，
+   存成 Supabase 的 secret（見下一節）。
+
+### 為什麼是「打字→按鈕→表單」，不是「打字直接跳表單」
+
+Slack 規定：**要彈出表單視窗必須有 `trigger_id`，而 `trigger_id` 只有在使用者
+「點擊」時才會產生，打字傳訊息不會產生**。所以流程一定是：打「請假」→ bot
+回一則帶「填寫假單」按鈕的訊息 → 點按鈕（產生 trigger_id）→ 表單彈出。
+
 ## 二、設定環境變數
 
 Supabase 後台 → **Edge Functions → Secrets**（或用 CLI）：
 
+| 名稱 | 值 | 誰要用 |
+|---|---|---|
+| `SLACK_BOT_TOKEN` | `xoxb-...` | 全部 |
+| `SLACK_LEAVE_CHANNEL` | 頻道 ID `C...` | 每日公告、當天臨時請假公告 |
+| `SLACK_SIGNING_SECRET` | Basic Information → Signing Secret | 只有 `slack-interactions` |
+
+用 CLI 的話：
+
 ```bash
 supabase secrets set SLACK_BOT_TOKEN=xoxb-你的-token
 supabase secrets set SLACK_LEAVE_CHANNEL=C01234ABCDE
+supabase secrets set SLACK_SIGNING_SECRET=你的-signing-secret
 ```
 
 `SUPABASE_URL` 與 `SUPABASE_SERVICE_ROLE_KEY` 由 Supabase 自動注入，不用自己設。
@@ -107,8 +159,20 @@ supabase secrets set SLACK_LEAVE_CHANNEL=C01234ABCDE
 3. 把裡面的內容全部刪掉，貼上對應資料夾的 `standalone.ts` 內容
 4. 按 **Deploy**（這樣會在原本的名字／URL 上更新，不會產生新的一支）
 
+**`slack-interactions`（新建）**：這支貼的是 `slack-interactions/index.ts`
+（它沒有 `standalone.ts`，本來就是單一檔案）。函式名稱填 `slack-interactions`。
+
+⚠️ **這支的 Verify JWT 要關掉**：Settings → **Verify JWT with legacy secret**
+關成 OFF。因為呼叫它的是 Slack，Slack 不會帶 Supabase 的金鑰。安全性改由
+函式內的簽章驗證負責（見最上面的資安模型），不是沒有保護。
+
 部署完成後，Edge Functions 列表應該會看到 `send-slack-notification`、
-`daily-leave-digest`、`daily-leave-job` 這三支，狀態顯示為運作中。
+`daily-leave-digest`、`daily-leave-job`、`slack-interactions` 這四支。
+
+⚠️ 網頁編輯器新建 function 時，**名稱欄位要先改掉再按 Deploy**。它會帶一個
+隨機的預設名字（`clever-responder`、`dynamic-service` 之類），忘了改的話
+網址就會定死成那個名字，之後從 Name 欄位改也改不動（Supabase 自己在該欄位
+下方寫了「Your slug and endpoint URL will remain the same」）。
 
 ⚠️ `standalone.ts` 只給網頁編輯器用。程式邏輯跟 `index.ts` 完全一樣，只是重複
 了一份共用程式碼；以後若要改動通知邏輯，`index.ts` 和 `standalone.ts` 要一起改。
