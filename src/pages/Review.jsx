@@ -1816,21 +1816,40 @@ function ReviewParticipants({ userProfile, isBoss }) {
 
         {selectedReviewId && (
           <>
-            <div className="review-manual-picker">
-              {users.filter(u => !existingUserIds.has(u.id)).map(u => (
-                <label key={u.id} className="review-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={manualSelection.includes(u.id)}
-                    onChange={e => setManualSelection(prev => e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id))}
-                  />
-                  {u.full_name}
-                </label>
-              ))}
-              {users.filter(u => !existingUserIds.has(u.id)).length === 0 && (
-                <p className="review-hint">沒有可加入的人員了。</p>
-              )}
-            </div>
+            {(() => {
+              // 已經是參與者的人不會出現在清單上，所以「全選」只針對還可以
+              // 加入的人 —— 全選狀態也要照這份清單算，不然清單變動後
+              // 勾選框的狀態會跟實際勾到的人對不起來。
+              const selectable = users.filter(u => !existingUserIds.has(u.id))
+              const allSelected = selectable.length > 0 && selectable.every(u => manualSelection.includes(u.id))
+              return (
+                <div className="review-manual-picker">
+                  {selectable.length > 0 && (
+                    <label className="review-checkbox review-checkbox--all">
+                      <input
+                        type="checkbox"
+                        checked={allSelected}
+                        onChange={e => setManualSelection(e.target.checked ? selectable.map(u => u.id) : [])}
+                      />
+                      <strong>全選（{selectable.length} 人）</strong>
+                    </label>
+                  )}
+                  {selectable.map(u => (
+                    <label key={u.id} className="review-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={manualSelection.includes(u.id)}
+                        onChange={e => setManualSelection(prev => e.target.checked ? [...prev, u.id] : prev.filter(id => id !== u.id))}
+                      />
+                      {u.full_name}
+                    </label>
+                  ))}
+                  {selectable.length === 0 && (
+                    <p className="review-hint">沒有可加入的人員了。</p>
+                  )}
+                </div>
+              )
+            })()}
             <Button onClick={handleAdd} disabled={candidates.length === 0}>加入 {candidates.length > 0 ? `（${candidates.length} 人）` : ''}</Button>
           </>
         )}

@@ -428,3 +428,11 @@
   flex-wrap: wrap;
   margin-bottom: var(--space-200);
 }
+
+/* 全選跟一般人名放在同一個 grid 裡，但它管的是整份清單，所以獨佔一整列
+   並用分隔線跟下面的人名分開，避免被誤看成第一個人。 */
+.review-checkbox--all {
+  grid-column: 1 / -1;
+  padding-bottom: var(--space-100);
+  border-bottom: 1px solid var(--sys-color-outline-variant);
+}
