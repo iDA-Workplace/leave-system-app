@@ -1197,7 +1197,7 @@ function ReviewCycles() {
         <h4 className="review-subheader__title">年度考核週期</h4>
         <Button size="sm" onClick={() => setShowAdd(!showAdd)}>+ 新增週期</Button>
       </div>
-      <p className="review-hint">考核週期是全公司共用的期間設定，任何主管或老闆都可以新增／調整。各部門的題目請到「考核題目」分頁設定，簽核鏈請到「考核流程」分頁設定。</p>
+      <p className="review-hint">在「考核題目」分頁新增模板時，這裡會自動建立一個同名的週期（日期為預設值，請在這裡調整）。任何主管或老闆都可以新增／調整週期，各部門通常各自使用自己的週期。簽核鏈請到「考核流程」分頁設定。</p>
 
       {showAdd && (
         <Card className="review-form-card">
@@ -1331,16 +1331,53 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
       showToast('您的帳號尚未設定部門，請聯繫管理員在「員工帳號管理」補上部門資料', { tone: 'error' }); return
     }
     const { data: { user } } = await supabase.auth.getUser()
-    const { error } = await supabase.from('review_templates').insert({
+    const { data: created, error } = await supabase.from('review_templates').insert({
       name: newTemplate.name,
       description: newTemplate.description,
       department: isBoss ? (newTemplate.department || null) : userProfile.department,
       created_by: user.id,
-    })
+    }).select('id, name').single()
     if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
+
+    // 同時建立一個同名的考核週期。
+    //
+    // 原本要建考核週期就得先有模板（週期必須選一份預設模板），於是主管得先
+    // 建模板、再到隔壁分頁把同樣的名稱重打一次 —— 兩邊各自都是必要設定，
+    // 但「名稱」這件事重複輸入沒有意義。日期先給預設值（都是必填欄位，
+    // 不能留空），細節到「考核週期」分頁再編輯。
+    const cycleError = await createMatchingCycle(created)
+
     setNewTemplate({ name: '', description: '', department: isBoss ? '' : (userProfile.department || '') })
     setShowAdd(false)
+    showToast(cycleError
+      ? `模板已建立，但考核週期建立失敗：${cycleError.message}（請到「考核週期」分頁手動新增）`
+      : '模板與考核週期都已建立，日期等細節請到「考核週期」分頁調整',
+      { tone: cycleError ? 'error' : undefined })
     fetchAll()
+  }
+
+  /**
+   * 為新建立的模板開一個同名的考核週期，狀態直接是「進行中」。
+   *
+   * 週期建立失敗不該讓模板一起失敗 —— 模板本身已經寫進去了，這裡只回傳
+   * 錯誤讓呼叫端在提示裡說明，主管可以自己到「考核週期」分頁補。
+   */
+  async function createMatchingCycle(template) {
+    const today = new Date()
+    const iso = d => d.toISOString().slice(0, 10)
+    const plusDays = n => { const d = new Date(today); d.setDate(d.getDate() + n); return iso(d) }
+
+    const { error } = await supabase.from('annual_reviews').insert({
+      title: template.name,
+      year: today.getFullYear(),
+      start_date: iso(today),
+      end_date: `${today.getFullYear()}-12-31`,
+      self_assessment_deadline: plusDays(14),
+      evaluation_deadline: plusDays(28),
+      template_id: template.id,
+      status: 'active',
+    })
+    return error
   }
 
   async function fetchTemplateQuestions(templateId) {
@@ -1422,7 +1459,7 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
         <Button size="sm" onClick={() => setShowAdd(!showAdd)}>+ 新增模板</Button>
       </div>
       <p className="review-hint">
-        每個模板對應一個部門；分數題固定 1-10 分（作答時可額外寫下打分的相關事例／理由），詳答題沒有字數限制。department 留空＝全公司預設，找不到部門專屬模板的人會使用這份。
+        每個模板對應一個部門；分數題固定 1-10 分（作答時可額外寫下打分的相關事例／理由），詳答題沒有字數限制。department 留空＝全公司預設，找不到部門專屬模板的人會使用這份。<strong>新增模板時會自動建立一個同名的考核週期</strong>，日期等細節到「考核週期」分頁調整即可。
       </p>
 
       {showAdd && (
