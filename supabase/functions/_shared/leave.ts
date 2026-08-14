@@ -136,12 +136,18 @@ export function leaveDetailLines(l: LeaveRow, extra: string[] = []): string {
   return [...lines, ...extra].join('\n')
 }
 
-/** 每日名單用的精簡單行（不含部門）。 */
-export function digestLine(l: LeaveRow): string {
+/**
+ * 每日名單用的精簡單行（不含部門）。
+ *
+ * `markFullDay`：請整天時補上「整天」兩個字。單獨一則的通知（例如今日臨時
+ * 請假）要開啟 —— 未滿 8 小時的會顯示時間範圍，整天的如果什麼都不寫，看起來
+ * 像資訊漏掉了。每日名單那邊已經有「■ 全天」的分組標題，就不用再重複。
+ */
+export function digestLine(l: LeaveRow, { markFullDay = false } = {}): string {
   const name = l.requester?.full_name ?? '（未知人員）'
   const type = l.leave_type?.name ?? '請假'
   if (isMultiDay(l)) return `• ${name}　${type}（${dateLabel(l)} 連假中）`
-  if (isFullDay(l)) return `• ${name}　${type}`
+  if (isFullDay(l)) return `• ${name}　${type}${markFullDay ? '　整天' : ''}`
   return `• ${name}　${type}　${timeLabel(l)}`
 }
 

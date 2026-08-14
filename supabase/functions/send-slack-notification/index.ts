@@ -108,7 +108,7 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
       results.channel = '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
     } else {
       await postToChannel(channel, `${leave.requester?.full_name ?? ''} 今天請假`, [
-        section(`:bell: *今日臨時請假*\n${digestLine(leave)}`),
+        section(`:bell: *今日臨時請假*\n${digestLine(leave, { markFullDay: true })}`),
         contextLine('此假單於今日上午的請假公告發出後才核准，故補發通知。'),
       ])
       results.channel = 'posted'

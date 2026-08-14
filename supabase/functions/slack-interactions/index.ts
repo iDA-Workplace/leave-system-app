@@ -273,11 +273,12 @@ function leaveDetailLines(l: LeaveRow, extra: string[] = []): string {
 }
 
 /** 頻道公告用的精簡單行（不含部門）。 */
-function digestLine(l: LeaveRow): string {
+function digestLine(l: LeaveRow, { markFullDay = false } = {}): string {
   const name = l.requester?.full_name ?? '（未知人員）'
   const type = l.leave_type?.name ?? '請假'
   if (isMultiDay(l)) return `• ${name}　${type}（${dateLabel(l)} 連假中）`
-  if (isFullDay(l)) return `• ${name}　${type}`
+  // 整天卻什麼都不寫，看起來像資訊漏掉（未滿 8 小時的會顯示時間範圍）
+  if (isFullDay(l)) return `• ${name}　${type}${markFullDay ? '　整天' : ''}`
   return `• ${name}　${type}　${timeLabel(l)}`
 }
 
@@ -860,7 +861,7 @@ async function notifyChannelIfToday(db: SupabaseClient, leave: LeaveRow) {
     channel,
     text: `${leave.requester?.full_name ?? ''} 今天請假`,
     blocks: [
-      section(`:bell: *今日臨時請假*\n${digestLine(leave)}`),
+      section(`:bell: *今日臨時請假*\n${digestLine(leave, { markFullDay: true })}`),
       contextLine('此假單於今日上午的請假公告發出後才核准，故補發通知。'),
     ],
   })
