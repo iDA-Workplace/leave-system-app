@@ -313,10 +313,13 @@ function EmployeeReviewSection({ userProfile }) {
       }
     }
     setAssessSaving(true)
+
+    // 同上：每一步都檢查。原本整段沒有檢查，被權限規則擋下時畫面照樣顯示
+    // 「自評已送出」，員工以為交了、主管卻永遠等不到。
     for (const q of assessQuestions) {
       const v = assessResponses[q.id]
       if (v === undefined || v.answer === undefined || v.answer === '') continue
-      await supabase.from('review_responses').upsert({
+      const { error } = await supabase.from('review_responses').upsert({
         review_id: assessModal.review_id,
         participant_id: assessModal.id,
         question_id: q.id,
@@ -325,12 +328,30 @@ function EmployeeReviewSection({ userProfile }) {
         example_note: q.question_type === 'score' ? (v.example_note || null) : null,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'participant_id,question_id' })
+      if (error) {
+        showToast('自評儲存失敗：' + error.message, { tone: 'error' })
+        setAssessSaving(false)
+        return
+      }
     }
+
     if (submit) {
-      await supabase.from('annual_review_participants')
+      // 被 RLS 擋下的 UPDATE 不會報錯，只會回 0 筆，所以要一起看資料列數
+      const { data: updated, error } = await supabase.from('annual_review_participants')
         .update({ self_submitted: true, self_submitted_at: new Date().toISOString() })
         .eq('id', assessModal.id)
+        .select()
+      if (error || !updated?.length) {
+        showToast(
+          error ? '送出失敗：' + error.message
+                : '送出失敗：沒有權限更新這筆考核資料（可能是資料庫權限規則 RLS 擋下）',
+          { tone: 'error' },
+        )
+        setAssessSaving(false)
+        return
+      }
     }
+
     setAssessSaving(false)
     showToast(submit ? '自評已送出！' : '已儲存')
     setAssessModal(null)
@@ -614,9 +635,17 @@ function TeamReviewManagement({ userProfile, isBoss }) {
 
     setSubmitting(true)
 
+    // 每一步都要檢查錯誤。這整段原本完全沒有檢查，只要有一步被資料庫的
+    // 權限規則擋下（主管的 RLS policy 缺漏就是這樣），畫面照樣顯示「評分
+    // 已送出」，但實際上什麼都沒存進去 —— 而且沒有任何線索可以查。
+    const fail = (msg, error) => {
+      showToast(`${msg}：${error.message}`, { tone: 'error' })
+      setSubmitting(false)
+    }
+
     for (const q of questions) {
       const v = evalResponses[q.id]
-      await supabase.from('review_evaluations').upsert({
+      const { error } = await supabase.from('review_evaluations').upsert({
         review_id: selected.review_id,
         participant_id: selected.id,
         evaluator_id: userProfile.id,
@@ -628,13 +657,16 @@ function TeamReviewManagement({ userProfile, isBoss }) {
         step_order: selected.current_step,
         updated_at: new Date().toISOString(),
       }, { onConflict: 'participant_id,question_id,step_order' })
+      if (error) return fail('評分儲存失敗', error)
     }
 
     // Overall row has question_id = NULL, which a plain unique constraint
     // can't dedupe -- delete-then-insert instead of upsert.
-    await supabase.from('review_evaluations').delete()
+    const { error: delError } = await supabase.from('review_evaluations').delete()
       .eq('participant_id', selected.id).eq('step_order', selected.current_step).eq('is_overall', true)
-    await supabase.from('review_evaluations').insert({
+    if (delError) return fail('總評儲存失敗', delError)
+
+    const { error: overallError } = await supabase.from('review_evaluations').insert({
       review_id: selected.review_id,
       participant_id: selected.id,
       evaluator_id: userProfile.id,
@@ -644,21 +676,33 @@ function TeamReviewManagement({ userProfile, isBoss }) {
       step_order: selected.current_step,
       updated_at: new Date().toISOString(),
     })
+    if (overallError) return fail('總評儲存失敗', overallError)
 
+    // 推進流程狀態時額外檢查回傳的資料列數：被 RLS 擋下的 UPDATE 不會報錯，
+    // 只會回 0 筆 —— 只看 error 的話會誤判成成功。
     const totalSteps = selected.flow?.steps?.length || 1
-    if (selected.current_step >= totalSteps) {
+    const isFinal = selected.current_step >= totalSteps
+    let patch
+    if (isFinal) {
       const scoreQuestionIds = questions.filter(q => q.question_type === 'score').map(q => q.id)
       const finalScore = await computeFinalScore(selected.id, scoreQuestionIds)
-      await supabase.from('annual_review_participants')
-        .update({ supervisor_submitted: true, supervisor_submitted_at: new Date().toISOString(), final_score: finalScore })
-        .eq('id', selected.id)
-      showToast('評分已送出，考核流程已完成，員工現在可以查看結果')
+      patch = { supervisor_submitted: true, supervisor_submitted_at: new Date().toISOString(), final_score: finalScore }
     } else {
-      await supabase.from('annual_review_participants')
-        .update({ current_step: selected.current_step + 1 })
-        .eq('id', selected.id)
-      showToast('評分已送出，已轉交下一關評核人')
+      patch = { current_step: selected.current_step + 1 }
     }
+
+    const { data: updated, error: stepError } = await supabase
+      .from('annual_review_participants').update(patch).eq('id', selected.id).select()
+    if (stepError) return fail('更新考核狀態失敗', stepError)
+    if (!updated || updated.length === 0) {
+      showToast('更新考核狀態失敗：沒有權限修改這筆考核資料（可能是資料庫權限規則 RLS 擋下）', { tone: 'error' })
+      setSubmitting(false)
+      return
+    }
+
+    showToast(isFinal
+      ? '評分已送出，考核流程已完成，員工現在可以查看結果'
+      : '評分已送出，已轉交下一關評核人')
 
     setSubmitting(false)
     setSelected(null)
