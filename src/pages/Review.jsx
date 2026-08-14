@@ -588,6 +588,24 @@ function TeamReviewManagement({ userProfile, isBoss }) {
       p.flow = flowsById[p.flow_id] || null
       p._myTurn = p.self_submitted && !p.supervisor_submitted && p.flow_id && myStepSet.has(`${p.flow_id}:${p.current_step}`)
     }
+
+    // 有草稿 = 這一關已經寫過評分、但流程還沒往下走。分開查一次而不是塞進
+    // 上面那個 select：評分內容跟參與者是兩張表，硬併成一個 embed 只要有
+    // 一個環節解析不掉就會讓整份名單變空（先前就踩過）。
+    const myTurnIds = rows.filter(p => p._myTurn).map(p => p.id)
+    if (myTurnIds.length > 0) {
+      const { data: drafts } = await supabase
+        .from('review_evaluations')
+        .select('participant_id, step_order')
+        .in('participant_id', myTurnIds)
+      const draftSet = new Set(
+        (drafts || []).map(d => `${d.participant_id}:${d.step_order}`),
+      )
+      for (const p of rows) {
+        p._hasDraft = p._myTurn && draftSet.has(`${p.id}:${p.current_step}`)
+      }
+    }
+
     rows.sort((a, b) => (a.user?.full_name || '').localeCompare(b.user?.full_name || ''))
 
     setParticipants(rows)
@@ -612,14 +630,95 @@ function TeamReviewManagement({ userProfile, isBoss }) {
       .order('step_order')
 
     const stepsMap = {}
+    const draft = {}
     for (const e of evals || []) {
       const key = e.step_order ?? 0
-      if (key === participant.current_step && !viewOnly) continue // this is my step being filled in now, not "prior"
+
+      // 自己這一關的資料不是「前面關卡的評分」，而是自己上次存的草稿 ——
+      // 要回填到表單裡，不是放進唯讀的 priorSteps。（唯讀檢視時例外：那時
+      // 整條簽核鏈都已完成，每一關都該以唯讀的樣子呈現。）
+      if (key === participant.current_step && !viewOnly) {
+        if (e.is_overall) {
+          setOverallScore(e.overall_score != null ? String(e.overall_score) : '')
+          setOverallComment(e.overall_comment || '')
+        } else if (e.question_id) {
+          draft[e.question_id] = { answer: e.score_answer ?? e.text_answer, example_note: e.example_note || '' }
+        }
+        continue
+      }
+
       if (!stepsMap[key]) stepsMap[key] = { step_order: key, evaluator_name: e.evaluator?.full_name, answers: {}, overall_score: null, overall_comment: null }
       if (e.is_overall) { stepsMap[key].overall_score = e.overall_score; stepsMap[key].overall_comment = e.overall_comment }
       else if (e.question_id) stepsMap[key].answers[e.question_id] = { answer: e.score_answer ?? e.text_answer, example_note: e.example_note || '' }
     }
+    setEvalResponses(draft)
     setPriorSteps(Object.values(stepsMap).sort((a, b) => a.step_order - b.step_order))
+  }
+
+  /**
+   * 儲存草稿：填多少存多少，完全不做必填檢查（不然存不了半成品）。
+   * 只寫評分內容，不動 annual_review_participants 的流程狀態 —— 所以這位
+   * 員工仍然停在這一關，主管下次進來會看到「繼續評分」。
+   */
+  async function handleSaveDraft() {
+    setSubmitting(true)
+    const error = await writeEvaluations({ requireOverall: false })
+    if (error) {
+      showToast(`儲存失敗：${error.message}`, { tone: 'error' })
+      setSubmitting(false)
+      return
+    }
+    setSubmitting(false)
+    setSelected(null)
+    showToast('已儲存，下次可從「繼續評分」接續')
+    fetchParticipants()
+  }
+
+  /**
+   * 把目前畫面上的評分寫進資料庫。草稿與正式送出共用這一段，差別只在
+   * requireOverall（草稿時總評沒填就整列不寫，避免存進一筆分數為 0 的假資料）。
+   * 有錯誤就回傳該錯誤，沒有則回傳 null。
+   */
+  async function writeEvaluations({ requireOverall }) {
+    for (const q of questions) {
+      const v = evalResponses[q.id]
+      // 草稿階段允許沒填的題目，直接略過不寫
+      if (v === undefined || v.answer === undefined || v.answer === '') continue
+      const { error } = await supabase.from('review_evaluations').upsert({
+        review_id: selected.review_id,
+        participant_id: selected.id,
+        evaluator_id: userProfile.id,
+        question_id: q.id,
+        text_answer: q.question_type === 'text' ? String(v.answer) : null,
+        score_answer: q.question_type === 'score' ? Number(v.answer) : null,
+        example_note: q.question_type === 'score' ? (v.example_note || null) : null,
+        is_overall: false,
+        step_order: selected.current_step,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'participant_id,question_id,step_order' })
+      if (error) return error
+    }
+
+    // Overall row has question_id = NULL, which a plain unique constraint
+    // can't dedupe -- delete-then-insert instead of upsert.
+    const hasOverall = overallScore !== '' && overallScore != null
+    if (!requireOverall && !hasOverall) return null
+
+    const { error: delError } = await supabase.from('review_evaluations').delete()
+      .eq('participant_id', selected.id).eq('step_order', selected.current_step).eq('is_overall', true)
+    if (delError) return delError
+
+    const { error: insError } = await supabase.from('review_evaluations').insert({
+      review_id: selected.review_id,
+      participant_id: selected.id,
+      evaluator_id: userProfile.id,
+      is_overall: true,
+      overall_score: Number(overallScore),
+      overall_comment: overallComment,
+      step_order: selected.current_step,
+      updated_at: new Date().toISOString(),
+    })
+    return insError ?? null
   }
 
   async function handleSubmit() {
@@ -643,40 +742,8 @@ function TeamReviewManagement({ userProfile, isBoss }) {
       setSubmitting(false)
     }
 
-    for (const q of questions) {
-      const v = evalResponses[q.id]
-      const { error } = await supabase.from('review_evaluations').upsert({
-        review_id: selected.review_id,
-        participant_id: selected.id,
-        evaluator_id: userProfile.id,
-        question_id: q.id,
-        text_answer: q.question_type === 'text' ? String(v.answer) : null,
-        score_answer: q.question_type === 'score' ? Number(v.answer) : null,
-        example_note: q.question_type === 'score' ? (v.example_note || null) : null,
-        is_overall: false,
-        step_order: selected.current_step,
-        updated_at: new Date().toISOString(),
-      }, { onConflict: 'participant_id,question_id,step_order' })
-      if (error) return fail('評分儲存失敗', error)
-    }
-
-    // Overall row has question_id = NULL, which a plain unique constraint
-    // can't dedupe -- delete-then-insert instead of upsert.
-    const { error: delError } = await supabase.from('review_evaluations').delete()
-      .eq('participant_id', selected.id).eq('step_order', selected.current_step).eq('is_overall', true)
-    if (delError) return fail('總評儲存失敗', delError)
-
-    const { error: overallError } = await supabase.from('review_evaluations').insert({
-      review_id: selected.review_id,
-      participant_id: selected.id,
-      evaluator_id: userProfile.id,
-      is_overall: true,
-      overall_score: Number(overallScore),
-      overall_comment: overallComment,
-      step_order: selected.current_step,
-      updated_at: new Date().toISOString(),
-    })
-    if (overallError) return fail('總評儲存失敗', overallError)
+    const writeError = await writeEvaluations({ requireOverall: true })
+    if (writeError) return fail('評分儲存失敗', writeError)
 
     // 推進流程狀態時額外檢查回傳的資料列數：被 RLS 擋下的 UPDATE 不會報錯，
     // 只會回 0 筆 —— 只看 error 的話會誤判成成功。
@@ -762,7 +829,9 @@ function TeamReviewManagement({ userProfile, isBoss }) {
                     <Button size="sm" variant="outlined" onClick={() => handleSelect(p, true)}>查看結果</Button>
                   )}
                   {!p.supervisor_submitted && p._myTurn && p.review?.status === 'active' && (
-                    <Button size="sm" onClick={() => handleSelect(p, false)}>開始評分</Button>
+                    <Button size="sm" onClick={() => handleSelect(p, false)}>
+                      {p._hasDraft ? '繼續評分' : '開始評分'}
+                    </Button>
                   )}
                   {/* Without this, "self-assessment submitted but no 開始評分
                       button" looks like a broken screen rather than a setup
@@ -794,6 +863,7 @@ function TeamReviewManagement({ userProfile, isBoss }) {
             : (
               <>
                 <Button variant="text" onClick={() => setSelected(null)}>取消</Button>
+                <Button variant="outlined" disabled={submitting} onClick={handleSaveDraft}>儲存</Button>
                 <Button loading={submitting} onClick={handleSubmit}>送出評分</Button>
               </>
             )}

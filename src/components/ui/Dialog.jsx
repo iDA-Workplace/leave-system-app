@@ -18,20 +18,16 @@ export function Dialog({ title, children, actions, onClose, labelledBy, size }) 
   useEffect(() => {
     const previouslyFocused = document.activeElement
     dialogRef.current?.focus()
-
-    function handleKeyDown(e) {
-      if (e.key === 'Escape') onCloseRef.current?.()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => {
-      document.removeEventListener('keydown', handleKeyDown)
-      previouslyFocused?.focus?.()
-    }
+    return () => { previouslyFocused?.focus?.() }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // 視窗只能用「取消／關閉」按鈕收起來 —— 點外面的灰色區域或按 Esc 都不會
+  // 關閉。這兩種都太容易誤觸，而視窗裡常常是填到一半的表單（主管評分、員工
+  // 自評、編輯員工資料），一關就整份不見，代價遠大於「少一種關閉方式」的
+  // 不便。每個視窗本來就都有明確的關閉按鈕，不會關不掉。
   return (
-    <div className="ui-dialog-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose?.() }}>
+    <div className="ui-dialog-scrim">
       <div
         className={`ui-dialog${size === 'lg' ? ' ui-dialog--lg' : ''}`}
         role="dialog"
