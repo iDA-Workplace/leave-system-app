@@ -53,7 +53,7 @@ function adminClient(): SupabaseClient {
 }
 
 const LEAVE_SELECT = `
-  id, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name),
   leave_type:leave_types(name)
@@ -61,6 +61,7 @@ const LEAVE_SELECT = `
 
 interface LeaveRow {
   id: string
+  created_at?: string
   start_date: string
   end_date: string
   start_time: string | null

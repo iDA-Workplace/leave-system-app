@@ -15,7 +15,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const ROOT = dirname(fileURLToPath(import.meta.url))
-const TARGETS = ['send-slack-notification', 'daily-leave-digest']
+const TARGETS = ['send-slack-notification', 'daily-leave-digest', 'daily-leave-job']
 
 const SHARED_IMPORT = /^import\s+\{[\s\S]*?\}\s+from\s+'(\.\.\/_shared\/[^']+)'\s*$/gm
 const EXTERNAL_IMPORT = /^import\s+.*?from\s+'(https?:\/\/[^']+)'\s*$/gm
