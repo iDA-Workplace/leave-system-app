@@ -6,16 +6,26 @@
 // 排程方式見 supabase/functions/README.md（用 pg_cron + pg_net 定時打這支）。
 // 這支 function 不看系統時間決定「要不要發」—— 被呼叫就發，時間點交給排程
 // 決定，這樣手動觸發補發也才有用。
+//
+// 語言：這是發到「公開頻道」的公告，不是私訊給某個人，沒有單一收件人可以
+// 決定語言，只能固定一種 —— 用環境變數 SLACK_CHANNEL_LANGUAGE 決定，
+// 沒設定就維持原本全部中文的行為。
 
 import {
   adminClient, digestLine, groupBySlot, taipeiToday, LEAVE_SELECT, type LeaveRow,
 } from '../_shared/leave.ts'
 import { postToChannel, section, contextLine, requireEnv } from '../_shared/slack.ts'
+import { normalizeLang, t, weekdayKey, type Lang } from '../_shared/i18n.ts'
+
+function channelLang(): Lang {
+  return normalizeLang(Deno.env.get('SLACK_CHANNEL_LANGUAGE'))
+}
 
 Deno.serve(async () => {
   try {
     const db = adminClient()
     const today = taipeiToday()
+    const lang = channelLang()
 
     // 涵蓋今天的所有已核准假單：開始日在今天或更早，結束日在今天或更晚。
     // （表單強制要填 end_date，單日假的 end_date 會等於 start_date，
@@ -40,22 +50,24 @@ Deno.serve(async () => {
     const { fullDay, morning, afternoon } = groupBySlot(leaves)
 
     const d = new Date(today)
-    const weekday = ['日', '一', '二', '三', '四', '五', '六'][d.getUTCDay()]
-    const heading = `:palm_tree: *${d.getUTCMonth() + 1}/${d.getUTCDate()}（${weekday}）今日請假名單*`
+    const weekday = t(lang, weekdayKey(d.getUTCDay()))
+    const heading = t(lang, 'digest_heading', { month: d.getUTCMonth() + 1, day: d.getUTCDate(), weekday })
 
     const groups: [string, LeaveRow[]][] = [
-      ['全天', fullDay], ['上午', morning], ['下午', afternoon],
+      [t(lang, 'digest_group_fullday'), fullDay],
+      [t(lang, 'digest_group_morning'), morning],
+      [t(lang, 'digest_group_afternoon'), afternoon],
     ]
     const blocks: unknown[] = [section(heading)]
     for (const [label, rows] of groups) {
       if (rows.length === 0) continue   // 空的組別整段不顯示
-      blocks.push(section(`*■ ${label}*\n${rows.map(digestLine).join('\n')}`))
+      blocks.push(section(t(lang, 'digest_group_heading', { label, lines: rows.map(l => digestLine(l, lang)).join('\n') })))
     }
-    blocks.push(contextLine('由請假系統自動發送。完整行事曆請見系統首頁。'))
+    blocks.push(contextLine(t(lang, 'digest_footer')))
 
     await postToChannel(
       requireEnv('SLACK_LEAVE_CHANNEL'),
-      `今日請假名單（共 ${leaves.length} 筆）`,
+      t(lang, 'digest_summary_text', { n: leaves.length }),
       blocks,
     )
 

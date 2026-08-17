@@ -7,13 +7,19 @@
 //
 // 前面三種的呼叫點在 LeaveForm.jsx / MyLeaves.jsx / Home.jsx，呼叫格式已經
 // 存在於前端，這支 function 是照著那個既有的 { type, request_id } 契約寫的。
+//
+// 語言：每一則通知都照「收件人自己」users.language 的設定發，不是看誰觸發
+// 動作。核准假單的主管可能是中文介面，但假單是發給可能設定英文的申請人 ——
+// 一則訊息只會用收件人自己的語言。頻道公告（今日臨時請假補發）沒有單一收件
+// 人，語言固定，見 SLACK_CHANNEL_LANGUAGE（未設定＝中文，行為與改版前一致）。
 
 import {
-  adminClient, currentApproverSlackIds, notificationTargetSlackIds,
+  adminClient, currentApprovers, notificationTargetRecipients,
   leaveDetailLines, digestLine, taipeiNow, taipeiToday, DIGEST_HOUR,
-  LEAVE_SELECT, type LeaveRow,
+  LEAVE_SELECT, type LeaveRow, type Recipient,
 } from '../_shared/leave.ts'
-import { dmMany, postToChannel, section, contextLine } from '../_shared/slack.ts'
+import { dmMany, dmManyLocalized, postToChannel, section, contextLine } from '../_shared/slack.ts'
+import { normalizeLang, t, type Lang } from '../_shared/i18n.ts'
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -25,6 +31,11 @@ function json(body: unknown, status = 200) {
     status,
     headers: { ...CORS, 'Content-Type': 'application/json' },
   })
+}
+
+/** 公開頻道公告固定用哪個語言：沒設定環境變數就照舊全部中文。 */
+function channelLang(): Lang {
+  return normalizeLang(Deno.env.get('SLACK_CHANNEL_LANGUAGE'))
 }
 
 Deno.serve(async (req) => {
@@ -55,43 +66,48 @@ Deno.serve(async (req) => {
 })
 
 async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
-  const slackIds = await currentApproverSlackIds(db, leave)
-  if (slackIds.length === 0) return { skipped: '這一關的簽核人沒有設定 Slack ID' }
+  const recipients = await currentApprovers(db, leave)
+  if (recipients.length === 0) return { skipped: '這一關的簽核人沒有設定 Slack ID' }
 
-  const text = `${leave.requester?.full_name ?? ''} 送出了一張待您審核的假單`
-  return await dmMany(slackIds, text, [
-    section(`:memo: *有一張假單待您審核*\n${leaveDetailLines(leave)}`),
-    // 按鈕由 slack-interactions 那支處理（Slack 會把所有互動事件送到 App
-    // 設定的同一個 Interactivity Request URL），所以這裡只負責把按鈕畫出來。
-    {
-      type: 'actions',
-      elements: [
-        { type: 'button', style: 'primary', text: { type: 'plain_text', text: '核准', emoji: true },
-          action_id: 'approve_leave', value: leave.id },
-        { type: 'button', style: 'danger', text: { type: 'plain_text', text: '駁回', emoji: true },
-          action_id: 'reject_leave', value: leave.id },
-      ],
-    },
-    contextLine(`也可以到請假系統的「首頁 → 待審核假單」處理。`),
-  ])
+  return await dmManyLocalized(recipients, (lang) => ({
+    text: t(lang, 'new_request_text', { name: leave.requester?.full_name ?? '' }),
+    blocks: [
+      section(t(lang, 'new_request_heading', { detail: leaveDetailLines(leave, lang) })),
+      // 按鈕由 slack-interactions 那支處理（Slack 會把所有互動事件送到 App
+      // 設定的同一個 Interactivity Request URL），所以這裡只負責把按鈕畫出來。
+      {
+        type: 'actions',
+        elements: [
+          { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(lang, 'btn_approve'), emoji: true },
+            action_id: 'approve_leave', value: leave.id },
+          { type: 'button', style: 'danger', text: { type: 'plain_text', text: t(lang, 'btn_reject'), emoji: true },
+            action_id: 'reject_leave', value: leave.id },
+        ],
+      },
+      contextLine(t(lang, 'review_on_web_hint')),
+    ],
+  }))
 }
 
 async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
   const results: Record<string, unknown> = {}
 
   // 1) 通知申請人本人 ＋ 管理後台設定的「核准通知對象」
-  const recipients = [
-    ...(leave.requester?.slack_user_id ? [leave.requester.slack_user_id] : []),
-    ...(await notificationTargetSlackIds(db)),
-  ]
-  results.dm = await dmMany(recipients, '您的假單已核准', [
-    section(`:white_check_mark: *假單已核准*\n${leaveDetailLines(leave)}`),
-  ])
+  const requesterRecipient: Recipient[] = leave.requester?.slack_user_id
+    ? [{ slackUserId: leave.requester.slack_user_id, language: normalizeLang(leave.requester.language) }]
+    : []
+  const targetRecipients = await notificationTargetRecipients(db)
+  const recipients = dedupeRecipients([...requesterRecipient, ...targetRecipients])
+
+  results.dm = await dmManyLocalized(recipients, (lang) => ({
+    text: t(lang, 'approved_text'),
+    blocks: [section(t(lang, 'approved_heading', { detail: leaveDetailLines(leave, lang) }))],
+  }))
 
   // 職務代理人的通知刻意等到「核准後」才發 —— 假單還沒過就先通知，萬一被
   // 駁回，代理人已經以為要代班了。代理人可能同時是申請人自己選的通知對象，
   // 所以先確認不是重複的人再發。
-  results.proxy = await notifyProxy(db, leave, recipients)
+  results.proxy = await notifyProxy(db, leave, recipients.map(r => r.slackUserId))
 
   // 2) 當天臨時請假的補發公告。
   //
@@ -107,9 +123,10 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
     if (!channel) {
       results.channel = '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
     } else {
-      await postToChannel(channel, `${leave.requester?.full_name ?? ''} 今天請假`, [
-        section(`:bell: *今日臨時請假*\n${digestLine(leave, { markFullDay: true })}`),
-        contextLine('此假單於今日上午的請假公告發出後才核准，故補發通知。'),
+      const lang = channelLang()
+      await postToChannel(channel, t(lang, 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
+        section(t(lang, 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
+        contextLine(t(lang, 'today_leave_note')),
       ])
       results.channel = 'posted'
     }
@@ -122,6 +139,7 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
 
 async function notifyRejected(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
   if (!leave.requester?.slack_user_id) return { skipped: '申請人沒有設定 Slack ID' }
+  const lang = normalizeLang(leave.requester.language)
 
   // 駁回原因存在 leave_approvals，不在假單本身，所以要另外查最後一筆
   const { data: rejection } = await db
@@ -131,10 +149,10 @@ async function notifyRejected(db: ReturnType<typeof adminClient>, leave: LeaveRo
     .order('created_at', { ascending: false })
     .limit(1).maybeSingle()
 
-  const extra = rejection?.comment ? [`*駁回原因:* ${rejection.comment}`] : []
-  return await dmMany([leave.requester.slack_user_id], '您的假單已被拒絕', [
-    section(`:x: *假單未通過*\n${leaveDetailLines(leave, extra)}`),
-    ...(rejection?.comment ? [] : [contextLine('詳細原因請到請假系統的「假單管理」查看。')]),
+  const extra = rejection?.comment ? [t(lang, 'detail_reject_reason', { reason: rejection.comment })] : []
+  return await dmMany([leave.requester.slack_user_id], t(lang, 'rejected_text'), [
+    section(t(lang, 'rejected_heading', { detail: leaveDetailLines(leave, lang, extra) })),
+    ...(rejection?.comment ? [] : [contextLine(t(lang, 'rejected_detail_hint'))]),
   ])
 }
 
@@ -144,16 +162,28 @@ async function notifyProxy(
 ) {
   const { data } = await db
     .from('leave_requests')
-    .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id)')
+    .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id, language)')
     .eq('id', leave.id).maybeSingle()
 
-  const slackId = (data as { proxy?: { slack_user_id?: string } } | null)?.proxy?.slack_user_id
-  if (!slackId) return '沒有職務代理人或代理人未設定 Slack ID'
-  if (alreadyNotified.includes(slackId)) return '代理人已在其他通知對象中，不重複發送'
+  const proxy = (data as { proxy?: { slack_user_id?: string; language?: string } } | null)?.proxy
+  if (!proxy?.slack_user_id) return '沒有職務代理人或代理人未設定 Slack ID'
+  if (alreadyNotified.includes(proxy.slack_user_id)) return '代理人已在其他通知對象中，不重複發送'
 
-  await dmMany([slackId], `您被指定為 ${leave.requester?.full_name ?? ''} 的職務代理人`, [
-    section(`:handshake: *您被指定為職務代理人*\n${leaveDetailLines(leave)}`),
-    contextLine('這張假單已核准，該時段請協助代理其職務。'),
+  const lang = normalizeLang(proxy.language)
+  await dmMany([proxy.slack_user_id], t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
+    section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
+    contextLine(t(lang, 'proxy_note')),
   ])
   return 'sent'
+}
+
+function dedupeRecipients(recipients: Recipient[]): Recipient[] {
+  const seen = new Set<string>()
+  const out: Recipient[] = []
+  for (const r of recipients) {
+    if (!r.slackUserId || seen.has(r.slackUserId)) continue
+    seen.add(r.slackUserId)
+    out.push(r)
+  }
+  return out
 }

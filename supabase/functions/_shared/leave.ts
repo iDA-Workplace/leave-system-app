@@ -5,6 +5,7 @@
 // 用 esm.sh 而不是 jsr:，因為前者在所有版本的 Supabase Edge Runtime 上都能跑；
 // jsr: 只有比較新的 runtime 支援，而這個專案的 runtime 版本無從確認。
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
+import { normalizeLang, t, type Lang } from './i18n.ts'
 
 /**
  * 台灣沒有日光節約時間，全年固定 UTC+8，所以直接用固定位移就夠，
@@ -40,11 +41,12 @@ export function adminClient(): SupabaseClient {
   )
 }
 
+// language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 export const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
-  requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id),
-  proxy:users!leave_requests_proxy_user_id_fkey(full_name),
-  leave_type:leave_types(name)
+  requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
+  proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
+  leave_type:leave_types(name, name_en)
 `
 
 export interface LeaveRow {
@@ -59,9 +61,15 @@ export interface LeaveRow {
   status: string
   flow_id: string | null
   current_step: number | null
-  requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null } | null
-  proxy?: { full_name: string } | null
-  leave_type?: { name: string } | null
+  requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
+  proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
+  leave_type?: { name: string; name_en?: string | null } | null
+}
+
+/** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
+export interface Recipient {
+  slackUserId: string
+  language: Lang
 }
 
 // ===== 假單的文字呈現 =====
@@ -69,6 +77,9 @@ export interface LeaveRow {
 // 單張假單的通知一律用條列式（申請人／假別／休假日期／休假時間／時數／
 // 職務代理人／事由），每日名單則用精簡單行 —— 名單一次列很多人，展開成
 // 條列式會長到不能看。
+//
+// 每個函式都收一個 lang 參數：訊息要用「收件人」的語言組出來，同一則訊息
+// 絕對不會中英夾雜。
 
 /** 跨日請假的工作天數（不含週六日）。與網頁版 lib/leaveEntitlements.js 同一套算法。 */
 export function countWorkdays(startDate: string, endDate: string): number {
@@ -98,7 +109,14 @@ export function isFullDay(l: LeaveRow): boolean {
 }
 
 const shortDate = (d: string) => `${Number(d.slice(5, 7))}/${Number(d.slice(8, 10))}`
-const hhmm = (t: string) => t.slice(0, 5)
+const hhmm = (time: string) => time.slice(0, 5)
+
+/** 假別名稱：跟網頁版的 leaveTypeName() 同一套規則 —— 英文模式沒填 name_en 就沿用中文名。 */
+export function leaveTypeName(l: LeaveRow, lang: Lang): string {
+  if (!l.leave_type) return t(lang, 'leave_fallback_type')
+  if (lang === 'en' && l.leave_type.name_en) return l.leave_type.name_en
+  return l.leave_type.name || t(lang, 'leave_fallback_type')
+}
 
 /** 「8/17」或「8/17 ~ 8/19」 */
 export function dateLabel(l: LeaveRow): string {
@@ -106,33 +124,33 @@ export function dateLabel(l: LeaveRow): string {
 }
 
 /** 「08:30-17:30」；多日假沒有時間意義，寫「整日」。 */
-export function timeLabel(l: LeaveRow): string {
-  if (isMultiDay(l)) return '整日'
+export function timeLabel(l: LeaveRow, lang: Lang): string {
+  if (isMultiDay(l)) return t(lang, 'all_day')
   if (l.start_time && l.end_time) return `${hhmm(l.start_time)}-${hhmm(l.end_time)}`
-  return '整日'
+  return t(lang, 'all_day')
 }
 
 /** 連續一天以上一律用天數表示，單日才用小時。 */
-export function durationLabel(l: LeaveRow): string {
-  if (isMultiDay(l)) return `${countWorkdays(l.start_date, l.end_date)} 天`
-  return `${l.hours ?? FULL_DAY_HOURS} 小時`
+export function durationLabel(l: LeaveRow, lang: Lang): string {
+  if (isMultiDay(l)) return t(lang, 'days_unit', { n: countWorkdays(l.start_date, l.end_date) })
+  return t(lang, 'hours_unit', { n: l.hours ?? FULL_DAY_HOURS })
 }
 
 /**
  * 單張假單的條列式明細。`extra` 用來補該情境專屬的欄位
  * （例如駁回通知要多一行駁回原因）。
  */
-export function leaveDetailLines(l: LeaveRow, extra: string[] = []): string {
+export function leaveDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
   const lines = [
-    `*申請人:* ${l.requester?.full_name ?? '—'}`,
-    `*假別:* ${l.leave_type?.name ?? '請假'}`,
-    `*休假日期:* ${dateLabel(l)}`,
-    `*休假時間:* ${timeLabel(l)}`,
-    `*時數:* ${durationLabel(l)}`,
+    t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
+    t(lang, 'detail_type', { type: leaveTypeName(l, lang) }),
+    t(lang, 'detail_date', { date: dateLabel(l) }),
+    t(lang, 'detail_time', { time: timeLabel(l, lang) }),
+    t(lang, 'detail_hours', { duration: durationLabel(l, lang) }),
   ]
   // 沒填代理人就整行不顯示，不要留一行「無」佔版面
-  if (l.proxy?.full_name) lines.push(`*職務代理人:* ${l.proxy.full_name}`)
-  if (l.reason) lines.push(`*事由:* ${l.reason}`)
+  if (l.proxy?.full_name) lines.push(t(lang, 'detail_proxy', { name: l.proxy.full_name }))
+  if (l.reason) lines.push(t(lang, 'detail_reason', { reason: l.reason }))
   return [...lines, ...extra].join('\n')
 }
 
@@ -143,12 +161,12 @@ export function leaveDetailLines(l: LeaveRow, extra: string[] = []): string {
  * 請假）要開啟 —— 未滿 8 小時的會顯示時間範圍，整天的如果什麼都不寫，看起來
  * 像資訊漏掉了。每日名單那邊已經有「■ 全天」的分組標題，就不用再重複。
  */
-export function digestLine(l: LeaveRow, { markFullDay = false } = {}): string {
-  const name = l.requester?.full_name ?? '（未知人員）'
-  const type = l.leave_type?.name ?? '請假'
-  if (isMultiDay(l)) return `• ${name}　${type}（${dateLabel(l)} 連假中）`
-  if (isFullDay(l)) return `• ${name}　${type}${markFullDay ? '　整天' : ''}`
-  return `• ${name}　${type}　${timeLabel(l)}`
+export function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}): string {
+  const name = l.requester?.full_name ?? t(lang, 'unknown_person')
+  const type = leaveTypeName(l, lang)
+  if (isMultiDay(l)) return `• ${name}　${type}（${t(lang, 'multiday_range', { range: dateLabel(l) })}）`
+  if (isFullDay(l)) return `• ${name}　${type}${markFullDay ? t(lang, 'full_day_marker') : ''}`
+  return `• ${name}　${type}　${timeLabel(l, lang)}`
 }
 
 /**
@@ -176,24 +194,39 @@ export function groupBySlot(leaves: LeaveRow[]) {
   }
 }
 
-/** 查出某張假單「目前這一關」該簽核的人的 Slack ID。 */
-export async function currentApproverSlackIds(db: SupabaseClient, leave: LeaveRow): Promise<string[]> {
+/** 查出某張假單「目前這一關」該簽核的人（Slack ID ＋ 各自的語言偏好）。 */
+export async function currentApprovers(db: SupabaseClient, leave: LeaveRow): Promise<Recipient[]> {
   if (!leave.flow_id || !leave.current_step) return []
   const { data, error } = await db
     .from('approval_flow_steps')
-    .select('approver:users!approval_flow_steps_approver_id_fkey(slack_user_id)')
+    .select('approver:users!approval_flow_steps_approver_id_fkey(slack_user_id, language)')
     .eq('flow_id', leave.flow_id)
     .eq('step_order', leave.current_step)
   if (error) throw new Error(`讀取簽核關卡失敗：${error.message}`)
-  return (data ?? []).map((r: { approver?: { slack_user_id?: string } }) => r.approver?.slack_user_id).filter(Boolean) as string[]
+  return toRecipients(
+    (data ?? []).map((r: { approver?: { slack_user_id?: string; language?: string } }) => r.approver),
+  )
 }
 
-/** 管理後台「核准通知對象」裡設定、且仍啟用的人。 */
-export async function notificationTargetSlackIds(db: SupabaseClient): Promise<string[]> {
+/** 管理後台「核准通知對象」裡設定、且仍啟用的人（Slack ID ＋ 各自的語言偏好）。 */
+export async function notificationTargetRecipients(db: SupabaseClient): Promise<Recipient[]> {
   const { data, error } = await db
     .from('notification_targets')
-    .select('user:users(slack_user_id)')
+    .select('user:users(slack_user_id, language)')
     .eq('is_active', true)
   if (error) throw new Error(`讀取通知對象失敗：${error.message}`)
-  return (data ?? []).map((r: { user?: { slack_user_id?: string } }) => r.user?.slack_user_id).filter(Boolean) as string[]
+  return toRecipients(
+    (data ?? []).map((r: { user?: { slack_user_id?: string; language?: string } }) => r.user),
+  )
+}
+
+function toRecipients(rows: ({ slack_user_id?: string; language?: string } | undefined)[]): Recipient[] {
+  const seen = new Set<string>()
+  const out: Recipient[] = []
+  for (const row of rows) {
+    if (!row?.slack_user_id || seen.has(row.slack_user_id)) continue
+    seen.add(row.slack_user_id)
+    out.push({ slackUserId: row.slack_user_id, language: normalizeLang(row.language) })
+  }
+  return out
 }

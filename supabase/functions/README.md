@@ -119,6 +119,13 @@ Supabase 後台 → **Edge Functions → Secrets**（或用 CLI）：
 | `SLACK_BOT_TOKEN` | `xoxb-...` | 全部 |
 | `SLACK_LEAVE_CHANNEL` | 頻道 ID `C...` | 每日公告、當天臨時請假公告 |
 | `SLACK_SIGNING_SECRET` | Basic Information → Signing Secret | 只有 `slack-interactions` |
+| `SLACK_CHANNEL_LANGUAGE`（選填） | `zh` 或 `en` | 每日公告、當天臨時請假公告 |
+
+`SLACK_CHANNEL_LANGUAGE` 只影響**發到公開頻道**的訊息（每日請假名單、當天臨時
+請假補發公告）——那是一次發給一整個頻道，沒有單一收件人可以決定語言，只能
+固定一種。不設定就維持原本全部中文的行為。私訊給個人的通知（待審核提醒、
+核准／駁回結果……）永遠照收件人自己在「個人設定」選的語言發，不受這個變數
+影響。
 
 用 CLI 的話：
 
@@ -126,6 +133,8 @@ Supabase 後台 → **Edge Functions → Secrets**（或用 CLI）：
 supabase secrets set SLACK_BOT_TOKEN=xoxb-你的-token
 supabase secrets set SLACK_LEAVE_CHANNEL=C01234ABCDE
 supabase secrets set SLACK_SIGNING_SECRET=你的-signing-secret
+# 選填，不設定＝頻道公告維持中文
+# supabase secrets set SLACK_CHANNEL_LANGUAGE=zh
 ```
 
 `SUPABASE_URL` 與 `SUPABASE_SERVICE_ROLE_KEY` 由 Supabase 自動注入，不用自己設。

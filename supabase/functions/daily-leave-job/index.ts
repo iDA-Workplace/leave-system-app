@@ -8,11 +8,14 @@
 // 商業規則沿用原本的，沒有另外調整：
 //   - 待審超過 7 天 → 自動退回，並私訊申請人
 //   - 未逾期 → 私訊目前這一關的簽核人提醒（現在附上核准／駁回按鈕）
+//
+// 語言：每則私訊都照收件人（申請人／簽核人）自己 users.language 的設定發。
 
 import {
-  adminClient, leaveDetailLines, LEAVE_SELECT, type LeaveRow,
+  adminClient, currentApprovers, leaveDetailLines, LEAVE_SELECT, type LeaveRow,
 } from '../_shared/leave.ts'
-import { dmMany, section, contextLine } from '../_shared/slack.ts'
+import { dmMany, dmManyLocalized, section, contextLine } from '../_shared/slack.ts'
+import { normalizeLang, t } from '../_shared/i18n.ts'
 
 /** 待審幾天後自動退回。 */
 const EXPIRE_DAYS = 7
@@ -50,9 +53,10 @@ Deno.serve(async () => {
       }).eq('id', leave.id)
 
       if (leave.requester?.slack_user_id) {
-        await dmMany([leave.requester.slack_user_id], '您的請假申請已逾期退回', [
-          section(`:warning: *您的請假申請已逾期退回*\n${leaveDetailLines(leave)}`),
-          contextLine(`此假單因 ${EXPIRE_DAYS} 天內未獲審核，已自動退回。請重新送出申請。`),
+        const lang = normalizeLang(leave.requester.language)
+        await dmMany([leave.requester.slack_user_id], t(lang, 'overdue_text'), [
+          section(t(lang, 'overdue_heading', { detail: leaveDetailLines(leave, lang) })),
+          contextLine(t(lang, 'overdue_note', { n: EXPIRE_DAYS })),
         ])
       }
     }
@@ -66,30 +70,26 @@ Deno.serve(async () => {
     for (const leave of toRemind) {
       if (!leave.flow_id || !leave.current_step) continue
 
-      const { data: steps } = await db
-        .from('approval_flow_steps')
-        .select('approver:users!approval_flow_steps_approver_id_fkey(slack_user_id)')
-        .eq('flow_id', leave.flow_id).eq('step_order', leave.current_step)
-
-      const slackIds = (steps ?? [])
-        .map((s: { approver?: { slack_user_id?: string } }) => s.approver?.slack_user_id)
-        .filter(Boolean) as string[]
-      if (slackIds.length === 0) continue
+      const recipients = await currentApprovers(db, leave)
+      if (recipients.length === 0) continue
 
       const waited = waitedDays(leave)
-      await dmMany(slackIds, `${leave.requester?.full_name ?? ''} 的假單待您審核`, [
-        section(`:bell: *待審假單提醒*\n${leaveDetailLines(leave)}`),
-        contextLine(waited === 0 ? '今天送出，尚未處理' : `已等待 ${waited} 天`),
-        {
-          type: 'actions',
-          elements: [
-            { type: 'button', style: 'primary', text: { type: 'plain_text', text: '核准', emoji: true },
-              action_id: 'approve_leave', value: leave.id },
-            { type: 'button', style: 'danger', text: { type: 'plain_text', text: '駁回', emoji: true },
-              action_id: 'reject_leave', value: leave.id },
-          ],
-        },
-      ])
+      await dmManyLocalized(recipients, (lang) => ({
+        text: t(lang, 'reminder_text', { name: leave.requester?.full_name ?? '' }),
+        blocks: [
+          section(t(lang, 'reminder_heading', { detail: leaveDetailLines(leave, lang) })),
+          contextLine(waited === 0 ? t(lang, 'reminder_note_new') : t(lang, 'reminder_note_waited', { n: waited })),
+          {
+            type: 'actions',
+            elements: [
+              { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(lang, 'btn_approve'), emoji: true },
+                action_id: 'approve_leave', value: leave.id },
+              { type: 'button', style: 'danger', text: { type: 'plain_text', text: t(lang, 'btn_reject'), emoji: true },
+                action_id: 'reject_leave', value: leave.id },
+            ],
+          },
+        ],
+      }))
       remindedIds.push(leave.id)
     }
 

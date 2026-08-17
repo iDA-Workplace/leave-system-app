@@ -17,7 +17,12 @@ import { fileURLToPath } from 'node:url'
 const ROOT = dirname(fileURLToPath(import.meta.url))
 const TARGETS = ['send-slack-notification', 'daily-leave-digest', 'daily-leave-job']
 
-const SHARED_IMPORT = /^import\s+\{[\s\S]*?\}\s+from\s+'(\.\.\/_shared\/[^']+)'\s*$/gm
+// 兩種相對路徑都要接受：index.ts 從自己的目錄看 _shared 是 '../_shared/xxx.ts'；
+// _shared 底下的檔案彼此互相 import（例如 leave.ts 用到 i18n.ts 的 t()）則是
+// 同目錄的 './xxx.ts'。少了後者，_shared 檔案之間的 import 沒被攤平腳本認得、
+// 沒被剝掉，會直接把攤平不掉的 import 語句原封不動地留在 standalone.ts 裡，
+// 貼到 Supabase 網頁編輯器會找不到模組而炸掉。
+const SHARED_IMPORT = /^import\s+(?:type\s+)?\{[\s\S]*?\}\s+from\s+'((?:\.\.\/_shared\/|\.\/)[^']+)'\s*$/gm
 const EXTERNAL_IMPORT = /^import\s+.*?from\s+'(https?:\/\/[^']+)'\s*$/gm
 
 /** 把共用檔轉成可直接內聯的內容：拿掉 export、抽出外部 import。 */

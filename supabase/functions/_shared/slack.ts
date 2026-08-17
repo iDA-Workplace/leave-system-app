@@ -5,6 +5,8 @@
 // 資料庫，那條路徑沒有登入狀態、繞過 RLS，必須自己驗簽章＋自己檢查權限，
 // 風險與工作量都完全不同，所以刻意分開。
 
+import type { Recipient } from './leave.ts'
+
 const SLACK_API = 'https://slack.com/api'
 
 export function requireEnv(name: string): string {
@@ -44,9 +46,9 @@ export function dmUser(slackUserId: string, text: string, blocks?: unknown[]) {
 }
 
 /**
- * 一次送多人。單一個人送失敗（例如某人的 slack_user_id 填錯、或已離開
- * workspace）不應該讓整批通知失敗，所以用 allSettled 收集錯誤後回報，
- * 而不是讓第一個錯誤就中斷。
+ * 一次送多人，訊息內容固定（不分語言）。單一個人送失敗（例如某人的
+ * slack_user_id 填錯、或已離開 workspace）不應該讓整批通知失敗，所以用
+ * allSettled 收集錯誤後回報，而不是讓第一個錯誤就中斷。
  */
 export async function dmMany(slackUserIds: string[], text: string, blocks?: unknown[]) {
   const targets = [...new Set(slackUserIds.filter(Boolean))]
@@ -55,6 +57,35 @@ export async function dmMany(slackUserIds: string[], text: string, blocks?: unkn
     .map((r, i) => (r.status === 'rejected' ? `${targets[i]}: ${r.reason?.message ?? r.reason}` : null))
     .filter(Boolean)
   return { sent: targets.length - failures.length, failures }
+}
+
+/**
+ * 一次送多人，但每個人用自己的語言。
+ *
+ * 先把收件人依語言分組，同一組共用一次 build(lang) 組出來的訊息內容，
+ * 組數最多就是 2（zh／en），不會因為收件人多而重複組字串。
+ */
+export async function dmManyLocalized(
+  recipients: Recipient[],
+  build: (lang: Recipient['language']) => { text: string; blocks?: unknown[] },
+) {
+  const byLang = new Map<Recipient['language'], string[]>()
+  for (const r of recipients) {
+    if (!r.slackUserId) continue
+    const list = byLang.get(r.language) ?? []
+    list.push(r.slackUserId)
+    byLang.set(r.language, list)
+  }
+
+  let sent = 0
+  const failures: string[] = []
+  for (const [lang, slackUserIds] of byLang) {
+    const { text, blocks } = build(lang)
+    const result = await dmMany(slackUserIds, text, blocks)
+    sent += result.sent
+    failures.push(...result.failures.filter((f): f is string => typeof f === 'string'))
+  }
+  return { sent, failures }
 }
 
 export function section(markdown: string) {
