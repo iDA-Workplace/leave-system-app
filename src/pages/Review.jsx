@@ -5,6 +5,7 @@ import {
   Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea,
 } from '../components/ui'
 import { useToast } from '../context/ToastContext'
+import { useLanguage } from '../context/LanguageContext'
 import './Review.css'
 
 const EVALUATOR_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
@@ -12,18 +13,20 @@ const PAGE_SIZE = 5
 
 // 分數區間對照表 (from iDA's own past annual-evaluation spreadsheet).
 const RATING_BANDS = [
-  { min: 90, max: 100, label: '卓越表現', tone: 'success' },
-  { min: 80, max: 89, label: '優秀表現', tone: 'success' },
-  { min: 70, max: 79, label: '符合預期', tone: 'info' },
-  { min: 61, max: 69, label: '有待加強', tone: 'warning' },
-  { min: 0, max: 60, label: '難以勝任', tone: 'error' },
+  { min: 90, max: 100, key: 'excellent', tone: 'success' },
+  { min: 80, max: 89, key: 'great', tone: 'success' },
+  { min: 70, max: 79, key: 'expected', tone: 'info' },
+  { min: 61, max: 69, key: 'improve', tone: 'warning' },
+  { min: 0, max: 60, key: 'poor', tone: 'error' },
 ]
+// 回傳 { tone, key }；顯示文字要用 t(`rating_${band.key}`) 取，等級名稱是
+// 介面文字不是資料，寫死在這裡就沒辦法跟著語言切換。
 function ratingFor(score) {
   if (score === null || score === undefined) return null
   return RATING_BANDS.find(b => score >= b.min && score <= b.max) || null
 }
 
-function formatTenure(hireDate) {
+function formatTenure(hireDate, t) {
   if (!hireDate) return null
   const start = new Date(hireDate)
   const now = new Date()
@@ -31,8 +34,8 @@ function formatTenure(hireDate) {
   let months = now.getMonth() - start.getMonth()
   if (now.getDate() < start.getDate()) months -= 1
   if (months < 0) { years -= 1; months += 12 }
-  if (years < 0) return '0年0個月'
-  return `${years}年${months}個月`
+  if (years < 0) return t('finleave_tenure', { y: 0, m: 0 })
+  return t('finleave_tenure', { y: years, m: months })
 }
 
 // Questions are scoped by department, not by role. A department without its
@@ -140,39 +143,42 @@ async function fetchReviewResult(participant, department) {
 }
 
 // 考核結果 modal 的內容（員工看自己的、主管／老闆看部屬的，版面一致）
-function ReviewResultBody({ questions, responses, steps, finalScore, selfLabel = '我的自評' }) {
+function ReviewResultBody({ questions, responses, steps, finalScore, selfLabel }) {
+  const { t } = useLanguage()
+  const label = selfLabel ?? t('review_self_mine')
+  const stepName = step => step.evaluator_name || t('adminflows_step', { n: step.step_order })
   return (
     <>
       {questions.map((q, i) => (
         <div key={q.id} className="review-result-question">
           <div className="review-result-question__title">{i + 1}. {q.question_text}</div>
           <div className="review-result-box">
-            <div className="review-result-box__label">{selfLabel}</div>
+            <div className="review-result-box__label">{label}</div>
             <div>{responses[q.id]?.answer ?? '—'}</div>
-            {responses[q.id]?.example_note && <div className="review-result-box__note">相關事例：{responses[q.id].example_note}</div>}
+            {responses[q.id]?.example_note && <div className="review-result-box__note">{t('review_example_note', { text: responses[q.id].example_note })}</div>}
           </div>
           {steps.map(step => step.answers[q.id] && (
             <div key={step.step_order} className="review-result-box review-result-box--eval">
-              <div className="review-result-box__label review-result-box__label--eval">{step.evaluator_name || `第${step.step_order}關`} 的評分</div>
+              <div className="review-result-box__label review-result-box__label--eval">{t('review_evaluator_score', { name: stepName(step) })}</div>
               <div>{step.answers[q.id].answer ?? '—'}</div>
-              {step.answers[q.id].example_note && <div className="review-result-box__note">相關事例：{step.answers[q.id].example_note}</div>}
+              {step.answers[q.id].example_note && <div className="review-result-box__note">{t('review_example_note', { text: step.answers[q.id].example_note })}</div>}
             </div>
           ))}
         </div>
       ))}
       {steps.map(step => (
         <div key={step.step_order} className="review-overall">
-          <div className="review-overall__title">{step.evaluator_name || `第${step.step_order}關`} 的總評</div>
-          <div className="review-overall__score">總評分數：<strong>{step.overall_score ?? '—'}</strong> 分</div>
+          <div className="review-overall__title">{t('review_evaluator_overall', { name: stepName(step) })}</div>
+          <div className="review-overall__score">{t('review_overall_score_prefix')}<strong>{step.overall_score ?? '—'}</strong></div>
           {step.overall_comment && <div className="review-overall__comment">{step.overall_comment}</div>}
         </div>
       ))}
       {finalScore != null && (
         <div className="review-overall">
-          <div className="review-overall__title">最終等級</div>
+          <div className="review-overall__title">{t('review_final_rating')}</div>
           <div className="review-overall__score">
-            {finalScore} 分
-            {(() => { const r = ratingFor(finalScore); return r ? `｜${r.label}` : '' })()}
+            {t('review_points', { n: finalScore })}
+            {(() => { const r = ratingFor(finalScore); return r ? `${t('common_meta_separator')}${t(`rating_${r.key}`)}` : '' })()}
           </div>
         </div>
       )}
@@ -198,6 +204,7 @@ function ScoreButtons({ min, max, value, onChange }) {
 }
 
 function FlowSteps({ flow }) {
+  const { t } = useLanguage()
   if (!flow?.steps?.length) return null
   const sorted = [...flow.steps].sort((a, b) => a.step_order - b.step_order)
   return (
@@ -205,7 +212,7 @@ function FlowSteps({ flow }) {
       {sorted.map((s, i) => (
         <span key={i}>
           {i > 0 && <span className="review-flow-arrow">→</span>}
-          <Chip tone="neutral">第{s.step_order}關：{s.evaluator?.full_name || '未指定'}</Chip>
+          <Chip tone="neutral">{t('adminflows_step_with_name', { n: s.step_order, name: s.evaluator?.full_name || t('adminusers_unassigned') })}</Chip>
         </span>
       ))}
     </div>
@@ -214,17 +221,18 @@ function FlowSteps({ flow }) {
 
 // ===== 員工資訊 =====
 function EmployeeInfoHeader({ userProfile, year }) {
-  const tenure = formatTenure(userProfile.hire_date)
+  const { t } = useLanguage()
+  const tenure = formatTenure(userProfile.hire_date, t)
   const name = userProfile.full_name
     ? `${userProfile.full_name}${userProfile.english_name ? ` (${userProfile.english_name})` : ''}`
     : userProfile.english_name
   const items = [
-    ['姓名', name],
-    ['部門', userProfile.department],
-    ['職稱', userProfile.job_title],
-    ['入職年月日', userProfile.hire_date],
-    ['年資', tenure],
-    ['評核年度', year ? `${year} 年度` : null],
+    [t('adminusers_col_name'), name],
+    [t('adminusers_col_department'), userProfile.department],
+    [t('adminusers_col_title'), userProfile.job_title],
+    [t('review_info_hire_date'), userProfile.hire_date],
+    [t('finleave_col_tenure'), tenure],
+    [t('review_info_year'), year ? t('review_year_label', { y: year }) : null],
   ]
   return (
     <Card className="review-employee-card">
@@ -251,6 +259,7 @@ function EmployeeReviewSection({ userProfile }) {
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   const [assessModal, setAssessModal] = useState(null)
   const [assessQuestions, setAssessQuestions] = useState([])
@@ -307,7 +316,7 @@ function EmployeeReviewSection({ userProfile }) {
       for (const q of assessQuestions) {
         const v = assessResponses[q.id]
         if (v === undefined || v.answer === undefined || v.answer === '') {
-          showToast(`請填寫所有題目：「${q.question_text}」未填寫`, { tone: 'error' })
+          showToast(t('review_err_required_q', { q: q.question_text }), { tone: 'error' })
           return
         }
       }
@@ -329,7 +338,7 @@ function EmployeeReviewSection({ userProfile }) {
         updated_at: new Date().toISOString(),
       }, { onConflict: 'participant_id,question_id' })
       if (error) {
-        showToast('自評儲存失敗：' + error.message, { tone: 'error' })
+        showToast(t('review_err_save_self', { msg: error.message }), { tone: 'error' })
         setAssessSaving(false)
         return
       }
@@ -343,8 +352,7 @@ function EmployeeReviewSection({ userProfile }) {
         .select()
       if (error || !updated?.length) {
         showToast(
-          error ? '送出失敗：' + error.message
-                : '送出失敗：沒有權限更新這筆考核資料（可能是資料庫權限規則 RLS 擋下）',
+          error ? t('review_err_submit', { msg: error.message }) : t('review_err_submit_rls'),
           { tone: 'error' },
         )
         setAssessSaving(false)
@@ -353,7 +361,7 @@ function EmployeeReviewSection({ userProfile }) {
     }
 
     setAssessSaving(false)
-    showToast(submit ? '自評已送出！' : '已儲存')
+    showToast(submit ? t('review_self_submitted') : t('review_saved'))
     setAssessModal(null)
     fetchAll()
   }
@@ -389,13 +397,13 @@ function EmployeeReviewSection({ userProfile }) {
       <EmployeeInfoHeader userProfile={userProfile} year={headerYear} />
 
       <Tabs tabs={[
-        { key: 'self', label: '年度自評', active: tab === 'self', onClick: () => setTab('self') },
-        { key: 'past', label: '過往考核紀錄', active: tab === 'past', onClick: () => setTab('past'), badge: unreadCount },
+        { key: 'self', label: t('review_tab_self'), active: tab === 'self', onClick: () => setTab('self') },
+        { key: 'past', label: t('review_tab_past'), active: tab === 'past', onClick: () => setTab('past'), badge: unreadCount },
       ]} />
 
       {tab === 'self' && (
         activeParticipants.length === 0 ? (
-          <Card><EmptyState title="非考核期間" description="目前沒有進行中的年度考核。" /></Card>
+          <Card><EmptyState title={t('home_review_not_in_period')} description={t('review_not_period_desc')} /></Card>
         ) : (
           <div className="review-list">
             {activeParticipants.map(p => (
@@ -403,16 +411,16 @@ function EmployeeReviewSection({ userProfile }) {
                 <div className="review-row">
                   <div>
                     <div className="review-row__title">{p.review?.title}</div>
-                    <div className="review-row__meta">{p.review?.year} 年度｜{p.review?.start_date} ～ {p.review?.end_date}</div>
+                    <div className="review-row__meta">{t('review_cycle_meta', { year: t('review_year_label', { y: p.review?.year }), start: p.review?.start_date, end: p.review?.end_date })}</div>
                     {p.review?.self_assessment_deadline && (
-                      <div className="review-row__sub">自評截止：{p.review.self_assessment_deadline}</div>
+                      <div className="review-row__sub">{t('review_self_deadline', { date: p.review.self_assessment_deadline })}</div>
                     )}
                   </div>
                   <div className="review-row__actions">
                     {p.self_submitted ? (
-                      <Chip tone="warning">自評已完成，待評分</Chip>
+                      <Chip tone="warning">{t('review_self_done_pending')}</Chip>
                     ) : (
-                      <Button size="sm" onClick={() => openAssessModal(p)}>{p._hasDraft ? '繼續自評' : '開始自評'}</Button>
+                      <Button size="sm" onClick={() => openAssessModal(p)}>{p._hasDraft ? t('review_continue_self') : t('review_start_self')}</Button>
                     )}
                   </div>
                 </div>
@@ -424,27 +432,27 @@ function EmployeeReviewSection({ userProfile }) {
 
       {tab === 'past' && (
         pastParticipants.length === 0 ? (
-          <Card><EmptyState title="尚無過往考核紀錄" /></Card>
+          <Card><EmptyState title={t('review_no_past')} /></Card>
         ) : (
           <>
             <div className="ui-table-wrap">
               <table className="ui-table">
-                <thead><tr><th>考核年度</th><th>最終等級</th><th>評核流程</th><th>操作</th></tr></thead>
+                <thead><tr><th>{t('review_col_year')}</th><th>{t('review_col_final')}</th><th>{t('review_col_flow')}</th><th>{t('common_actions')}</th></tr></thead>
                 <tbody>
                   {pageItems.map(p => {
                     const rating = ratingFor(p.final_score)
                     return (
                       <tr key={p.id}>
-                        <td>{p.review?.year} 年度｜{p.review?.title}</td>
+                        <td>{t('review_past_year_title', { year: t('review_year_label', { y: p.review?.year }), title: p.review?.title })}</td>
                         <td>
-                          {p.final_score != null ? `${p.final_score} 分` : '—'}
-                          {rating && <> <Chip tone={rating.tone}>{rating.label}</Chip></>}
+                          {p.final_score != null ? t('review_points', { n: p.final_score }) : '—'}
+                          {rating && <> <Chip tone={rating.tone}>{t(`rating_${rating.key}`)}</Chip></>}
                         </td>
                         <td>
                           {p.flow?.name || '—'}
                           <FlowSteps flow={p.flow} />
                         </td>
-                        <td><Button size="sm" variant="outlined" onClick={() => openDetailModal(p)}>查看詳情</Button></td>
+                        <td><Button size="sm" variant="outlined" onClick={() => openDetailModal(p)}>{t('review_view_detail')}</Button></td>
                       </tr>
                     )
                   })}
@@ -453,9 +461,9 @@ function EmployeeReviewSection({ userProfile }) {
             </div>
             {totalPages > 1 && (
               <div className="review-pagination">
-                <Button size="sm" variant="outlined" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>上一頁</Button>
-                <span className="review-pagination__label">第 {page} / {totalPages} 頁</span>
-                <Button size="sm" variant="outlined" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>下一頁</Button>
+                <Button size="sm" variant="outlined" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>{t('common_prev_page')}</Button>
+                <span className="review-pagination__label">{t('common_page_indicator', { page, total: totalPages })}</span>
+                <Button size="sm" variant="outlined" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>{t('common_next_page')}</Button>
               </div>
             )}
           </>
@@ -465,19 +473,19 @@ function EmployeeReviewSection({ userProfile }) {
       {assessModal && (
         <Dialog
           size="lg"
-          title={`填寫自評 — ${assessModal.review?.title}`}
+          title={t('review_assess_title', { title: assessModal.review?.title })}
           onClose={() => setAssessModal(null)}
           labelledBy="assess-dialog-title"
           actions={(
             <>
-              <Button variant="text" onClick={() => setAssessModal(null)}>取消</Button>
-              <Button variant="outlined" loading={assessSaving} onClick={() => handleSaveAssess(false)}>儲存</Button>
-              <Button loading={assessSaving} onClick={() => handleSaveAssess(true)}>送出</Button>
+              <Button variant="text" onClick={() => setAssessModal(null)}>{t('common_cancel')}</Button>
+              <Button variant="outlined" loading={assessSaving} onClick={() => handleSaveAssess(false)}>{t('common_save')}</Button>
+              <Button loading={assessSaving} onClick={() => handleSaveAssess(true)}>{t('review_submit')}</Button>
             </>
           )}
         >
           {assessQuestions.length === 0 ? (
-            <p className="review-hint">這個部門目前沒有設定考核題目，請先請主管或老闆到「部門考核設定」新增題目。</p>
+            <p className="review-hint">{t('review_no_questions')}</p>
           ) : assessQuestions.map((q, i) => (
             <div key={q.id} className="review-question">
               <label className="review-question__label">{i + 1}. {q.question_text} <span className="review-required">*</span></label>
@@ -485,7 +493,7 @@ function EmployeeReviewSection({ userProfile }) {
                 <Textarea
                   value={assessResponses[q.id]?.answer || ''}
                   onChange={e => setAssessResponses(p => ({ ...p, [q.id]: { ...p[q.id], answer: e.target.value } }))}
-                  rows={4} placeholder="請填寫..."
+                  rows={4} placeholder={t('review_fill_placeholder')}
                 />
               ) : (
                 <>
@@ -493,7 +501,7 @@ function EmployeeReviewSection({ userProfile }) {
                   <Textarea
                     value={assessResponses[q.id]?.example_note || ''}
                     onChange={e => setAssessResponses(p => ({ ...p, [q.id]: { ...p[q.id], example_note: e.target.value } }))}
-                    rows={2} placeholder="請說明打這個分數的相關事例／理由"
+                    rows={2} placeholder={t('review_example_placeholder')}
                   />
                 </>
               )}
@@ -505,10 +513,10 @@ function EmployeeReviewSection({ userProfile }) {
       {detailModal && (
         <Dialog
           size="lg"
-          title={`考核結果 — ${detailModal.review?.title}`}
+          title={t('review_result_title', { title: detailModal.review?.title })}
           onClose={() => setDetailModal(null)}
           labelledBy="detail-dialog-title"
-          actions={<Button variant="text" onClick={() => setDetailModal(null)}>關閉</Button>}
+          actions={<Button variant="text" onClick={() => setDetailModal(null)}>{t('common_close')}</Button>}
         >
           <ReviewResultBody
             questions={detailQuestions}
@@ -536,6 +544,7 @@ function TeamReviewManagement({ userProfile, isBoss }) {
   const [overallComment, setOverallComment] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { fetchParticipants() }, [])
 
@@ -563,7 +572,7 @@ function TeamReviewManagement({ userProfile, isBoss }) {
     if (!isBoss) query = query.in('flow_id', myFlowIds)
     const { data, error } = await query
     if (error) {
-      showToast('讀取團隊考核資料失敗：' + error.message, { tone: 'error' })
+      showToast(t('review_err_fetch_team', { msg: error.message }), { tone: 'error' })
       setParticipants([])
       setLoading(false)
       return
@@ -664,13 +673,13 @@ function TeamReviewManagement({ userProfile, isBoss }) {
     setSubmitting(true)
     const error = await writeEvaluations({ requireOverall: false })
     if (error) {
-      showToast(`儲存失敗：${error.message}`, { tone: 'error' })
+      showToast(t('review_err_save', { msg: error.message }), { tone: 'error' })
       setSubmitting(false)
       return
     }
     setSubmitting(false)
     setSelected(null)
-    showToast('已儲存，下次可從「繼續評分」接續')
+    showToast(t('review_draft_saved'))
     fetchParticipants()
   }
 
@@ -725,25 +734,25 @@ function TeamReviewManagement({ userProfile, isBoss }) {
     for (const q of questions) {
       const v = evalResponses[q.id]
       if (v === undefined || v.answer === undefined || v.answer === '') {
-        showToast(`請填寫所有評分題目：「${q.question_text}」未填寫`, { tone: 'error' })
+        showToast(t('review_err_required_score', { q: q.question_text }), { tone: 'error' })
         return
       }
     }
-    if (!overallScore) { showToast('請填寫總評分數', { tone: 'error' }); return }
-    if (!overallComment) { showToast('請填寫總評評語', { tone: 'error' }); return }
+    if (!overallScore) { showToast(t('review_err_overall_score'), { tone: 'error' }); return }
+    if (!overallComment) { showToast(t('review_err_overall_comment'), { tone: 'error' }); return }
 
     setSubmitting(true)
 
     // 每一步都要檢查錯誤。這整段原本完全沒有檢查，只要有一步被資料庫的
     // 權限規則擋下（主管的 RLS policy 缺漏就是這樣），畫面照樣顯示「評分
     // 已送出」，但實際上什麼都沒存進去 —— 而且沒有任何線索可以查。
-    const fail = (msg, error) => {
-      showToast(`${msg}：${error.message}`, { tone: 'error' })
+    const fail = (key, error) => {
+      showToast(t(key, { msg: error.message }), { tone: 'error' })
       setSubmitting(false)
     }
 
     const writeError = await writeEvaluations({ requireOverall: true })
-    if (writeError) return fail('評分儲存失敗', writeError)
+    if (writeError) return fail('review_err_score_save', writeError)
 
     // 推進流程狀態時額外檢查回傳的資料列數：被 RLS 擋下的 UPDATE 不會報錯，
     // 只會回 0 筆 —— 只看 error 的話會誤判成成功。
@@ -760,23 +769,21 @@ function TeamReviewManagement({ userProfile, isBoss }) {
 
     const { data: updated, error: stepError } = await supabase
       .from('annual_review_participants').update(patch).eq('id', selected.id).select()
-    if (stepError) return fail('更新考核狀態失敗', stepError)
+    if (stepError) return fail('review_err_status', stepError)
     if (!updated || updated.length === 0) {
-      showToast('更新考核狀態失敗：沒有權限修改這筆考核資料（可能是資料庫權限規則 RLS 擋下）', { tone: 'error' })
+      showToast(t('review_err_status_rls'), { tone: 'error' })
       setSubmitting(false)
       return
     }
 
-    showToast(isFinal
-      ? '評分已送出，考核流程已完成，員工現在可以查看結果'
-      : '評分已送出，已轉交下一關評核人')
+    showToast(isFinal ? t('review_submitted_final') : t('review_submitted_next'))
 
     setSubmitting(false)
     setSelected(null)
     fetchParticipants()
   }
 
-  if (loading) return <div><PageHeader title={isBoss ? '團隊管理' : '團隊管理與年度考核'} /><Skeleton height="80px" /></div>
+  if (loading) return <div><PageHeader title={isBoss ? t('review_team_title') : t('review_team_title_long')} /><Skeleton height="80px" /></div>
 
   const totalCount = participants.length
   const notSelfSubmittedCount = participants.filter(p => !p.self_submitted).length
@@ -784,25 +791,25 @@ function TeamReviewManagement({ userProfile, isBoss }) {
 
   return (
     <div>
-      <PageHeader title={isBoss ? '團隊管理' : '團隊管理與年度考核'} />
+      <PageHeader title={isBoss ? t('review_team_title') : t('review_team_title_long')} />
 
       <div className="dash-review-card__grid">
         <div className="dash-review-card__tile">
-          <div className="dash-review-card__tile-label">團隊總人數</div>
+          <div className="dash-review-card__tile-label">{t('review_stat_total')}</div>
           <div className="dash-review-card__tile-value">{totalCount}</div>
         </div>
         <div className="dash-review-card__tile">
-          <div className="dash-review-card__tile-label">未提交自評人數</div>
+          <div className="dash-review-card__tile-label">{t('review_stat_not_self')}</div>
           <div className="dash-review-card__tile-value">{notSelfSubmittedCount}</div>
         </div>
         <div className="dash-review-card__tile">
-          <div className="dash-review-card__tile-label">待我評分數量</div>
+          <div className="dash-review-card__tile-label">{t('review_stat_my_turn')}</div>
           <div className="dash-review-card__tile-value">{pendingMyTurnCount}</div>
         </div>
       </div>
 
       {participants.length === 0 ? (
-        <Card><EmptyState title="目前沒有團隊成員的考核資料" description={isBoss ? undefined : '請先到「部門考核設定」建立考核流程並加入參與者。'} /></Card>
+        <Card><EmptyState title={t('review_team_empty')} description={isBoss ? undefined : t('review_team_empty_desc')} /></Card>
       ) : (
         <div className="review-list">
           {participants.map(p => (
@@ -810,27 +817,27 @@ function TeamReviewManagement({ userProfile, isBoss }) {
               <div className="review-row">
                 <div>
                   <div className="review-row__title">{p.user?.full_name}</div>
-                  <div className="review-row__meta">{p.review?.title}｜{p.review?.year} 年度{isBoss && p.user?.department ? `｜${p.user.department}` : ''}</div>
+                  <div className="review-row__meta">{p.review?.title}{t('common_meta_separator')}{t('review_year_label', { y: p.review?.year })}{isBoss && p.user?.department ? `${t('common_meta_separator')}${p.user.department}` : ''}</div>
                   <div className="review-row__chips">
-                    <Chip tone={p.self_submitted ? 'success' : 'warning'}>{p.self_submitted ? '自評已完成' : '待完成自評'}</Chip>
-                    {isBoss && p.final_score != null && <Chip tone="neutral">最終等級：{p.final_score} 分</Chip>}
+                    <Chip tone={p.self_submitted ? 'success' : 'warning'}>{p.self_submitted ? t('review_self_done') : t('review_self_pending')}</Chip>
+                    {isBoss && p.final_score != null && <Chip tone="neutral">{t('review_final_chip', { n: p.final_score })}</Chip>}
                   </div>
                   <FlowSteps flow={p.flow} />
                 </div>
                 <div className="review-row__actions">
                   <Chip tone={p.supervisor_submitted ? 'success' : p._myTurn ? 'warning' : 'neutral'}>
-                    {p.supervisor_submitted ? '已完成評分'
-                      : !p.self_submitted ? '待員工自評'
-                      : p._myTurn ? '待我評分'
-                      : !p.flow_id ? '尚未設定考核流程'
-                      : `待第${p.current_step}關評分`}
+                    {p.supervisor_submitted ? t('review_status_scored')
+                      : !p.self_submitted ? t('review_status_wait_self')
+                      : p._myTurn ? t('review_status_my_turn')
+                      : !p.flow_id ? t('review_status_no_flow')
+                      : t('review_status_wait_step', { n: p.current_step })}
                   </Chip>
                   {p.supervisor_submitted && (
-                    <Button size="sm" variant="outlined" onClick={() => handleSelect(p, true)}>查看結果</Button>
+                    <Button size="sm" variant="outlined" onClick={() => handleSelect(p, true)}>{t('review_view_result')}</Button>
                   )}
                   {!p.supervisor_submitted && p._myTurn && p.review?.status === 'active' && (
                     <Button size="sm" onClick={() => handleSelect(p, false)}>
-                      {p._hasDraft ? '繼續評分' : '開始評分'}
+                      {p._hasDraft ? t('review_continue_score') : t('review_start_score')}
                     </Button>
                   )}
                   {/* Without this, "self-assessment submitted but no 開始評分
@@ -839,10 +846,10 @@ function TeamReviewManagement({ userProfile, isBoss }) {
                   {!p.supervisor_submitted && p.self_submitted && !p._myTurn && (
                     <div className="review-row__sub">
                       {!p.flow_id
-                        ? '此員工沒有考核流程，請到「部門考核設定 → 考核流程」建立後，移除再重新加入參與者'
+                        ? t('review_hint_no_flow')
                         : p.review?.status !== 'active'
-                          ? '此考核週期已結束，請到「考核週期」重新開放'
-                          : `目前輪到第 ${p.current_step} 關的評核人，不是您`}
+                          ? t('review_hint_closed')
+                          : t('review_hint_not_your_turn', { n: p.current_step })}
                     </div>
                   )}
                 </div>
@@ -855,46 +862,48 @@ function TeamReviewManagement({ userProfile, isBoss }) {
       {selected && (
         <Dialog
           size="lg"
-          title={`${readOnly ? '考核結果' : '評分'} — ${selected.user?.full_name}`}
+          title={readOnly
+            ? t('review_eval_title_read', { name: selected.user?.full_name })
+            : t('review_eval_title_edit', { name: selected.user?.full_name })}
           onClose={() => setSelected(null)}
           labelledBy="team-eval-dialog-title"
           actions={readOnly
-            ? <Button variant="text" onClick={() => setSelected(null)}>關閉</Button>
+            ? <Button variant="text" onClick={() => setSelected(null)}>{t('common_close')}</Button>
             : (
               <>
-                <Button variant="text" onClick={() => setSelected(null)}>取消</Button>
-                <Button variant="outlined" disabled={submitting} onClick={handleSaveDraft}>儲存</Button>
-                <Button loading={submitting} onClick={handleSubmit}>送出評分</Button>
+                <Button variant="text" onClick={() => setSelected(null)}>{t('common_cancel')}</Button>
+                <Button variant="outlined" disabled={submitting} onClick={handleSaveDraft}>{t('common_save')}</Button>
+                <Button loading={submitting} onClick={handleSubmit}>{t('review_submit_score')}</Button>
               </>
             )}
         >
           {priorSteps.length > 0 && (
-            <p className="review-hint">此員工的考核流程共 {selected.flow?.steps?.length || 1} 關，以下先顯示前面關卡已完成的評分作為參考。</p>
+            <p className="review-hint">{t('review_prior_hint', { n: selected.flow?.steps?.length || 1 })}</p>
           )}
           {questions.map((q, i) => (
             <div key={q.id} className="review-question">
               <div className="review-question__title">{i + 1}. {q.question_text}</div>
               <div className="review-result-box">
-                <div className="review-result-box__label">員工自評</div>
+                <div className="review-result-box__label">{t('review_self_employee')}</div>
                 <div>{responses[q.id]?.answer ?? '—'}</div>
-                {responses[q.id]?.example_note && <div className="review-result-box__note">相關事例：{responses[q.id].example_note}</div>}
+                {responses[q.id]?.example_note && <div className="review-result-box__note">{t('review_example_note', { text: responses[q.id].example_note })}</div>}
               </div>
               {priorSteps.map(step => step.answers[q.id] && (
                 <div key={step.step_order} className="review-result-box review-result-box--eval">
-                  <div className="review-result-box__label review-result-box__label--eval">{step.evaluator_name || `第${step.step_order}關`} 的評分</div>
+                  <div className="review-result-box__label review-result-box__label--eval">{t('review_evaluator_score', { name: step.evaluator_name || t('adminflows_step', { n: step.step_order }) })}</div>
                   <div>{step.answers[q.id].answer ?? '—'}</div>
-                  {step.answers[q.id].example_note && <div className="review-result-box__note">相關事例：{step.answers[q.id].example_note}</div>}
+                  {step.answers[q.id].example_note && <div className="review-result-box__note">{t('review_example_note', { text: step.answers[q.id].example_note })}</div>}
                 </div>
               ))}
               {readOnly ? null : (
                 <>
-                  <label className="review-question__label">我的評分 <span className="review-required">*</span></label>
+                  <label className="review-question__label">{t('review_my_score')} <span className="review-required">*</span></label>
                   {q.question_type === 'text' ? (
-                    <Textarea value={evalResponses[q.id]?.answer || ''} onChange={e => setEvalResponses(p => ({ ...p, [q.id]: { ...p[q.id], answer: e.target.value } }))} rows={3} placeholder="請填寫評語..." />
+                    <Textarea value={evalResponses[q.id]?.answer || ''} onChange={e => setEvalResponses(p => ({ ...p, [q.id]: { ...p[q.id], answer: e.target.value } }))} rows={3} placeholder={t('review_comment_placeholder')} />
                   ) : (
                     <>
                       <ScoreButtons min={q.score_min} max={q.score_max} value={evalResponses[q.id]?.answer} onChange={v => setEvalResponses(p => ({ ...p, [q.id]: { ...p[q.id], answer: v } }))} />
-                      <Textarea value={evalResponses[q.id]?.example_note || ''} onChange={e => setEvalResponses(p => ({ ...p, [q.id]: { ...p[q.id], example_note: e.target.value } }))} rows={2} placeholder="請說明打這個分數的相關事例／理由" />
+                      <Textarea value={evalResponses[q.id]?.example_note || ''} onChange={e => setEvalResponses(p => ({ ...p, [q.id]: { ...p[q.id], example_note: e.target.value } }))} rows={2} placeholder={t('review_example_placeholder')} />
                     </>
                   )}
                 </>
@@ -903,31 +912,31 @@ function TeamReviewManagement({ userProfile, isBoss }) {
           ))}
 
           <div className="review-overall-form">
-            <h5 className="review-overall-form__title">總評</h5>
+            <h5 className="review-overall-form__title">{t('review_overall')}</h5>
             {readOnly ? (
               priorSteps.filter(s => s.step_order === selected.current_step || s.overall_score != null).map(step => (
                 <div key={step.step_order}>
-                  <div className="review-overall__score">{step.evaluator_name || `第${step.step_order}關`} 總分：<strong>{step.overall_score ?? '—'}</strong> 分</div>
+                  <div className="review-overall__score">{t('review_overall_step_total', { name: step.evaluator_name || t('adminflows_step', { n: step.step_order }) })}<strong>{step.overall_score ?? '—'}</strong></div>
                   {step.overall_comment && <div className="review-overall__comment">{step.overall_comment}</div>}
                 </div>
               ))
             ) : (
               <>
                 <div className="review-question">
-                  <label className="review-question__label">總評分數（1-10）<span className="review-required">*</span></label>
+                  <label className="review-question__label">{t('review_overall_score_label')}<span className="review-required">*</span></label>
                   <ScoreButtons min={1} max={10} value={overallScore} onChange={setOverallScore} />
                 </div>
-                <Textarea label="總評評語" required value={overallComment} onChange={e => setOverallComment(e.target.value)} rows={4} placeholder="請填寫總評評語..." />
+                <Textarea label={t('review_overall_comment')} required value={overallComment} onChange={e => setOverallComment(e.target.value)} rows={4} placeholder={t('review_overall_comment_placeholder')} />
               </>
             )}
           </div>
 
           {readOnly && selected.final_score != null && (
             <div className="review-overall">
-              <div className="review-overall__title">最終等級</div>
+              <div className="review-overall__title">{t('review_final_rating')}</div>
               <div className="review-overall__score">
-                {selected.final_score} 分
-                {(() => { const r = ratingFor(selected.final_score); return r ? `｜${r.label}` : '' })()}
+                {t('review_points', { n: selected.final_score })}
+                {(() => { const r = ratingFor(selected.final_score); return r ? `${t('common_meta_separator')}${t(`rating_${r.key}`)}` : '' })()}
               </div>
             </div>
           )}
@@ -946,6 +955,7 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
   const [detail, setDetail] = useState(null)
   const [detailData, setDetailData] = useState(null)
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { fetchRows() }, [])
 
@@ -976,7 +986,7 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
 
     const { data, error } = await query
     if (error) {
-      showToast('讀取歷年考核資料失敗：' + error.message, { tone: 'error' })
+      showToast(t('review_err_fetch_roster', { msg: error.message }), { tone: 'error' })
       setRows([]); setLoading(false); return
     }
 
@@ -1004,35 +1014,35 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
     (year === 'all' || String(r.review?.year) === year)
   )
 
-  if (loading) return <div><PageHeader title="團隊年度考核" /><Skeleton height="80px" /></div>
+  if (loading) return <div><PageHeader title={t('review_roster_title')} /><Skeleton height="80px" /></div>
 
   return (
     <div>
-      <PageHeader title="團隊年度考核" />
+      <PageHeader title={t('review_roster_title')} />
 
       <div className="review-filters">
-        <Select value={dept} onChange={e => setDept(e.target.value)} style={{ maxWidth: '200px' }} aria-label="依部門篩選">
-          <option value="all">所有部門</option>
+        <Select value={dept} onChange={e => setDept(e.target.value)} style={{ maxWidth: '200px' }} aria-label={t('review_filter_dept')}>
+          <option value="all">{t('common_all_departments')}</option>
           {departments.map(d => <option key={d} value={d}>{d}</option>)}
         </Select>
-        <Select value={year} onChange={e => setYear(e.target.value)} style={{ maxWidth: '160px' }} aria-label="依年份篩選">
-          <option value="all">所有年份</option>
-          {years.map(y => <option key={y} value={String(y)}>{y} 年度</option>)}
+        <Select value={year} onChange={e => setYear(e.target.value)} style={{ maxWidth: '160px' }} aria-label={t('review_filter_year')}>
+          <option value="all">{t('review_all_years')}</option>
+          {years.map(y => <option key={y} value={String(y)}>{t('review_year_label', { y })}</option>)}
         </Select>
       </div>
 
       {visible.length === 0 ? (
         <Card><EmptyState
-          title={rows.length === 0 ? '尚無已完成的考核紀錄' : '沒有符合篩選條件的紀錄'}
+          title={rows.length === 0 ? t('review_roster_empty_none') : t('review_roster_empty_filter')}
           description={rows.length === 0
-            ? (isBoss ? '考核流程全部跑完後，結果就會出現在這裡。' : '您擔任評核人的考核流程全部跑完後，結果就會出現在這裡。')
+            ? (isBoss ? t('review_roster_empty_desc_boss') : t('review_roster_empty_desc_sup'))
             : undefined}
         /></Card>
       ) : (
         <div className="ui-table-wrap">
           <table className="ui-table">
             <thead>
-              <tr><th>員工姓名</th><th>部門</th><th>職稱</th><th>考核年度</th><th>最終等級</th><th>操作</th></tr>
+              <tr><th>{t('home_employee_name')}</th><th>{t('adminusers_col_department')}</th><th>{t('adminusers_col_title')}</th><th>{t('review_col_year')}</th><th>{t('review_col_final')}</th><th>{t('common_actions')}</th></tr>
             </thead>
             <tbody>
               {visible.map(r => {
@@ -1042,12 +1052,12 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
                     <td>{r.user?.full_name || '—'}</td>
                     <td>{r.user?.department || '—'}</td>
                     <td>{r.user?.job_title || '—'}</td>
-                    <td>{r.review?.year ? `${r.review.year} 年度` : '—'}</td>
+                    <td>{r.review?.year ? t('review_year_label', { y: r.review.year }) : '—'}</td>
                     <td>
-                      {r.final_score != null ? `${r.final_score} 分` : '—'}
-                      {rating && <Chip tone={rating.tone}>{rating.label}</Chip>}
+                      {r.final_score != null ? t('review_points', { n: r.final_score }) : '—'}
+                      {rating && <Chip tone={rating.tone}>{t(`rating_${rating.key}`)}</Chip>}
                     </td>
-                    <td><Button size="sm" variant="outlined" onClick={() => openDetail(r)}>查看詳情</Button></td>
+                    <td><Button size="sm" variant="outlined" onClick={() => openDetail(r)}>{t('review_view_detail')}</Button></td>
                   </tr>
                 )
               })}
@@ -1059,9 +1069,9 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
       {detail && (
         <Dialog
           size="lg"
-          title={`考核結果 — ${detail.user?.full_name}｜${detail.review?.year} 年度`}
+          title={t('review_roster_result_title', { name: detail.user?.full_name, year: t('review_year_label', { y: detail.review?.year }) })}
           onClose={() => setDetail(null)}
-          actions={<Button variant="text" onClick={() => setDetail(null)}>關閉</Button>}
+          actions={<Button variant="text" onClick={() => setDetail(null)}>{t('common_close')}</Button>}
         >
           {!detailData ? <Skeleton height="200px" /> : (
             <ReviewResultBody
@@ -1069,7 +1079,7 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
               responses={detailData.responses}
               steps={detailData.steps}
               finalScore={detail.final_score}
-              selfLabel="員工自評"
+              selfLabel={t('review_self_employee')}
             />
           )}
         </Dialog>
@@ -1090,6 +1100,7 @@ function ReviewCycles() {
   const [confirmDeleteReview, setConfirmDeleteReview] = useState(null)
   const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { fetchAll() }, [])
 
@@ -1108,10 +1119,10 @@ function ReviewCycles() {
 
   async function handleAddReview() {
     if (!newReview.title || !newReview.start_date || !newReview.end_date) {
-      showToast('請填寫所有必填欄位', { tone: 'error' }); return
+      showToast(t('reviewcycle_err_required'), { tone: 'error' }); return
     }
     if (!defaultTemplateId) {
-      showToast('請先在「考核題目」分頁建立至少一份考核模板', { tone: 'error' }); return
+      showToast(t('reviewcycle_err_no_template'), { tone: 'error' }); return
     }
     const { data: { user } } = await supabase.auth.getUser()
     const { error } = await supabase.from('annual_reviews').insert({
@@ -1124,18 +1135,18 @@ function ReviewCycles() {
       evaluation_deadline: newReview.evaluation_deadline || null,
       created_by: user.id,
     })
-    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
+    if (error) { showToast(t('reviewcycle_err_add', { msg: error.message }), { tone: 'error' }); return }
     setNewReview({ title: '', year: new Date().getFullYear(), start_date: '', end_date: '', self_assessment_deadline: '', evaluation_deadline: '' })
     setShowAdd(false)
     fetchAll()
-    showToast('已新增考核週期')
+    showToast(t('reviewcycle_added'))
   }
 
   async function handleToggleReviewStatus(review) {
     const { error } = await supabase.from('annual_reviews')
       .update({ status: review.status === 'active' ? 'closed' : 'active' })
       .eq('id', review.id)
-    if (error) { showToast('更新失敗：' + error.message, { tone: 'error' }); return }
+    if (error) { showToast(t('reviewcycle_err_update', { msg: error.message }), { tone: 'error' }); return }
     fetchAll()
   }
 
@@ -1154,7 +1165,7 @@ function ReviewCycles() {
 
   async function handleSaveEdit() {
     if (!editingReview.title || !editingReview.start_date || !editingReview.end_date || !editingReview.template_id) {
-      showToast('請填寫所有必填欄位', { tone: 'error' }); return
+      showToast(t('reviewcycle_err_required'), { tone: 'error' }); return
     }
     setSaving(true)
     const { data: updated, error } = await supabase.from('annual_reviews').update({
@@ -1168,10 +1179,10 @@ function ReviewCycles() {
     }).eq('id', editingReview.id).select()
     setSaving(false)
     if (error || !updated?.length) {
-      showToast('儲存失敗：' + (error?.message || '沒有權限寫入'), { tone: 'error' }); return
+      showToast(t('reviewcycle_err_save', { msg: error?.message || t('admin_no_write_permission') }), { tone: 'error' }); return
     }
     setEditingReview(null)
-    showToast('已更新考核週期')
+    showToast(t('reviewcycle_updated'))
     fetchAll()
   }
 
@@ -1180,11 +1191,11 @@ function ReviewCycles() {
     const { error } = await supabase.from('annual_reviews').delete().eq('id', confirmDeleteReview.id)
     setSaving(false)
     if (error) {
-      showToast('刪除失敗：這個週期已經有員工參與考核，無法刪除，請改用「結束週期」。', { tone: 'error' })
+      showToast(t('reviewcycle_err_delete'), { tone: 'error' })
       setConfirmDeleteReview(null)
       return
     }
-    showToast('已刪除考核週期')
+    showToast(t('reviewcycle_deleted'))
     setConfirmDeleteReview(null)
     fetchAll()
   }
@@ -1194,31 +1205,31 @@ function ReviewCycles() {
   return (
     <div>
       <div className="review-subheader">
-        <h4 className="review-subheader__title">年度考核週期</h4>
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)}>+ 新增週期</Button>
+        <h4 className="review-subheader__title">{t('reviewcycle_title')}</h4>
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)}>{t('reviewcycle_add')}</Button>
       </div>
-      <p className="review-hint">在「考核題目」分頁新增模板時，這裡會自動建立一個同名的週期（日期為預設值，請在這裡調整）。任何主管或老闆都可以新增／調整週期，各部門通常各自使用自己的週期。簽核鏈請到「考核流程」分頁設定。</p>
+      <p className="review-hint">{t('reviewcycle_hint')}</p>
 
       {showAdd && (
         <Card className="review-form-card">
           <div className="review-form-grid">
-            <input className="ui-field__control" value={newReview.title} onChange={e => setNewReview(p => ({ ...p, title: e.target.value }))} placeholder="週期名稱，例：2026 年度考核" />
+            <input className="ui-field__control" value={newReview.title} onChange={e => setNewReview(p => ({ ...p, title: e.target.value }))} placeholder={t('reviewcycle_name_placeholder')} />
             <input className="ui-field__control" type="number" value={newReview.year} onChange={e => setNewReview(p => ({ ...p, year: Number(e.target.value) }))} />
-            <label className="review-inline-label">預設模板（找不到部門專屬模板的人會用這份）
+            <label className="review-inline-label">{t('reviewcycle_default_template')}
               <select className="ui-field__control" value={defaultTemplateId} onChange={e => setDefaultTemplateId(e.target.value)}>
-                <option value="">請選擇模板</option>
-                {templates.map(t => <option key={t.id} value={t.id}>{t.name}（{t.department || '全公司預設'}）</option>)}
+                <option value="">{t('reviewcycle_select_template')}</option>
+                {templates.map(tpl => <option key={tpl.id} value={tpl.id}>{t('reviewcycle_template_option', { name: tpl.name, dept: tpl.department || t('reviewcycle_company_default') })}</option>)}
               </select>
             </label>
             <div />
-            <label className="review-inline-label">自評期間開始<input className="ui-field__control" type="date" value={newReview.start_date} onChange={e => setNewReview(p => ({ ...p, start_date: e.target.value }))} /></label>
-            <label className="review-inline-label">整體結束日<input className="ui-field__control" type="date" value={newReview.end_date} min={newReview.start_date} onChange={e => setNewReview(p => ({ ...p, end_date: e.target.value }))} /></label>
-            <label className="review-inline-label">自評截止日<input className="ui-field__control" type="date" value={newReview.self_assessment_deadline} onChange={e => setNewReview(p => ({ ...p, self_assessment_deadline: e.target.value }))} /></label>
-            <label className="review-inline-label">評分截止日<input className="ui-field__control" type="date" value={newReview.evaluation_deadline} onChange={e => setNewReview(p => ({ ...p, evaluation_deadline: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_start')}<input className="ui-field__control" type="date" value={newReview.start_date} onChange={e => setNewReview(p => ({ ...p, start_date: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_end')}<input className="ui-field__control" type="date" value={newReview.end_date} min={newReview.start_date} onChange={e => setNewReview(p => ({ ...p, end_date: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_self_deadline')}<input className="ui-field__control" type="date" value={newReview.self_assessment_deadline} onChange={e => setNewReview(p => ({ ...p, self_assessment_deadline: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_eval_deadline')}<input className="ui-field__control" type="date" value={newReview.evaluation_deadline} onChange={e => setNewReview(p => ({ ...p, evaluation_deadline: e.target.value }))} /></label>
           </div>
           <div className="review-form-actions">
-            <Button size="sm" onClick={handleAddReview}>新增</Button>
-            <Button size="sm" variant="text" onClick={() => setShowAdd(false)}>取消</Button>
+            <Button size="sm" onClick={handleAddReview}>{t('common_add')}</Button>
+            <Button size="sm" variant="text" onClick={() => setShowAdd(false)}>{t('common_cancel')}</Button>
           </div>
         </Card>
       )}
@@ -1229,22 +1240,22 @@ function ReviewCycles() {
             <div className="review-row">
               <div>
                 <div className="review-row__title">{r.title}</div>
-                <div className="review-row__meta">{r.year} 年度｜{r.start_date} ～ {r.end_date}</div>
+                <div className="review-row__meta">{t('review_cycle_meta', { year: t('review_year_label', { y: r.year }), start: r.start_date, end: r.end_date })}</div>
                 {(r.self_assessment_deadline || r.evaluation_deadline) && (
                   <div className="review-row__sub">
-                    {r.self_assessment_deadline && `自評截止：${r.self_assessment_deadline}`}
-                    {r.self_assessment_deadline && r.evaluation_deadline && '｜'}
-                    {r.evaluation_deadline && `評分截止：${r.evaluation_deadline}`}
+                    {r.self_assessment_deadline && t('review_self_deadline', { date: r.self_assessment_deadline })}
+                    {r.self_assessment_deadline && r.evaluation_deadline && t('common_meta_separator')}
+                    {r.evaluation_deadline && t('reviewcycle_eval_due', { date: r.evaluation_deadline })}
                   </div>
                 )}
               </div>
               <div className="review-row__actions">
-                <Chip tone={r.status === 'active' ? 'success' : 'neutral'}>{r.status === 'active' ? '進行中' : '已結束'}</Chip>
+                <Chip tone={r.status === 'active' ? 'success' : 'neutral'}>{r.status === 'active' ? t('home_review_in_progress') : t('reviewcycle_closed')}</Chip>
                 <Button size="sm" variant="outlined" onClick={() => handleToggleReviewStatus(r)}>
-                  {r.status === 'active' ? '結束週期' : '重新開放'}
+                  {r.status === 'active' ? t('reviewcycle_close') : t('reviewcycle_reopen')}
                 </Button>
-                <Button size="sm" variant="outlined" onClick={() => openEdit(r)}>編輯</Button>
-                <Button size="sm" variant="danger-outlined" onClick={() => setConfirmDeleteReview(r)}>刪除</Button>
+                <Button size="sm" variant="outlined" onClick={() => openEdit(r)}>{t('common_edit')}</Button>
+                <Button size="sm" variant="danger-outlined" onClick={() => setConfirmDeleteReview(r)}>{t('common_delete')}</Button>
               </div>
             </div>
           </Card>
@@ -1253,39 +1264,39 @@ function ReviewCycles() {
 
       {editingReview && (
         <Dialog
-          title="編輯考核週期"
+          title={t('reviewcycle_edit_title')}
           labelledBy="edit-review-dialog-title"
           onClose={() => setEditingReview(null)}
           actions={(
             <>
-              <Button variant="text" onClick={() => setEditingReview(null)}>取消</Button>
-              <Button loading={saving} onClick={handleSaveEdit}>儲存</Button>
+              <Button variant="text" onClick={() => setEditingReview(null)}>{t('common_cancel')}</Button>
+              <Button loading={saving} onClick={handleSaveEdit}>{t('common_save')}</Button>
             </>
           )}
         >
           <div className="review-form-grid">
-            <input className="ui-field__control" value={editingReview.title} onChange={e => setEditingReview(p => ({ ...p, title: e.target.value }))} placeholder="週期名稱" />
+            <input className="ui-field__control" value={editingReview.title} onChange={e => setEditingReview(p => ({ ...p, title: e.target.value }))} placeholder={t('reviewcycle_name_placeholder_short')} />
             <input className="ui-field__control" type="number" value={editingReview.year} onChange={e => setEditingReview(p => ({ ...p, year: Number(e.target.value) }))} />
-            <label className="review-inline-label">預設模板
+            <label className="review-inline-label">{t('reviewcycle_default_template_short')}
               <select className="ui-field__control" value={editingReview.template_id} onChange={e => setEditingReview(p => ({ ...p, template_id: e.target.value }))}>
-                <option value="">請選擇模板</option>
-                {templates.map(t => <option key={t.id} value={t.id}>{t.name}（{t.department || '全公司預設'}）</option>)}
+                <option value="">{t('reviewcycle_select_template')}</option>
+                {templates.map(tpl => <option key={tpl.id} value={tpl.id}>{t('reviewcycle_template_option', { name: tpl.name, dept: tpl.department || t('reviewcycle_company_default') })}</option>)}
               </select>
             </label>
             <div />
-            <label className="review-inline-label">自評期間開始<input className="ui-field__control" type="date" value={editingReview.start_date} onChange={e => setEditingReview(p => ({ ...p, start_date: e.target.value }))} /></label>
-            <label className="review-inline-label">整體結束日<input className="ui-field__control" type="date" value={editingReview.end_date} min={editingReview.start_date} onChange={e => setEditingReview(p => ({ ...p, end_date: e.target.value }))} /></label>
-            <label className="review-inline-label">自評截止日<input className="ui-field__control" type="date" value={editingReview.self_assessment_deadline} onChange={e => setEditingReview(p => ({ ...p, self_assessment_deadline: e.target.value }))} /></label>
-            <label className="review-inline-label">評分截止日<input className="ui-field__control" type="date" value={editingReview.evaluation_deadline} onChange={e => setEditingReview(p => ({ ...p, evaluation_deadline: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_start')}<input className="ui-field__control" type="date" value={editingReview.start_date} onChange={e => setEditingReview(p => ({ ...p, start_date: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_end')}<input className="ui-field__control" type="date" value={editingReview.end_date} min={editingReview.start_date} onChange={e => setEditingReview(p => ({ ...p, end_date: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_self_deadline')}<input className="ui-field__control" type="date" value={editingReview.self_assessment_deadline} onChange={e => setEditingReview(p => ({ ...p, self_assessment_deadline: e.target.value }))} /></label>
+            <label className="review-inline-label">{t('reviewcycle_eval_deadline')}<input className="ui-field__control" type="date" value={editingReview.evaluation_deadline} onChange={e => setEditingReview(p => ({ ...p, evaluation_deadline: e.target.value }))} /></label>
           </div>
         </Dialog>
       )}
 
       {confirmDeleteReview && (
         <ConfirmDialog
-          title="刪除考核週期"
-          description={`確定要刪除「${confirmDeleteReview.title}」嗎？如果已經有員工被加入這個週期的考核，會刪除失敗，請改用「結束週期」。此操作無法復原。`}
-          confirmLabel="刪除"
+          title={t('reviewcycle_delete_title')}
+          description={t('reviewcycle_delete_desc', { title: confirmDeleteReview.title })}
+          confirmLabel={t('common_delete')}
           danger
           loading={saving}
           onConfirm={handleDeleteReview}
@@ -1309,6 +1320,7 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
   const [confirmDeleteTemplate, setConfirmDeleteTemplate] = useState(null)
   const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { fetchAll() }, [])
 
@@ -1326,9 +1338,9 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
   }
 
   async function handleAddTemplate() {
-    if (!newTemplate.name) { showToast('請填寫模板名稱', { tone: 'error' }); return }
+    if (!newTemplate.name) { showToast(t('reviewq_err_name'), { tone: 'error' }); return }
     if (!isBoss && !userProfile.department) {
-      showToast('您的帳號尚未設定部門，請聯繫管理員在「員工帳號管理」補上部門資料', { tone: 'error' }); return
+      showToast(t('reviewq_err_no_dept'), { tone: 'error' }); return
     }
     const { data: { user } } = await supabase.auth.getUser()
     const { data: created, error } = await supabase.from('review_templates').insert({
@@ -1337,7 +1349,7 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
       department: isBoss ? (newTemplate.department || null) : userProfile.department,
       created_by: user.id,
     }).select('id, name').single()
-    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
+    if (error) { showToast(t('reviewq_err_add', { msg: error.message }), { tone: 'error' }); return }
 
     // 同時建立一個同名的考核週期。
     //
@@ -1350,8 +1362,8 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
     setNewTemplate({ name: '', description: '', department: isBoss ? '' : (userProfile.department || '') })
     setShowAdd(false)
     showToast(cycleError
-      ? `模板已建立，但考核週期建立失敗：${cycleError.message}（請到「考核週期」分頁手動新增）`
-      : '模板與考核週期都已建立，日期等細節請到「考核週期」分頁調整',
+      ? t('reviewq_created_cycle_failed', { msg: cycleError.message })
+      : t('reviewq_created_with_cycle'),
       { tone: cycleError ? 'error' : undefined })
     fetchAll()
   }
@@ -1390,7 +1402,7 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
   }
 
   async function handleAddQuestion() {
-    if (!newQuestion.question_text) { showToast('請填寫題目內容', { tone: 'error' }); return }
+    if (!newQuestion.question_text) { showToast(t('reviewq_err_question_text'), { tone: 'error' }); return }
     const { error } = await supabase.from('review_template_questions').insert({
       question_text: newQuestion.question_text,
       question_type: newQuestion.question_type,
@@ -1399,23 +1411,24 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
       template_id: editTemplate.id,
       order_index: questions.length,
     })
-    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
+    if (error) { showToast(t('reviewq_err_add', { msg: error.message }), { tone: 'error' }); return }
     setNewQuestion({ question_text: '', question_type: 'score' })
     fetchTemplateQuestions(editTemplate.id)
   }
 
   async function handleDeleteQuestion(id) {
     const { error } = await supabase.from('review_template_questions').delete().eq('id', id)
-    if (error) { showToast('刪除失敗：' + error.message, { tone: 'error' }); return }
+    if (error) { showToast(t('reviewq_err_delete_question', { msg: error.message }), { tone: 'error' }); return }
     fetchTemplateQuestions(editTemplate.id)
   }
 
-  function openEditMeta(t) {
-    setEditingMeta({ id: t.id, name: t.name, description: t.description || '', department: t.department || '' })
+  // 參數刻意不叫 t —— 那會遮蔽翻譯用的 t()
+  function openEditMeta(tpl) {
+    setEditingMeta({ id: tpl.id, name: tpl.name, description: tpl.description || '', department: tpl.department || '' })
   }
 
   async function handleSaveMeta() {
-    if (!editingMeta.name) { showToast('請填寫模板名稱', { tone: 'error' }); return }
+    if (!editingMeta.name) { showToast(t('reviewq_err_name'), { tone: 'error' }); return }
     setSaving(true)
     const { data: updated, error } = await supabase.from('review_templates').update({
       name: editingMeta.name,
@@ -1424,10 +1437,10 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
     }).eq('id', editingMeta.id).select()
     setSaving(false)
     if (error || !updated?.length) {
-      showToast('儲存失敗：' + (error?.message || '沒有權限寫入'), { tone: 'error' }); return
+      showToast(t('reviewq_err_save', { msg: error?.message || t('admin_no_write_permission') }), { tone: 'error' }); return
     }
     setEditingMeta(null)
-    showToast('已更新模板')
+    showToast(t('reviewq_updated'))
     fetchAll()
   }
 
@@ -1441,11 +1454,11 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
     const { error } = await supabase.from('review_templates').delete().eq('id', confirmDeleteTemplate.id)
     setSaving(false)
     if (error) {
-      showToast('刪除失敗：這個模板還被某個考核週期設為預設模板，請先到「考核週期」更換預設模板再刪除。', { tone: 'error' })
+      showToast(t('reviewq_err_delete'), { tone: 'error' })
       setConfirmDeleteTemplate(null)
       return
     }
-    showToast('已刪除模板')
+    showToast(t('reviewq_deleted'))
     setConfirmDeleteTemplate(null)
     fetchAll()
   }
@@ -1455,74 +1468,76 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
   return (
     <div>
       <div className="review-subheader">
-        <h4 className="review-subheader__title">{isBoss ? '各部門考核題目' : `${userProfile.department || '我的部門'} 考核題目`}</h4>
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)}>+ 新增模板</Button>
+        <h4 className="review-subheader__title">
+          {isBoss ? t('reviewq_title_boss') : t('reviewq_title_dept', { dept: userProfile.department || t('reviewq_my_dept') })}
+        </h4>
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)}>{t('reviewq_add')}</Button>
       </div>
       <p className="review-hint">
-        每個模板對應一個部門；分數題固定 1-10 分（作答時可額外寫下打分的相關事例／理由），詳答題沒有字數限制。department 留空＝全公司預設，找不到部門專屬模板的人會使用這份。<strong>新增模板時會自動建立一個同名的考核週期</strong>，日期等細節到「考核週期」分頁調整即可。
+        {t('reviewq_hint_before')}<strong>{t('reviewq_hint_strong')}</strong>{t('reviewq_hint_after')}
       </p>
 
       {showAdd && (
         <Card className="review-form-card">
           <div className="review-form-grid review-form-grid--single">
-            <input className="ui-field__control" value={newTemplate.name} onChange={e => setNewTemplate(p => ({ ...p, name: e.target.value }))} placeholder="模板名稱，例：業務部 2026 考核" />
-            <input className="ui-field__control" value={newTemplate.description} onChange={e => setNewTemplate(p => ({ ...p, description: e.target.value }))} placeholder="說明（選填）" />
+            <input className="ui-field__control" value={newTemplate.name} onChange={e => setNewTemplate(p => ({ ...p, name: e.target.value }))} placeholder={t('reviewq_name_placeholder')} />
+            <input className="ui-field__control" value={newTemplate.description} onChange={e => setNewTemplate(p => ({ ...p, description: e.target.value }))} placeholder={t('reviewq_desc_placeholder')} />
             {isBoss ? (
               <select className="ui-field__control" value={newTemplate.department} onChange={e => setNewTemplate(p => ({ ...p, department: e.target.value }))}>
-                <option value="">全公司預設（無特定部門）</option>
+                <option value="">{t('reviewq_dept_none')}</option>
                 {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             ) : (
-              <div className="review-hint">將建立在您的部門：{userProfile.department || '（尚未設定，請聯繫管理員）'}</div>
+              <div className="review-hint">{t('reviewq_will_create_in', { dept: userProfile.department || t('reviewq_dept_unset') })}</div>
             )}
           </div>
           <div className="review-form-actions">
-            <Button size="sm" onClick={handleAddTemplate}>新增</Button>
-            <Button size="sm" variant="text" onClick={() => setShowAdd(false)}>取消</Button>
+            <Button size="sm" onClick={handleAddTemplate}>{t('common_add')}</Button>
+            <Button size="sm" variant="text" onClick={() => setShowAdd(false)}>{t('common_cancel')}</Button>
           </div>
         </Card>
       )}
 
       {templates.length === 0 ? (
-        <Card><EmptyState title="尚無考核模板" description={isBoss ? '請先新增模板' : '請先新增您部門的考核模板'} /></Card>
+        <Card><EmptyState title={t('reviewq_empty')} description={isBoss ? t('reviewq_empty_desc_boss') : t('reviewq_empty_desc_dept')} /></Card>
       ) : (
         <div className="review-list">
-          {templates.map(t => (
-            <Card key={t.id}>
+          {templates.map(tpl => (
+            <Card key={tpl.id}>
               <div className="review-row">
                 <div>
-                  <div className="review-row__title">{t.name}</div>
-                  <div className="review-row__meta">{t.department || '全公司預設'}{t.description ? `｜${t.description}` : ''}</div>
+                  <div className="review-row__title">{tpl.name}</div>
+                  <div className="review-row__meta">{tpl.department || t('reviewcycle_company_default')}{tpl.description ? `${t('common_meta_separator')}${tpl.description}` : ''}</div>
                 </div>
                 <div className="review-row__actions">
-                  <Button size="sm" variant="outlined" onClick={() => { setEditTemplate(t); fetchTemplateQuestions(t.id) }}>設定題目</Button>
-                  <Button size="sm" variant="outlined" onClick={() => openEditMeta(t)}>編輯</Button>
-                  <Button size="sm" variant="danger-outlined" onClick={() => setConfirmDeleteTemplate(t)}>刪除</Button>
+                  <Button size="sm" variant="outlined" onClick={() => { setEditTemplate(tpl); fetchTemplateQuestions(tpl.id) }}>{t('reviewq_set_questions')}</Button>
+                  <Button size="sm" variant="outlined" onClick={() => openEditMeta(tpl)}>{t('common_edit')}</Button>
+                  <Button size="sm" variant="danger-outlined" onClick={() => setConfirmDeleteTemplate(tpl)}>{t('common_delete')}</Button>
                 </div>
               </div>
 
-              {editTemplate?.id === t.id && (
+              {editTemplate?.id === tpl.id && (
                 <div className="review-questions-editor">
                   {questions.map((q, i) => (
                     <div key={q.id} className="review-questions-editor__row">
                       <span>{i + 1}. {q.question_text}</span>
                       <Chip tone={q.question_type === 'score' ? 'info' : 'neutral'}>
-                        {q.question_type === 'score' ? `分數題 ${q.score_min}-${q.score_max}` : '詳答題'}
+                        {q.question_type === 'score' ? t('reviewq_type_score', { min: q.score_min, max: q.score_max }) : t('reviewq_type_text')}
                       </Chip>
-                      <Button size="sm" variant="danger-outlined" onClick={() => handleDeleteQuestion(q.id)}>刪除</Button>
+                      <Button size="sm" variant="danger-outlined" onClick={() => handleDeleteQuestion(q.id)}>{t('common_delete')}</Button>
                     </div>
                   ))}
                   <Card className="review-form-card">
                     <div className="review-form-grid review-form-grid--single">
-                      <input className="ui-field__control" value={newQuestion.question_text} onChange={e => setNewQuestion(p => ({ ...p, question_text: e.target.value }))} placeholder="題目內容" />
+                      <input className="ui-field__control" value={newQuestion.question_text} onChange={e => setNewQuestion(p => ({ ...p, question_text: e.target.value }))} placeholder={t('reviewq_text_placeholder')} />
                       <select className="ui-field__control" value={newQuestion.question_type} onChange={e => setNewQuestion(p => ({ ...p, question_type: e.target.value }))}>
-                        <option value="score">分數題（1-10 分）</option>
-                        <option value="text">詳答題（無字數限制）</option>
+                        <option value="score">{t('reviewq_opt_score')}</option>
+                        <option value="text">{t('reviewq_opt_text')}</option>
                       </select>
                     </div>
                     <div className="review-form-actions">
-                      <Button size="sm" onClick={handleAddQuestion}>新增題目</Button>
-                      <Button size="sm" variant="text" onClick={() => setEditTemplate(null)}>完成</Button>
+                      <Button size="sm" onClick={handleAddQuestion}>{t('reviewq_add_question')}</Button>
+                      <Button size="sm" variant="text" onClick={() => setEditTemplate(null)}>{t('reviewq_done')}</Button>
                     </div>
                   </Card>
                 </div>
@@ -1534,26 +1549,26 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
 
       {editingMeta && (
         <Dialog
-          title="編輯模板"
+          title={t('reviewq_edit_title')}
           labelledBy="edit-template-dialog-title"
           onClose={() => setEditingMeta(null)}
           actions={(
             <>
-              <Button variant="text" onClick={() => setEditingMeta(null)}>取消</Button>
-              <Button loading={saving} onClick={handleSaveMeta}>儲存</Button>
+              <Button variant="text" onClick={() => setEditingMeta(null)}>{t('common_cancel')}</Button>
+              <Button loading={saving} onClick={handleSaveMeta}>{t('common_save')}</Button>
             </>
           )}
         >
           <div className="review-form-grid review-form-grid--single">
-            <input className="ui-field__control" value={editingMeta.name} onChange={e => setEditingMeta(p => ({ ...p, name: e.target.value }))} placeholder="模板名稱" />
-            <input className="ui-field__control" value={editingMeta.description} onChange={e => setEditingMeta(p => ({ ...p, description: e.target.value }))} placeholder="說明（選填）" />
+            <input className="ui-field__control" value={editingMeta.name} onChange={e => setEditingMeta(p => ({ ...p, name: e.target.value }))} placeholder={t('reviewq_name_placeholder_short')} />
+            <input className="ui-field__control" value={editingMeta.description} onChange={e => setEditingMeta(p => ({ ...p, description: e.target.value }))} placeholder={t('reviewq_desc_placeholder')} />
             {isBoss ? (
               <select className="ui-field__control" value={editingMeta.department} onChange={e => setEditingMeta(p => ({ ...p, department: e.target.value }))}>
-                <option value="">全公司預設（無特定部門）</option>
+                <option value="">{t('reviewq_dept_none')}</option>
                 {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             ) : (
-              <div className="review-hint">部門：{userProfile.department || '（尚未設定，請聯繫管理員）'}</div>
+              <div className="review-hint">{t('reviewq_dept_label', { dept: userProfile.department || t('reviewq_dept_unset') })}</div>
             )}
           </div>
         </Dialog>
@@ -1561,9 +1576,9 @@ function ReviewQuestionSets({ userProfile, isBoss }) {
 
       {confirmDeleteTemplate && (
         <ConfirmDialog
-          title="刪除模板"
-          description={`確定要刪除「${confirmDeleteTemplate.name}」嗎？裡面的所有題目也會一起刪除。如果這個模板還被某個考核週期設為預設模板，會刪除失敗。此操作無法復原。`}
-          confirmLabel="刪除"
+          title={t('reviewq_delete_title')}
+          description={t('reviewq_delete_desc', { name: confirmDeleteTemplate.name })}
+          confirmLabel={t('common_delete')}
           danger
           loading={saving}
           onConfirm={handleDeleteTemplate}
@@ -1584,6 +1599,7 @@ function ReviewFlows({ userProfile, isBoss }) {
   const [editSteps, setEditSteps] = useState(null)
   const [steps, setSteps] = useState([])
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { fetchAll() }, [])
 
@@ -1601,9 +1617,9 @@ function ReviewFlows({ userProfile, isBoss }) {
   }
 
   async function handleAddFlow() {
-    if (!newFlow.name) { showToast('請填寫流程名稱', { tone: 'error' }); return }
+    if (!newFlow.name) { showToast(t('adminflows_err_name'), { tone: 'error' }); return }
     if (!isBoss && !userProfile.department) {
-      showToast('您的帳號尚未設定部門，請聯繫管理員在「員工帳號管理」補上部門資料', { tone: 'error' }); return
+      showToast(t('reviewq_err_no_dept'), { tone: 'error' }); return
     }
     const { data: { user } } = await supabase.auth.getUser()
     const { error } = await supabase.from('review_flows').insert({
@@ -1611,7 +1627,7 @@ function ReviewFlows({ userProfile, isBoss }) {
       department: isBoss ? (newFlow.department || null) : userProfile.department,
       created_by: user.id,
     })
-    if (error) { showToast('新增失敗：' + error.message, { tone: 'error' }); return }
+    if (error) { showToast(t('adminflows_err_add', { msg: error.message }), { tone: 'error' }); return }
     setNewFlow({ name: '', department: isBoss ? '' : (userProfile.department || '') })
     setShowAdd(false)
     fetchAll()
@@ -1619,20 +1635,20 @@ function ReviewFlows({ userProfile, isBoss }) {
 
   async function handleSaveSteps(flowId) {
     const validSteps = steps.filter(s => s.evaluator_id)
-    if (validSteps.length === 0) { showToast('請至少指定一位評核人', { tone: 'error' }); return }
+    if (validSteps.length === 0) { showToast(t('reviewflow_err_no_evaluator'), { tone: 'error' }); return }
     const { error: delError } = await supabase.from('review_flow_steps').delete().eq('flow_id', flowId)
-    if (delError) { showToast('儲存失敗：' + delError.message, { tone: 'error' }); return }
+    if (delError) { showToast(t('adminflows_err_save', { msg: delError.message }), { tone: 'error' }); return }
     const { error: insError } = await supabase.from('review_flow_steps').insert(
       validSteps.map((step, i) => ({ flow_id: flowId, step_order: i + 1, evaluator_id: step.evaluator_id }))
     )
-    if (insError) { showToast('儲存失敗：' + insError.message, { tone: 'error' }); return }
+    if (insError) { showToast(t('adminflows_err_save', { msg: insError.message }), { tone: 'error' }); return }
     setEditSteps(null)
     fetchAll()
   }
 
   async function handleDeleteFlow(flowId) {
     const { error } = await supabase.from('review_flows').delete().eq('id', flowId)
-    if (error) { showToast('此流程已有考核參與者使用，無法刪除。', { tone: 'error' }); return }
+    if (error) { showToast(t('reviewflow_err_delete'), { tone: 'error' }); return }
     fetchAll()
   }
 
@@ -1641,35 +1657,35 @@ function ReviewFlows({ userProfile, isBoss }) {
   return (
     <div>
       <div className="review-subheader">
-        <h4 className="review-subheader__title">{isBoss ? '各部門考核流程' : `${userProfile.department || '我的部門'} 考核流程`}</h4>
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)}>+ 新增流程</Button>
+        <h4 className="review-subheader__title">
+          {isBoss ? t('reviewflow_title_boss') : t('reviewflow_title_dept', { dept: userProfile.department || t('reviewq_my_dept') })}
+        </h4>
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)}>{t('adminflows_add')}</Button>
       </div>
-      <p className="review-hint">
-        考核流程是這個部門的員工送出自評後，會依序經過的評分關卡，可以指定任何一位員工（不限主管／老闆），跟請假的審核流程一樣可以自訂關卡數量與順序。department 留空＝全公司預設。
-      </p>
+      <p className="review-hint">{t('reviewflow_hint')}</p>
 
       {showAdd && (
         <Card className="review-form-card">
           <div className="review-form-grid review-form-grid--single">
-            <input className="ui-field__control" value={newFlow.name} onChange={e => setNewFlow(p => ({ ...p, name: e.target.value }))} placeholder="流程名稱，例：業務部考核流程" />
+            <input className="ui-field__control" value={newFlow.name} onChange={e => setNewFlow(p => ({ ...p, name: e.target.value }))} placeholder={t('reviewflow_name_placeholder')} />
             {isBoss ? (
               <select className="ui-field__control" value={newFlow.department} onChange={e => setNewFlow(p => ({ ...p, department: e.target.value }))}>
-                <option value="">全公司預設（無特定部門）</option>
+                <option value="">{t('reviewq_dept_none')}</option>
                 {departments.map(d => <option key={d} value={d}>{d}</option>)}
               </select>
             ) : (
-              <div className="review-hint">將建立在您的部門：{userProfile.department || '（尚未設定，請聯繫管理員）'}</div>
+              <div className="review-hint">{t('reviewq_will_create_in', { dept: userProfile.department || t('reviewq_dept_unset') })}</div>
             )}
           </div>
           <div className="review-form-actions">
-            <Button size="sm" onClick={handleAddFlow}>新增</Button>
-            <Button size="sm" variant="text" onClick={() => setShowAdd(false)}>取消</Button>
+            <Button size="sm" onClick={handleAddFlow}>{t('common_add')}</Button>
+            <Button size="sm" variant="text" onClick={() => setShowAdd(false)}>{t('common_cancel')}</Button>
           </div>
         </Card>
       )}
 
       {flows.length === 0 ? (
-        <Card><EmptyState title="尚無考核流程" description={isBoss ? '請先新增流程' : '請先新增您部門的考核流程'} /></Card>
+        <Card><EmptyState title={t('reviewflow_empty')} description={isBoss ? t('reviewflow_empty_desc_boss') : t('reviewflow_empty_desc_dept')} /></Card>
       ) : (
         <div className="review-list">
           {flows.map(f => (
@@ -1677,15 +1693,15 @@ function ReviewFlows({ userProfile, isBoss }) {
               <div className="review-row">
                 <div>
                   <div className="review-row__title">{f.name}</div>
-                  <div className="review-row__meta">{f.department || '全公司預設'}</div>
+                  <div className="review-row__meta">{f.department || t('reviewcycle_company_default')}</div>
                   {editSteps !== f.id && <FlowSteps flow={f} />}
                 </div>
                 <div className="review-row__actions">
                   <Button size="sm" variant="outlined" onClick={() => {
                     setEditSteps(f.id)
                     setSteps(f.steps?.sort((a, b) => a.step_order - b.step_order).map(s => ({ evaluator_id: s.evaluator_id })) || [{ evaluator_id: '' }])
-                  }}>設定關卡</Button>
-                  <Button size="sm" variant="danger-outlined" onClick={() => handleDeleteFlow(f.id)}>刪除</Button>
+                  }}>{t('reviewflow_set_steps')}</Button>
+                  <Button size="sm" variant="danger-outlined" onClick={() => handleDeleteFlow(f.id)}>{t('common_delete')}</Button>
                 </div>
               </div>
 
@@ -1693,20 +1709,20 @@ function ReviewFlows({ userProfile, isBoss }) {
                 <div className="review-questions-editor">
                   {steps.map((step, i) => (
                     <div key={i} className="review-questions-editor__row">
-                      <span>第 {i + 1} 關</span>
+                      <span>{t('adminflows_step', { n: i + 1 })}</span>
                       <select className="ui-field__control" style={{ flex: 1 }} value={step.evaluator_id} onChange={e => {
                         const updated = [...steps]; updated[i] = { evaluator_id: e.target.value }; setSteps(updated)
                       }}>
-                        <option value="">請選擇評核人</option>
+                        <option value="">{t('reviewflow_select_evaluator')}</option>
                         {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
                       </select>
-                      <Button size="sm" variant="danger-outlined" onClick={() => setSteps(steps.filter((_, idx) => idx !== i))}>刪除</Button>
+                      <Button size="sm" variant="danger-outlined" onClick={() => setSteps(steps.filter((_, idx) => idx !== i))}>{t('common_delete')}</Button>
                     </div>
                   ))}
                   <div className="review-form-actions">
-                    <Button size="sm" variant="outlined" onClick={() => setSteps([...steps, { evaluator_id: '' }])}>+ 新增關卡</Button>
-                    <Button size="sm" onClick={() => handleSaveSteps(f.id)}>儲存</Button>
-                    <Button size="sm" variant="text" onClick={() => setEditSteps(null)}>取消</Button>
+                    <Button size="sm" variant="outlined" onClick={() => setSteps([...steps, { evaluator_id: '' }])}>{t('adminflows_add_step')}</Button>
+                    <Button size="sm" onClick={() => handleSaveSteps(f.id)}>{t('common_save')}</Button>
+                    <Button size="sm" variant="text" onClick={() => setEditSteps(null)}>{t('common_cancel')}</Button>
                   </div>
                 </div>
               )}
@@ -1726,6 +1742,7 @@ function ReviewParticipants({ userProfile, isBoss }) {
   const [loading, setLoading] = useState(true)
   const [manualSelection, setManualSelection] = useState([])
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { fetchReviews() }, [])
   useEffect(() => { if (selectedReviewId) { fetchUsers(); fetchParticipants() } }, [selectedReviewId])
@@ -1756,7 +1773,7 @@ function ReviewParticipants({ userProfile, isBoss }) {
   const candidates = users.filter(u => manualSelection.includes(u.id) && !existingUserIds.has(u.id))
 
   async function handleAdd() {
-    if (candidates.length === 0) { showToast('請先勾選要加入的人員', { tone: 'error' }); return }
+    if (candidates.length === 0) { showToast(t('reviewpart_err_select'), { tone: 'error' }); return }
 
     const rows = []
     const missingFlow = []
@@ -1772,13 +1789,13 @@ function ReviewParticipants({ userProfile, isBoss }) {
       })
     }
     if (missingFlow.length > 0) {
-      showToast(`${missingFlow.join('、')} 所屬部門尚未設定考核流程，請先到「考核流程」分頁建立，這些人先不會加入`, { tone: 'error' })
+      showToast(t('reviewpart_err_missing_flow', { names: missingFlow.join(t('common_list_separator')) }), { tone: 'error' })
     }
     if (rows.length === 0) return
 
     const { error } = await supabase.from('annual_review_participants').insert(rows)
-    if (error) { showToast('加入失敗：' + error.message, { tone: 'error' }); return }
-    showToast(`已加入 ${rows.length} 位參與者`)
+    if (error) { showToast(t('reviewpart_err_add', { msg: error.message }), { tone: 'error' }); return }
+    showToast(t('reviewpart_added', { n: rows.length }))
     setManualSelection([])
     fetchParticipants()
   }
@@ -1795,7 +1812,7 @@ function ReviewParticipants({ userProfile, isBoss }) {
   async function handleChangeSupervisor(participantId, supervisorId) {
     const { error } = await supabase.from('annual_review_participants')
       .update({ supervisor_id: supervisorId || null }).eq('id', participantId)
-    if (error) { showToast('設定失敗：' + error.message, { tone: 'error' }); return }
+    if (error) { showToast(t('reviewpart_err_set_supervisor', { msg: error.message }), { tone: 'error' }); return }
     fetchParticipants()
   }
 
@@ -1804,14 +1821,19 @@ function ReviewParticipants({ userProfile, isBoss }) {
   return (
     <div>
       <div className="review-subheader">
-        <h4 className="review-subheader__title">加入考核參與者</h4>
+        <h4 className="review-subheader__title">{t('reviewpart_title')}</h4>
       </div>
-      <p className="review-hint">{isBoss ? '可加入全公司任何人員。' : `只能加入您部門（${userProfile.department || '尚未設定部門'}）的員工。`}加入時會自動套用該員工部門設定好的考核流程；若部門尚未設定流程，需先到「考核流程」分頁建立。</p>
+      <p className="review-hint">
+        {isBoss
+          ? t('reviewpart_hint_boss')
+          : t('reviewpart_hint_dept', { dept: userProfile.department || t('reviewpart_hint_dept_unset') })}
+        {t('reviewpart_hint_rest')}
+      </p>
 
       <Card className="review-form-card">
         <select className="ui-field__control" value={selectedReviewId} onChange={e => setSelectedReviewId(e.target.value)} style={{ marginBottom: 'var(--space-150)' }}>
-          <option value="">請選擇考核週期</option>
-          {reviews.map(r => <option key={r.id} value={r.id}>{r.title}（{r.year}）</option>)}
+          <option value="">{t('reviewpart_select_cycle')}</option>
+          {reviews.map(r => <option key={r.id} value={r.id}>{t('reviewpart_cycle_option', { title: r.title, year: r.year })}</option>)}
         </select>
 
         {selectedReviewId && (
@@ -1831,7 +1853,7 @@ function ReviewParticipants({ userProfile, isBoss }) {
                         checked={allSelected}
                         onChange={e => setManualSelection(e.target.checked ? selectable.map(u => u.id) : [])}
                       />
-                      <strong>全選（{selectable.length} 人）</strong>
+                      <strong>{t('reviewpart_select_all', { n: selectable.length })}</strong>
                     </label>
                   )}
                   {selectable.map(u => (
@@ -1845,12 +1867,14 @@ function ReviewParticipants({ userProfile, isBoss }) {
                     </label>
                   ))}
                   {selectable.length === 0 && (
-                    <p className="review-hint">沒有可加入的人員了。</p>
+                    <p className="review-hint">{t('reviewpart_none_left')}</p>
                   )}
                 </div>
               )
             })()}
-            <Button onClick={handleAdd} disabled={candidates.length === 0}>加入 {candidates.length > 0 ? `（${candidates.length} 人）` : ''}</Button>
+            <Button onClick={handleAdd} disabled={candidates.length === 0}>
+              {candidates.length > 0 ? t('reviewpart_add_n', { n: candidates.length }) : t('reviewpart_add')}
+            </Button>
           </>
         )}
       </Card>
@@ -1859,7 +1883,7 @@ function ReviewParticipants({ userProfile, isBoss }) {
         <div className="ui-table-wrap">
           <table className="ui-table">
             <thead>
-              <tr><th>姓名</th><th>直屬主管</th><th>操作</th></tr>
+              <tr><th>{t('adminusers_col_name')}</th><th>{t('adminusers_col_manager')}</th><th>{t('common_actions')}</th></tr>
             </thead>
             <tbody>
               {participants.map(p => (
@@ -1867,12 +1891,12 @@ function ReviewParticipants({ userProfile, isBoss }) {
                   <td>{p.user?.full_name}</td>
                   <td>
                     <select className="ui-field__control" value={p.supervisor_id || ''} onChange={e => handleChangeSupervisor(p.id, e.target.value)}>
-                      <option value="">未指定</option>
+                      <option value="">{t('adminusers_unassigned')}</option>
                       {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
                     </select>
-                    {!p.supervisor_id && <div className="review-missing-manager">⚠ 未指定，也可以到「員工帳號管理」設定這個人的直屬主管</div>}
+                    {!p.supervisor_id && <div className="review-missing-manager">{t('reviewpart_missing_manager')}</div>}
                   </td>
-                  <td><Button size="sm" variant="danger-outlined" onClick={() => handleRemove(p.id)}>移除</Button></td>
+                  <td><Button size="sm" variant="danger-outlined" onClick={() => handleRemove(p.id)}>{t('adminnotify_remove')}</Button></td>
                 </tr>
               ))}
             </tbody>
@@ -1885,17 +1909,18 @@ function ReviewParticipants({ userProfile, isBoss }) {
 
 function DepartmentReviewSetup({ userProfile, isBoss }) {
   const location = useLocation()
+  const { t } = useLanguage()
 
   const tabs = [
-    { key: 'cycles', label: '考核週期', to: '/review/setup', active: location.pathname === '/review/setup' },
-    { key: 'questions', label: '考核題目', to: '/review/setup/questions', active: location.pathname === '/review/setup/questions' },
-    { key: 'flows', label: '考核流程', to: '/review/setup/flows', active: location.pathname === '/review/setup/flows' },
-    { key: 'participants', label: '參與者', to: '/review/setup/participants', active: location.pathname === '/review/setup/participants' },
+    { key: 'cycles', label: t('reviewsetup_tab_cycles'), to: '/review/setup', active: location.pathname === '/review/setup' },
+    { key: 'questions', label: t('reviewsetup_tab_questions'), to: '/review/setup/questions', active: location.pathname === '/review/setup/questions' },
+    { key: 'flows', label: t('reviewsetup_tab_flows'), to: '/review/setup/flows', active: location.pathname === '/review/setup/flows' },
+    { key: 'participants', label: t('reviewsetup_tab_participants'), to: '/review/setup/participants', active: location.pathname === '/review/setup/participants' },
   ]
 
   return (
     <div>
-      <PageHeader title="部門考核設定" />
+      <PageHeader title={t('reviewsetup_title')} />
       <Tabs tabs={tabs} />
       <Routes>
         <Route index element={<ReviewCycles />} />
@@ -1910,6 +1935,7 @@ function DepartmentReviewSetup({ userProfile, isBoss }) {
 // ===== Review 主元件 =====
 function Review({ userProfile }) {
   const location = useLocation()
+  const { t } = useLanguage()
   const isBoss = userProfile?.role === 'boss'
   const isTeamManager = EVALUATOR_ROLES.includes(userProfile?.role)
   const canSelfAssess = userProfile?.role !== 'boss'
@@ -1921,12 +1947,12 @@ function Review({ userProfile }) {
   }
 
   const tabs = []
-  if (canSelfAssess) tabs.push({ key: 'mine', path: '/review', label: '年度自評', end: true })
+  if (canSelfAssess) tabs.push({ key: 'mine', path: '/review', label: t('review_tab_self'), end: true })
   if (isTeamManager) {
-    tabs.push({ key: 'setup', path: '/review/setup', label: '部門考核設定' })
+    tabs.push({ key: 'setup', path: '/review/setup', label: t('reviewsetup_title') })
     // 主管以前沒有獨立的「團隊年度考核」分頁，所以標籤叫「團隊管理與年度考核」；
     // 現在兩個分頁都有了，再留著那個名字只會跟隔壁分頁混淆。
-    tabs.push({ key: 'team', path: '/review/team', label: '團隊管理' })
+    tabs.push({ key: 'team', path: '/review/team', label: t('review_team_title') })
   }
   // Was "/review/team/annual" -- a sibling page nested under the same URL
   // segment as "/review/team" (團隊管理), so a plain startsWith() prefix
@@ -1934,11 +1960,11 @@ function Review({ userProfile }) {
   // literally starts with the other tab's path). Hyphenated instead of
   // nested so the two can never collide as prefixes of each other.
   // 主管也看得到，只是範圍縮到自己擔任評核人的簽核鏈
-  if (isTeamManager) tabs.push({ key: 'team-annual', path: '/review/team-annual', label: '團隊年度考核' })
+  if (isTeamManager) tabs.push({ key: 'team-annual', path: '/review/team-annual', label: t('review_roster_title') })
 
   return (
     <div>
-      <PageHeader title="考核管理" />
+      <PageHeader title={t('nav_review')} />
       <Tabs tabs={tabs.map(t => ({
         ...t,
         to: t.path,
