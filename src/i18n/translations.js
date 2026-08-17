@@ -725,7 +725,7 @@ export const translations = {
     app_bar_user_menu: 'User menu',
     app_bar_pending_aria: 'Leave approvals, {n} pending',
     app_bar_pending_aria_one: 'Leave approvals, 1 pending',
-    app_brand_caption: 'Workplace',
+    app_brand_caption: 'Management Portal',
     app_skip_to_content: 'Skip to main content',
     app_nav_primary: 'Primary navigation',
     app_nav_primary_mobile: 'Primary navigation (mobile)',
