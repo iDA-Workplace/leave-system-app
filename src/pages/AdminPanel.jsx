@@ -4,6 +4,7 @@ import { supabase } from '../lib/supabase'
 import { invokeFunction } from '../lib/api'
 import ExportReport from './ExportReport'
 import EmployeeLeaveManagement from './EmployeeLeaveManagement'
+import LeaveTypeNames from './LeaveTypeNames'
 import { Button, Card, Chip, ConfirmDialog, Dialog, PageHeader, Select, Skeleton, Tabs, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import './AdminPanel.css'
@@ -630,6 +631,9 @@ function AdminPanel({ userProfile }) {
     tabs.push({ key: 'users', path: '/admin', label: '員工帳號管理' })
     tabs.push({ key: 'flows', path: '/admin/flows', label: '審核流程' })
     tabs.push({ key: 'notifications', path: '/admin/notifications', label: '通知對象' })
+    // 假別的英文名是「用字對不對」的問題，不是假期制度的問題，所以歸管理員。
+    // 財務的「員工假期管理」也還看得到同一張卡片，兩邊共用同一個元件。
+    tabs.push({ key: 'leave-type-names', path: '/admin/leave-type-names', label: '假別英文名稱' })
   }
   if (isFinance) {
     tabs.push({ key: 'leave-entitlements', path: '/admin/leave-entitlements', label: '員工假期管理' })
@@ -650,6 +654,7 @@ function AdminPanel({ userProfile }) {
         <Route index element={indexElement} />
         {isAdmin && <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />}
         {isAdmin && <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />}
+        {isAdmin && <Route path="leave-type-names" element={<LeaveTypeNames />} />}
         {isFinance && <Route path="leave-entitlements" element={<EmployeeLeaveManagement userProfile={userProfile} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
         <Route path="export" element={<ExportReport />} />

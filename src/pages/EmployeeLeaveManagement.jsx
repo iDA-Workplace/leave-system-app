@@ -3,6 +3,7 @@ import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, Dialog, PageHeader, Select, Skeleton, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import { HOURS_PER_DAY, isAnnualLeaveType } from '../lib/leaveEntitlements'
+import LeaveTypeNames from './LeaveTypeNames'
 import './AdminPanel.css'
 
 function formatTenure(hireDate) {
@@ -42,9 +43,6 @@ function EmployeeLeaveManagement({ userProfile }) {
   const [saving, setSaving] = useState(false)
   const [defaults, setDefaults] = useState({})
   const [savingDefaults, setSavingDefaults] = useState(false)
-  // 假別英文名：介面切成 English 時要顯示的名稱（存在 leave_types.name_en）
-  const [namesEn, setNamesEn] = useState({})
-  const [savingNames, setSavingNames] = useState(false)
   const [filterStatus, setFilterStatus] = useState('')
 
   // 表格內直接編輯：drafts 是畫面上的值（打字要立刻反應），rowStatus 是每一列
@@ -81,7 +79,6 @@ function EmployeeLeaveManagement({ userProfile }) {
     setEntitlements(ent.data || [])
     setAnnualSummary(Object.fromEntries((summary.data || []).map(s => [s.user_id, s])))
     setDefaults(Object.fromEntries((lt.data || []).map(t => [t.id, t.annual_quota_hours != null ? String(t.annual_quota_hours) : ''])))
-    setNamesEn(Object.fromEntries((lt.data || []).map(t => [t.id, t.name_en || ''])))
     setLoading(false)
   }
 
@@ -107,27 +104,6 @@ function EmployeeLeaveManagement({ userProfile }) {
     }
     setSavingDefaults(false)
     showToast('已更新全公司預設額度')
-    fetchAll()
-  }
-
-  // 假別名稱是資料、不是介面文字，沒辦法寫死在前端字典裡，所以英文名要在這裡
-  // 維護。留白＝切成英文時仍顯示中文名（不會變空白）。
-  async function handleSaveNames() {
-    setSavingNames(true)
-    for (const t of leaveTypes) {
-      const value = (namesEn[t.id] || '').trim() || null
-      if ((t.name_en ?? null) === value) continue
-      const { data: updated, error } = await supabase.from('leave_types')
-        .update({ name_en: value }).eq('id', t.id).select()
-      // RLS 擋下 UPDATE 時 Postgres 不會報錯，只會回 0 列 —— 所以 0 列也算失敗。
-      if (error || !updated?.length) {
-        showToast(`「${t.name}」的英文名儲存失敗：` + (error?.message || '沒有權限寫入'), { tone: 'error' })
-        setSavingNames(false)
-        return
-      }
-    }
-    setSavingNames(false)
-    showToast('已更新假別英文名稱')
     fetchAll()
   }
 
@@ -377,26 +353,7 @@ function EmployeeLeaveManagement({ userProfile }) {
         </div>
       </Card>
 
-      <Card className="admin-form-card">
-        <h4 className="admin-form-card__title">假別英文名稱</h4>
-        <p className="admin-form-card__hint">
-          同仁把介面語言切成 English 時顯示的假別名稱。留白的話會直接顯示中文名，不會變空白。
-        </p>
-        <div className="admin-form-grid">
-          {leaveTypes.map(t => (
-            <TextField
-              key={t.id}
-              label={t.name}
-              value={namesEn[t.id] ?? ''}
-              onChange={e => setNamesEn(p => ({ ...p, [t.id]: e.target.value }))}
-              placeholder="留白＝顯示中文名"
-            />
-          ))}
-        </div>
-        <div className="admin-form-actions">
-          <Button loading={savingNames} onClick={handleSaveNames}>儲存英文名稱</Button>
-        </div>
-      </Card>
+      <LeaveTypeNames />
 
       <div className="admin-inline-form">
         <Select value={filterDept} onChange={e => setFilterDept(e.target.value)} style={{ maxWidth: '200px' }}>
