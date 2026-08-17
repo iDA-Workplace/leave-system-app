@@ -5,22 +5,25 @@ import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skel
 import { useToast } from '../context/ToastContext'
 import {
   buildBalanceRows, fetchEntitlementOverrides, checkQuota, leaveRequestHours,
+  leaveTypeName, errorText, HOURS_PER_DAY,
 } from '../lib/leaveEntitlements'
+import { useLanguage } from '../context/LanguageContext'
 import './MyLeaves.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 
-const statusMap = {
-  pending: { label: '審核中', tone: 'warning' },
-  approved: { label: '已核准', tone: 'success' },
-  rejected: { label: '已拒絕', tone: 'error' },
-  returned: { label: '已退回', tone: 'neutral' },
-  withdrawn: { label: '已收回', tone: 'info' }
+const STATUS_TONES = {
+  pending: 'warning',
+  approved: 'success',
+  rejected: 'error',
+  returned: 'neutral',
+  withdrawn: 'info',
 }
 
 function MyLeaves({ userProfile }) {
   const isApprover = APPROVER_ROLES.includes(userProfile?.role)
   const { showToast } = useToast()
+  const { t, lang } = useLanguage()
 
   // 請假紀錄清單（自己的假單）
   const [leaves, setLeaves] = useState([])
@@ -68,7 +71,7 @@ function MyLeaves({ userProfile }) {
       .from('leave_requests')
       .select(`
         *,
-        leave_type:leave_types(name, color),
+        leave_type:leave_types(*),
         flow:approval_flows(name),
         proxy:users!leave_requests_proxy_user_id_fkey(full_name),
         approvals:leave_approvals(
@@ -92,7 +95,7 @@ function MyLeaves({ userProfile }) {
 
     const { data: approvedLeaves } = await supabase
       .from('leave_requests')
-      .select(`*, leave_type:leave_types(name, color)`)
+      .select(`*, leave_type:leave_types(*)`)
       .eq('requester_id', userProfile.id)
       .eq('status', 'approved')
       .gte('start_date', `${year}-01-01`)
@@ -100,7 +103,7 @@ function MyLeaves({ userProfile }) {
 
     const statsMap = {}
     for (const leave of approvedLeaves || []) {
-      const typeName = leave.leave_type?.name || '其他'
+      const typeName = leave.leave_type?.name || t('common_other')
       const typeColor = leave.leave_type?.color || 'var(--sys-color-primary)'
       if (!statsMap[typeName]) statsMap[typeName] = { name: typeName, color: typeColor, totalHours: 0 }
       if (leave.hours) {
@@ -162,7 +165,7 @@ function MyLeaves({ userProfile }) {
         *,
         request:leave_requests(
           start_date, end_date, start_time, end_time, hours,
-          leave_type:leave_types(name, color),
+          leave_type:leave_types(*),
           proxy:users!leave_requests_proxy_user_id_fkey(full_name),
           requester:users!leave_requests_requester_id_fkey(full_name)
         )
@@ -178,7 +181,7 @@ function MyLeaves({ userProfile }) {
     await supabase.from('leave_requests').update({ status: 'withdrawn' }).eq('id', withdrawTarget.id)
     setWithdrawing(false)
     setWithdrawTarget(null)
-    showToast('假單已收回')
+    showToast(t('home_withdrawn_toast'))
     fetchMyLeaves()
   }
 
@@ -192,10 +195,11 @@ function MyLeaves({ userProfile }) {
           userId: userProfile.id,
           leaveType,
           requestedHours: leaveRequestHours(leave),
+          lang,
         })
-        if (!quota.ok) { showToast(quota.message, { tone: 'error' }); return }
+        if (!quota.ok) { showToast(t(quota.i18nKey, quota.i18nParams), { tone: 'error' }); return }
       } catch (err) {
-        showToast(err.message, { tone: 'error' }); return
+        showToast(errorText(err, t), { tone: 'error' }); return
       }
     }
 
@@ -221,7 +225,7 @@ function MyLeaves({ userProfile }) {
     if (!error) {
       await supabase.functions.invoke('send-slack-notification', { body: { type: 'new_request', request_id: data.id } })
       fetchMyLeaves()
-      showToast('已重新送出！')
+      showToast(t('myleaves_resubmitted'))
     }
   }
 
@@ -231,37 +235,37 @@ function MyLeaves({ userProfile }) {
 
   return (
     <div>
-      <PageHeader title="假單管理" actions={<Link to="/leave/new"><Button>+ 請假申請</Button></Link>} />
+      <PageHeader title={t('nav_leave_management')} actions={<Link to="/leave/new"><Button>{t('myleaves_new_request')}</Button></Link>} />
 
       <div className="leave-mgmt-stats">
         <Card className="leave-mgmt-stat">
-          <div className="leave-mgmt-stat__label">審核中{isApprover ? '（個人）' : ''}</div>
+          <div className="leave-mgmt-stat__label">{isApprover ? t('myleaves_stat_pending_personal') : t('myleaves_stat_pending')}</div>
           <div className="leave-mgmt-stat__value">{leavesLoading ? '—' : pendingOwnCount}</div>
         </Card>
         {isApprover && (
           <Link to="/#pending-team-approvals" className="leave-mgmt-stat-link">
             <Card className="leave-mgmt-stat">
-              <div className="leave-mgmt-stat__label">待審核（團隊）</div>
+              <div className="leave-mgmt-stat__label">{t('myleaves_stat_team')}</div>
               <div className="leave-mgmt-stat__value">{pendingLoading ? '—' : pendingRequests.length}</div>
-              <div className="leave-mgmt-stat__hint">前往首頁審核 →</div>
+              <div className="leave-mgmt-stat__hint">{t('myleaves_stat_team_hint')}</div>
             </Card>
           </Link>
         )}
       </div>
 
       <Card className="leave-mgmt-section">
-        <PageHeader title="我的假期明細" />
+        <PageHeader title={t('myleaves_balance_title')} />
         {balanceLoading ? <Skeleton height="120px" /> : (
           <div className="ui-table-wrap">
             <table className="ui-table">
-              <thead><tr><th>假別</th><th>使用效期</th><th>當年度可使用時數</th><th>已使用時數</th></tr></thead>
+              <thead><tr><th>{t('field_leave_type')}</th><th>{t('myleaves_validity')}</th><th>{t('myleaves_available_hours')}</th><th>{t('myleaves_used_hours')}</th></tr></thead>
               <tbody>
                 {balanceRows.map(row => (
                   <tr key={row.id}>
-                    <td><Chip tone="info" style={{ background: (row.color || 'var(--sys-color-primary)') + '22', color: row.color || 'var(--sys-color-primary)' }}>{row.name}</Chip></td>
-                    <td>當年度</td>
-                    <td>{row.total != null ? `${row.total} 小時` : '依勞基法'}</td>
-                    <td>{row.used} 小時</td>
+                    <td><Chip tone="info" style={{ background: (row.color || 'var(--sys-color-primary)') + '22', color: row.color || 'var(--sys-color-primary)' }}>{leaveTypeName(row, lang)}</Chip></td>
+                    <td>{t('myleaves_current_year')}</td>
+                    <td>{row.total != null ? t('common_hours', { n: row.total }) : t('myleaves_by_law')}</td>
+                    <td>{t('common_hours', { n: row.used })}</td>
                   </tr>
                 ))}
               </tbody>
@@ -273,20 +277,20 @@ function MyLeaves({ userProfile }) {
       <Card className="leave-mgmt-section">
         {isApprover ? (
           <Tabs tabs={[
-            { key: 'mine', label: '請假紀錄清單', active: historyTab === 'mine', onClick: () => setHistoryTab('mine') },
-            { key: 'approved', label: '審核紀錄清單', active: historyTab === 'approved', onClick: () => setHistoryTab('approved') },
+            { key: 'mine', label: t('myleaves_tab_mine'), active: historyTab === 'mine', onClick: () => setHistoryTab('mine') },
+            { key: 'approved', label: t('myleaves_tab_approved'), active: historyTab === 'approved', onClick: () => setHistoryTab('approved') },
           ]} />
         ) : (
-          <PageHeader title="請假紀錄清單" />
+          <PageHeader title={t('myleaves_tab_mine')} />
         )}
 
         <div className="leave-mgmt-filters">
-          <Select label="年度" value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}>
-            {[currentYear, currentYear - 1, currentYear - 2].map(y => <option key={y} value={y}>{y} 年</option>)}
+          <Select label={t('common_year')} value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}>
+            {[currentYear, currentYear - 1, currentYear - 2].map(y => <option key={y} value={y}>{t('common_year_option', { y })}</option>)}
           </Select>
-          <Select label="月份" value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))}>
-            <option value={0}>全部月份</option>
-            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{m} 月</option>)}
+          <Select label={t('common_month')} value={filterMonth} onChange={e => setFilterMonth(Number(e.target.value))}>
+            <option value={0}>{t('common_all_months')}</option>
+            {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{t(`month_${m}`)}</option>)}
           </Select>
         </div>
 
@@ -297,29 +301,29 @@ function MyLeaves({ userProfile }) {
           return leavesLoading ? (
             <Skeleton height="120px" />
           ) : filtered.length === 0 ? (
-            <EmptyState title="這段期間沒有請假記錄" />
+            <EmptyState title={t('myleaves_empty_leaves')} />
           ) : (
             <>
               <div className="ui-table-wrap">
                 <table className="ui-table">
-                  <thead><tr><th>假別</th><th>請假日期</th><th>時間</th><th>時數</th><th>簽核狀態</th><th>操作</th></tr></thead>
+                  <thead><tr><th>{t('field_leave_type')}</th><th>{t('field_leave_dates')}</th><th>{t('field_time')}</th><th>{t('field_hours')}</th><th>{t('field_approval_status')}</th><th>{t('common_actions')}</th></tr></thead>
                   <tbody>
                     {pageRows.map(leave => {
-                      const status = statusMap[leave.status] || statusMap.pending
+                      const tone = STATUS_TONES[leave.status] || STATUS_TONES.pending
                       const isMultiDay = leave.end_date > leave.start_date
                       return (
                         <tr key={leave.id}>
-                          <td><Chip tone="info" style={{ background: (leave.leave_type?.color || 'var(--sys-color-primary)') + '22', color: leave.leave_type?.color || 'var(--sys-color-primary)' }}>{leave.leave_type?.name}</Chip></td>
+                          <td><Chip tone="info" style={{ background: (leave.leave_type?.color || 'var(--sys-color-primary)') + '22', color: leave.leave_type?.color || 'var(--sys-color-primary)' }}>{leaveTypeName(leave.leave_type, lang)}</Chip></td>
                           <td>{isMultiDay ? `${leave.start_date} ~ ${leave.end_date}` : leave.start_date}</td>
-                          <td>{isMultiDay ? '全天' : (leave.start_time && leave.end_time ? `${leave.start_time} ~ ${leave.end_time}` : '—')}</td>
-                          <td>{hoursFor(leave)}</td>
-                          <td><Chip tone={status.tone}>{status.label}</Chip></td>
+                          <td>{isMultiDay ? t('common_all_day') : (leave.start_time && leave.end_time ? `${leave.start_time} ~ ${leave.end_time}` : '—')}</td>
+                          <td>{hoursFor(leave, t)}</td>
+                          <td><Chip tone={tone}>{t(`status_${leave.status}`)}</Chip></td>
                           <td>
                             {leave.status === 'pending' && (
-                              <Button variant="tonal" size="sm" onClick={() => setWithdrawTarget(leave)}>收回假單</Button>
+                              <Button variant="tonal" size="sm" onClick={() => setWithdrawTarget(leave)}>{t('myleaves_withdraw')}</Button>
                             )}
                             {(leave.status === 'returned' || leave.status === 'withdrawn') && (
-                              <Button size="sm" onClick={() => handleResubmit(leave)}>重新送出</Button>
+                              <Button size="sm" onClick={() => handleResubmit(leave)}>{t('myleaves_resubmit')}</Button>
                             )}
                           </td>
                         </tr>
@@ -329,9 +333,9 @@ function MyLeaves({ userProfile }) {
                 </table>
               </div>
               <div className="leave-mgmt-pagination">
-                <Button size="sm" variant="outlined" disabled={historyPage <= 1} onClick={() => setHistoryPage(p => p - 1)}>上一頁</Button>
-                <span className="leave-mgmt-pagination__label">第 {historyPage} / {totalPages} 頁</span>
-                <Button size="sm" variant="outlined" disabled={historyPage >= totalPages} onClick={() => setHistoryPage(p => p + 1)}>下一頁</Button>
+                <Button size="sm" variant="outlined" disabled={historyPage <= 1} onClick={() => setHistoryPage(p => p - 1)}>{t('common_prev_page')}</Button>
+                <span className="leave-mgmt-pagination__label">{t('common_page_indicator', { page: historyPage, total: totalPages })}</span>
+                <Button size="sm" variant="outlined" disabled={historyPage >= totalPages} onClick={() => setHistoryPage(p => p + 1)}>{t('common_next_page')}</Button>
               </div>
             </>
           )
@@ -344,12 +348,12 @@ function MyLeaves({ userProfile }) {
           return historyLoading ? (
             <Skeleton height="120px" />
           ) : filtered.length === 0 ? (
-            <EmptyState title="這段期間沒有審核記錄" />
+            <EmptyState title={t('myleaves_empty_approvals')} />
           ) : (
             <>
               <div className="ui-table-wrap">
                 <table className="ui-table">
-                  <thead><tr><th>請假人</th><th>請假日期</th><th>時間</th><th>時數</th><th>職務代理人</th><th>審核結果</th></tr></thead>
+                  <thead><tr><th>{t('field_requester')}</th><th>{t('field_leave_dates')}</th><th>{t('field_time')}</th><th>{t('field_hours')}</th><th>{t('field_proxy')}</th><th>{t('myleaves_approval_result')}</th></tr></thead>
                   <tbody>
                     {pageRows.map(a => {
                       const req = a.request
@@ -358,10 +362,10 @@ function MyLeaves({ userProfile }) {
                         <tr key={a.id}>
                           <td>{req?.requester?.full_name}</td>
                           <td>{isMultiDay ? `${req?.start_date} ~ ${req?.end_date}` : req?.start_date}</td>
-                          <td>{isMultiDay ? '全天' : (req?.start_time && req?.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
-                          <td>{req ? hoursFor(req) : '—'}</td>
+                          <td>{isMultiDay ? t('common_all_day') : (req?.start_time && req?.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
+                          <td>{req ? hoursFor(req, t) : '—'}</td>
                           <td>{req?.proxy?.full_name || '—'}</td>
-                          <td><Chip tone={a.action === 'approved' ? 'success' : 'error'}>{a.action === 'approved' ? '核准' : '拒絕'}</Chip></td>
+                          <td><Chip tone={a.action === 'approved' ? 'success' : 'error'}>{a.action === 'approved' ? t('myleaves_action_approved') : t('myleaves_action_rejected')}</Chip></td>
                         </tr>
                       )
                     })}
@@ -369,9 +373,9 @@ function MyLeaves({ userProfile }) {
                 </table>
               </div>
               <div className="leave-mgmt-pagination">
-                <Button size="sm" variant="outlined" disabled={historyPage <= 1} onClick={() => setHistoryPage(p => p - 1)}>上一頁</Button>
-                <span className="leave-mgmt-pagination__label">第 {historyPage} / {totalPages} 頁</span>
-                <Button size="sm" variant="outlined" disabled={historyPage >= totalPages} onClick={() => setHistoryPage(p => p + 1)}>下一頁</Button>
+                <Button size="sm" variant="outlined" disabled={historyPage <= 1} onClick={() => setHistoryPage(p => p - 1)}>{t('common_prev_page')}</Button>
+                <span className="leave-mgmt-pagination__label">{t('common_page_indicator', { page: historyPage, total: totalPages })}</span>
+                <Button size="sm" variant="outlined" disabled={historyPage >= totalPages} onClick={() => setHistoryPage(p => p + 1)}>{t('common_next_page')}</Button>
               </div>
             </>
           )
@@ -380,9 +384,9 @@ function MyLeaves({ userProfile }) {
 
       {withdrawTarget && (
         <ConfirmDialog
-          title="收回假單"
-          description="確定要收回這張假單嗎？收回後需要重新送出。"
-          confirmLabel="收回"
+          title={t('home_withdraw_title')}
+          description={t('home_withdraw_desc')}
+          confirmLabel={t('home_withdraw_confirm')}
           danger
           loading={withdrawing}
           onConfirm={confirmWithdraw}
@@ -399,10 +403,10 @@ function calendarDayCount(startDate, endDate) {
   return Math.round((end - start) / 86400000) + 1
 }
 
-function hoursFor(item) {
-  if (item.hours) return `${item.hours} 小時`
+function hoursFor(item, t) {
+  if (item.hours) return t('common_hours', { n: item.hours })
   const days = calendarDayCount(item.start_date, item.end_date)
-  return `${days * 8} 小時`
+  return t('common_hours', { n: days * HOURS_PER_DAY })
 }
 
 function filterByYearMonth(rows, year, month, getDate) {

@@ -1,9 +1,11 @@
 import { Link } from 'react-router-dom'
+import { useLanguage } from '../../context/LanguageContext'
 import './ui.css'
 
 // `tabs`: [{ key, label, to?, onClick?, active, badge? }]
 // `badge` is an unread count; falsy (including 0) renders nothing.
 function Tabs({ tabs }) {
+  const { t: translate } = useLanguage()
   return (
     <div className="ui-tabs" role="tablist">
       {tabs.map((t) => {
@@ -12,7 +14,7 @@ function Tabs({ tabs }) {
           <>
             {t.label}
             {t.badge ? (
-              <span className="ui-tab__badge" aria-label={`${t.badge} 則未讀`}>{t.badge}</span>
+              <span className="ui-tab__badge" aria-label={translate('common_unread_badge', { n: t.badge })}>{t.badge}</span>
             ) : null}
           </>
         )

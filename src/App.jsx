@@ -10,8 +10,10 @@ import AdminPanel from './pages/AdminPanel'
 import Layout from './components/Layout'
 import Review from './pages/Review'
 import Settings from './pages/Settings'
+import { useLanguage } from './context/LanguageContext'
 
 function App() {
+  const { t } = useLanguage()
   const [session, setSession] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -45,7 +47,7 @@ function App() {
 
   if (loading) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh' }}>
-      <p>載入中...</p>
+      <p>{t('common_loading')}</p>
     </div>
   )
 

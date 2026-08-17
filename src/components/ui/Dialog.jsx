@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import Button from './Button'
+import { useLanguage } from '../../context/LanguageContext'
 import './ui.css'
 
 export function Dialog({ title, children, actions, onClose, labelledBy, size }) {
@@ -45,9 +46,12 @@ export function Dialog({ title, children, actions, onClose, labelledBy, size }) 
 }
 
 export function ConfirmDialog({
-  title, description, confirmLabel = '確定', cancelLabel = '取消',
+  title, description, confirmLabel, cancelLabel,
   danger = false, loading = false, onConfirm, onCancel,
 }) {
+  const { t } = useLanguage()
+  confirmLabel = confirmLabel ?? t('common_confirm')
+  cancelLabel = cancelLabel ?? t('common_cancel')
   return (
     <Dialog
       title={title}

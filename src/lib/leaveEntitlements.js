@@ -9,6 +9,29 @@ export function isAnnualLeaveType(leaveType) {
   return !!leaveType?.name?.includes('特休')
 }
 
+// 假別名稱存在資料庫裡，沒辦法寫進前端字典，所以 leave_types 多了一個
+// name_en 欄位（見 migration 20260817）。切成英文但還沒填英文名的假別，
+// 沿用中文名 —— 寧可中英夾雜，也不要在畫面上留一片空白。
+export function leaveTypeName(leaveType, lang) {
+  if (!leaveType) return ''
+  if (lang === 'en' && leaveType.name_en) return leaveType.name_en
+  return leaveType.name || ''
+}
+
+// lib 裡拿不到 useLanguage()，所以錯誤帶著 i18n key 往外丟，由畫面那一層翻譯。
+export class LocalizedError extends Error {
+  constructor(i18nKey, i18nParams) {
+    super(i18nKey)
+    this.i18nKey = i18nKey
+    this.i18nParams = i18nParams
+  }
+}
+
+export function errorText(err, t) {
+  if (err?.i18nKey) return t(err.i18nKey, err.i18nParams)
+  return err?.message || ''
+}
+
 // Per-employee agreed quotas, set by 財務 in 員工假期管理. Returns a map of
 // leave_type_id -> quota in hours, containing ONLY the leave types that were
 // explicitly switched to 手動調整; anything absent falls back to the company
@@ -40,16 +63,20 @@ export function buildBalanceRows({ leaveTypes, leaveStats, annualLeave, override
       return {
         id: lt.id,
         name: lt.name,
+        name_en: lt.name_en,
         color: lt.color,
         used: (annualLeave?.used || 0) * HOURS_PER_DAY,
         total: override != null ? override : (annualLeave?.entitled || 0) * HOURS_PER_DAY,
       }
     }
 
+    // leaveStats 一律用中文名當 key（資料庫裡的原名），翻譯只發生在畫面上，
+    // 這樣切語言不會讓已用時數對不上。
     const stat = (leaveStats || []).find(s => s.name === lt.name)
     return {
       id: lt.id,
       name: lt.name,
+      name_en: lt.name_en,
       color: lt.color,
       used: stat?.totalHours || 0,
       total: override != null ? override : (lt.annual_quota_hours ?? null),
@@ -117,7 +144,7 @@ export async function fetchUsedHours(userId, leaveTypeId) {
     .in('status', ['approved', 'pending'])
     .gte('start_date', `${year}-01-01`)
     .lte('start_date', `${year}-12-31`)
-  if (error) throw new Error('讀取已使用時數失敗：' + error.message)
+  if (error) throw new LocalizedError('quota_read_used_failed', { msg: error.message })
   return (data || []).reduce((sum, row) => sum + leaveRequestHours(row), 0)
 }
 
@@ -146,10 +173,11 @@ export async function fetchQuotaHours(userId, leaveType) {
 /**
  * 送出假單前的額度檢查。
  *
- * 回傳 { ok: true } 或 { ok: false, message }。沒有設額度的假別一律放行
- * （額度欄位空白 = 無上限），只有財務有設額度、或有個人專屬設定的假別才擋。
+ * 回傳 { ok: true } 或 { ok: false, i18nKey, i18nParams } —— 訊息由畫面那一層
+ * 用 t(i18nKey, i18nParams) 翻譯。沒有設額度的假別一律放行（額度欄位空白 =
+ * 無上限），只有財務有設額度、或有個人專屬設定的假別才擋。
  */
-export async function checkQuota({ userId, leaveType, requestedHours }) {
+export async function checkQuota({ userId, leaveType, requestedHours, lang }) {
   const quota = await fetchQuotaHours(userId, leaveType)
   if (quota == null) return { ok: true }
 
@@ -160,10 +188,14 @@ export async function checkQuota({ userId, leaveType, requestedHours }) {
   const fmt = h => (Number.isInteger(h) ? h : h.toFixed(1))
   return {
     ok: false,
-    message:
-      `${leaveType.name}額度不足：本次申請 ${fmt(requestedHours)} 小時，` +
-      `但只剩 ${fmt(Math.max(0, remaining))} 小時` +
-      `（年度額度 ${fmt(quota)} 小時，已使用或審核中 ${fmt(used)} 小時）。`,
+    i18nKey: 'quota_exceeded',
+    i18nParams: {
+      type: leaveTypeName(leaveType, lang),
+      requested: fmt(requestedHours),
+      remaining: fmt(Math.max(0, remaining)),
+      quota: fmt(quota),
+      used: fmt(used),
+    },
   }
 }
 

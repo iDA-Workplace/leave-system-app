@@ -21,13 +21,6 @@ const RAIL_EXPANDED_KEY = 'leave-system-rail-expanded'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 
-const ROLE_LABELS = {
-  employee: '員工',
-  deputy_supervisor: '副主管',
-  supervisor: '主管',
-  boss: '老闆',
-}
-
 function buildNavItems(userProfile, t) {
   const items = [
     { path: '/', label: t('nav_home'), icon: DashboardIcon, end: true },
@@ -167,14 +160,14 @@ function Layout({ children, userProfile }) {
   }
 
   const themeOptions = [
-    { value: 'light', label: '淺色', icon: SunIcon },
-    { value: 'dark', label: '深色', icon: MoonIcon },
-    { value: 'system', label: '跟隨系統', icon: DashboardIcon },
+    { value: 'light', label: t('theme_light'), icon: SunIcon },
+    { value: 'dark', label: t('theme_dark'), icon: MoonIcon },
+    { value: 'system', label: t('theme_system'), icon: DashboardIcon },
   ]
 
   return (
     <div className="shell">
-      <a href="#main-content" className="skip-link">跳到主要內容</a>
+      <a href="#main-content" className="skip-link">{t('app_skip_to_content')}</a>
 
       <header className="app-bar">
         <form className="app-bar__search" ref={searchRef} onSubmit={handleSearchSubmit}>
@@ -206,7 +199,7 @@ function Layout({ children, userProfile }) {
             <button
               type="button"
               className="icon-button"
-              aria-label="切換主題"
+              aria-label={t('app_bar_theme_toggle')}
               aria-haspopup="menu"
               aria-expanded={themeMenuOpen}
               onClick={() => setThemeMenuOpen(o => !o)}
@@ -235,7 +228,7 @@ function Layout({ children, userProfile }) {
           <button
             type="button"
             className="icon-button"
-            aria-label={`待審核假單，${pendingCount} 筆待處理`}
+            aria-label={t('app_bar_pending_aria', { n: pendingCount })}
             onClick={() => navigate('/#pending-team-approvals')}
           >
             <BellIcon size={20} />
@@ -246,7 +239,7 @@ function Layout({ children, userProfile }) {
             <button
               type="button"
               className="app-bar__identity"
-              aria-label="使用者選單"
+              aria-label={t('app_bar_user_menu')}
               aria-haspopup="menu"
               aria-expanded={avatarMenuOpen}
               onClick={() => setAvatarMenuOpen(o => !o)}
@@ -264,7 +257,7 @@ function Layout({ children, userProfile }) {
                 <div className="avatar-menu__identity">
                   <div className="avatar-menu__name">{userProfile?.full_name}</div>
                   <div className="avatar-menu__role">
-                    {ROLE_LABELS[userProfile?.role] || userProfile?.role}{userProfile?.is_admin ? '｜管理員' : ''}
+                    {userProfile?.role ? t(`role_${userProfile.role}`) : ''}{userProfile?.is_admin ? t('role_admin_suffix') : ''}
                   </div>
                 </div>
                 <button type="button" className="avatar-menu__item avatar-menu__item--danger" onClick={handleLogout}>
@@ -278,7 +271,7 @@ function Layout({ children, userProfile }) {
       </header>
 
       <div className="shell__body">
-        <nav className={`rail${railExpanded ? ' rail--expanded' : ''}`} aria-label="主要導覽">
+        <nav className={`rail${railExpanded ? ' rail--expanded' : ''}`} aria-label={t('app_nav_primary')}>
           <div className="rail__brand">
             {/* Placeholder wordmark until the real logo file can be added to
                 the repo (this session can't extract a pasted chat image to
@@ -287,19 +280,19 @@ function Layout({ children, userProfile }) {
               <span className="rail__brand-name-full">iDA Workplace</span>
               <span className="rail__brand-name-short">iDA</span>
             </span>
-            <span className="rail__brand-caption">管理系統</span>
+            <span className="rail__brand-caption">{t('app_brand_caption')}</span>
           </div>
 
-          <Link to="/leave/new" className="rail__cta" title="請假申請">
+          <Link to="/leave/new" className="rail__cta" title={t('nav_leave_apply')}>
             <AddNoteIcon size={18} />
-            <span className="rail__cta-label">請假申請</span>
+            <span className="rail__cta-label">{t('nav_leave_apply')}</span>
           </Link>
 
           <div className="rail__toggle-row">
             <button
               type="button"
               className="icon-button"
-              aria-label={railExpanded ? '收合導覽列' : '展開導覽列'}
+              aria-label={railExpanded ? t('app_rail_collapse') : t('app_rail_expand')}
               onClick={toggleRail}
               style={{ transform: railExpanded ? 'none' : 'rotate(180deg)' }}
             >
@@ -336,7 +329,7 @@ function Layout({ children, userProfile }) {
         </main>
       </div>
 
-      <nav className="bottom-nav" aria-label="主要導覽（行動版）">
+      <nav className="bottom-nav" aria-label={t('app_nav_primary_mobile')}>
         {bottomNavItems.map(item => {
           const active = isItemActive(item, location.pathname)
           return (
@@ -354,17 +347,17 @@ function Layout({ children, userProfile }) {
         })}
         <button type="button" className="bottom-nav-item" onClick={() => setMoreSheetOpen(true)} aria-haspopup="dialog">
           <MoreIcon size={22} />
-          更多
+          {t('app_more')}
         </button>
       </nav>
 
       {moreSheetOpen && (
         <>
           <div className="more-sheet-scrim" onClick={() => setMoreSheetOpen(false)} />
-          <div className="more-sheet" role="dialog" aria-label="更多功能">
+          <div className="more-sheet" role="dialog" aria-label={t('app_more_features')}>
             <div className="more-sheet__header">
-              <span className="more-sheet__title">更多功能</span>
-              <button type="button" className="icon-button" aria-label="關閉" onClick={() => setMoreSheetOpen(false)}>
+              <span className="more-sheet__title">{t('app_more_features')}</span>
+              <button type="button" className="icon-button" aria-label={t('common_close')} onClick={() => setMoreSheetOpen(false)}>
                 <CloseIcon size={20} />
               </button>
             </div>

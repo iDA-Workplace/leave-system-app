@@ -5,7 +5,9 @@ import { Button, Dialog, Select, Textarea, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import {
   buildBalanceRows, fetchEntitlementOverrides, checkQuota, calcHours, countWorkdays,
+  leaveTypeName, errorText,
 } from '../lib/leaveEntitlements'
+import { useLanguage } from '../context/LanguageContext'
 import './LeaveForm.css'
 
 const TIME_OPTIONS = []
@@ -31,6 +33,7 @@ function initials(name) {
 function LeaveForm({ userProfile }) {
   const navigate = useNavigate()
   const { showToast } = useToast()
+  const { t, lang } = useLanguage()
   const fileInputRef = useRef(null)
 
   const [leaveTypes, setLeaveTypes] = useState([])
@@ -93,7 +96,7 @@ function LeaveForm({ userProfile }) {
 
     const { data } = await supabase
       .from('leave_requests')
-      .select(`*, leave_type:leave_types(name, color)`)
+      .select(`*, leave_type:leave_types(*)`)
       .eq('requester_id', userProfile.id)
       .eq('status', 'approved')
       .gte('start_date', `${year}-01-01`)
@@ -101,7 +104,7 @@ function LeaveForm({ userProfile }) {
 
     const statsMap = {}
     for (const leave of data || []) {
-      const typeName = leave.leave_type?.name || '其他'
+      const typeName = leave.leave_type?.name || t('common_other')
       const typeColor = leave.leave_type?.color || 'var(--sys-color-primary)'
       if (!statsMap[typeName]) {
         statsMap[typeName] = { name: typeName, color: typeColor, totalHours: 0 }
@@ -132,14 +135,14 @@ function LeaveForm({ userProfile }) {
   async function handleFileSelected(file) {
     if (!file) return
     if (file.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
-      showToast(`檔案超過 ${MAX_ATTACHMENT_MB}MB，請重新選擇`, { tone: 'error' })
+      showToast(t('leaveform_err_file_size', { mb: MAX_ATTACHMENT_MB }), { tone: 'error' })
       return
     }
     setUploading(true)
     const path = `${userProfile.id}/${Date.now()}-${file.name}`
     const { error } = await supabase.storage.from('leave-attachments').upload(path, file)
     if (error) {
-      showToast('附件上傳失敗：' + error.message, { tone: 'error' })
+      showToast(t('leaveform_err_upload', { msg: error.message }), { tone: 'error' })
       setUploading(false)
       return
     }
@@ -157,19 +160,19 @@ function LeaveForm({ userProfile }) {
   async function handleSubmit(e) {
     e.preventDefault()
     if (!form.leave_type_id || !form.start_date || !form.end_date || !form.reason) {
-      showToast('請填寫所有欄位', { tone: 'error' }); return
+      showToast(t('leaveform_err_required'), { tone: 'error' }); return
     }
     if (form.end_date < form.start_date) {
-      showToast('結束日期不能早於開始日期', { tone: 'error' }); return
+      showToast(t('leaveform_err_date_order'), { tone: 'error' }); return
     }
     if (!isMultiDay && form.end_time <= form.start_time) {
-      showToast('結束時間不能早於或等於開始時間', { tone: 'error' }); return
+      showToast(t('leaveform_time_order_error'), { tone: 'error' }); return
     }
     if (!isMultiDay && hours === 0) {
-      showToast('請假時數不能為 0', { tone: 'error' }); return
+      showToast(t('leaveform_err_zero_hours'), { tone: 'error' }); return
     }
     if (!userProfile.default_flow_id) {
-      showToast('您尚未被指定審核流程，請聯繫管理員設定', { tone: 'error' }); return
+      showToast(t('leaveform_err_no_flow'), { tone: 'error' }); return
     }
 
     setLoading(true)
@@ -187,14 +190,15 @@ function LeaveForm({ userProfile }) {
           userId: userProfile.id,
           leaveType: selectedType,
           requestedHours,
+          lang,
         })
         if (!quota.ok) {
-          showToast(quota.message, { tone: 'error' })
+          showToast(t(quota.i18nKey, quota.i18nParams), { tone: 'error' })
           setLoading(false)
           return
         }
       } catch (err) {
-        showToast(err.message, { tone: 'error' })
+        showToast(errorText(err, t), { tone: 'error' })
         setLoading(false)
         return
       }
@@ -222,7 +226,7 @@ function LeaveForm({ userProfile }) {
       .single()
 
     if (error) {
-      showToast('送出失敗：' + error.message, { tone: 'error' })
+      showToast(t('leaveform_err_submit', { msg: error.message }), { tone: 'error' })
       setLoading(false)
       return
     }
@@ -248,13 +252,15 @@ function LeaveForm({ userProfile }) {
 
     setLoading(false)
 
-    const leaveTypeName = leaveTypes.find(lt => lt.id === form.leave_type_id)?.name || ''
+    const typeLabel = leaveTypeName(leaveTypes.find(lt => lt.id === form.leave_type_id), lang)
     const dateLabel = isMultiDay
-      ? `${form.start_date} ～ ${form.end_date}`
-      : `${form.start_date} ${form.start_time} ～ ${form.end_time}`
-    const hoursLabel = isMultiDay ? `${countWorkdays(form.start_date, form.end_date)} 天` : `${hours} 小時`
+      ? `${form.start_date} ~ ${form.end_date}`
+      : `${form.start_date} ${form.start_time} ~ ${form.end_time}`
+    const hoursLabel = isMultiDay
+      ? t('common_days', { n: countWorkdays(form.start_date, form.end_date) })
+      : t('common_hours', { n: hours })
 
-    setSuccessInfo({ leaveTypeName, dateLabel, hoursLabel })
+    setSuccessInfo({ typeLabel, dateLabel, hoursLabel })
   }
 
   const balanceRows = buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides: entitlementOverrides })
@@ -264,15 +270,15 @@ function LeaveForm({ userProfile }) {
     <div className="leave-modal-scrim" onMouseDown={(e) => { if (e.target === e.currentTarget) navigate(-1) }}>
       <div className="leave-modal" role="dialog" aria-modal="true" aria-labelledby="leave-modal-title">
         <div className="leave-modal__header">
-          <h2 className="leave-modal__title" id="leave-modal-title">新增請假申請</h2>
-          <button type="button" className="leave-modal__close" onClick={() => navigate(-1)} aria-label="關閉">✕</button>
+          <h2 className="leave-modal__title" id="leave-modal-title">{t('leaveform_title')}</h2>
+          <button type="button" className="leave-modal__close" onClick={() => navigate(-1)} aria-label={t('common_close')}>✕</button>
         </div>
 
         <div className="leave-modal__body">
           <form className="leave-modal__form" onSubmit={handleSubmit} id="leave-form">
             {flowSteps.length > 0 && (
               <div className="leave-modal__field">
-                <span className="leave-modal__field-label leave-modal__field-label--center">審核流程</span>
+                <span className="leave-modal__field-label leave-modal__field-label--center">{t('leaveform_flow')}</span>
                 <div className="leave-modal__flow-pills">
                   {flowSteps.map((step, i) => (
                     <span key={step.step_order} className="leave-modal__flow-pill-wrap">
@@ -288,22 +294,22 @@ function LeaveForm({ userProfile }) {
             )}
 
             {!userProfile?.default_flow_id && (
-              <div className="leave-form-warning">⚠️ 您尚未被指定審核流程，請聯繫管理員設定後再送出假單。</div>
+              <div className="leave-form-warning">{t('leaveform_no_flow_warning')}</div>
             )}
 
             <Select
-              label="假別"
+              label={t('field_leave_type')}
               required
               value={form.leave_type_id}
               onChange={e => setForm(prev => ({ ...prev, leave_type_id: e.target.value }))}
             >
-              <option value="">請選擇假別...</option>
-              {leaveTypes.map(lt => <option key={lt.id} value={lt.id}>{lt.name}</option>)}
+              <option value="">{t('leaveform_select_type')}</option>
+              {leaveTypes.map(lt => <option key={lt.id} value={lt.id}>{leaveTypeName(lt, lang)}</option>)}
             </Select>
 
             <div className="leave-modal__row">
               <div className="leave-modal__datetime">
-                <span className="leave-modal__field-label">開始時間 *</span>
+                <span className="leave-modal__field-label">{t('leaveform_start')} *</span>
                 <div className="leave-modal__datetime-row">
                   <input
                     type="date"
@@ -323,7 +329,7 @@ function LeaveForm({ userProfile }) {
                 </div>
               </div>
               <div className="leave-modal__datetime">
-                <span className="leave-modal__field-label">結束時間 *</span>
+                <span className="leave-modal__field-label">{t('leaveform_end')} *</span>
                 <div className="leave-modal__datetime-row">
                   <input
                     type="date"
@@ -347,38 +353,38 @@ function LeaveForm({ userProfile }) {
 
             {!isMultiDay && hours > 0 && (
               <div className="leave-form-hours">
-                🕐 請假時數：{hours} 小時
+                {t('leaveform_hours_note', { n: hours })}
                 {form.start_time < '13:00' && form.end_time > '12:00' && (
-                  <span className="leave-form-hours__note">（已扣除午休 1 小時）</span>
+                  <span className="leave-form-hours__note">{t('leaveform_lunch_note')}</span>
                 )}
               </div>
             )}
             {!isMultiDay && hours === 0 && form.end_time <= form.start_time && (
-              <div className="leave-form-error-banner">⚠️ 結束時間不能早於或等於開始時間</div>
+              <div className="leave-form-error-banner">⚠️ {t('leaveform_time_order_error')}</div>
             )}
-            {isMultiDay && <div className="leave-form-hours">📅 跨天請假（整天）</div>}
+            {isMultiDay && <div className="leave-form-hours">{t('leaveform_multiday')}</div>}
 
             <Textarea
-              label="請假原因"
+              label={t('field_reason')}
               required
               rows={4}
               value={form.reason}
               onChange={e => setForm(prev => ({ ...prev, reason: e.target.value }))}
-              placeholder="請詳細說明請假原因..."
+              placeholder={t('leaveform_reason_placeholder')}
             />
 
             <Select
-              label="職務代理人（選填）"
+              label={t('leaveform_proxy_optional')}
               value={form.proxy_user_id}
               onChange={e => setForm(prev => ({ ...prev, proxy_user_id: e.target.value }))}
             >
-              <option value="">請選擇職務代理人...</option>
+              <option value="">{t('leaveform_select_proxy')}</option>
               {colleagues.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
             </Select>
 
             <div className="leave-modal__field">
               <span className="leave-modal__field-label leave-modal__field-label--center">
-                附件上傳（選填，JPG／PNG／PDF）
+                {t('leaveform_attachment_label')}
               </span>
               <div
                 className={`leave-modal__dropzone${dragActive ? ' leave-modal__dropzone--active' : ''}`}
@@ -397,17 +403,17 @@ function LeaveForm({ userProfile }) {
                   onChange={e => handleFileSelected(e.target.files?.[0])}
                 />
                 {uploading ? (
-                  <p>上傳中...</p>
+                  <p>{t('leaveform_uploading')}</p>
                 ) : attachment ? (
                   <div className="leave-modal__attachment">
                     <span>📎 {attachment.name}</span>
-                    <button type="button" onClick={e => { e.stopPropagation(); setAttachment(null) }} aria-label="移除附件">✕</button>
+                    <button type="button" onClick={e => { e.stopPropagation(); setAttachment(null) }} aria-label={t('leaveform_remove_attachment')}>✕</button>
                   </div>
                 ) : (
                   <>
                     <div className="leave-modal__dropzone-icon">⬆</div>
-                    <p>點擊或拖拽文件至此處上傳</p>
-                    <p className="leave-modal__dropzone-hint">支援 JPG、PNG、PDF（最大 {MAX_ATTACHMENT_MB}MB）</p>
+                    <p>{t('leaveform_dropzone')}</p>
+                    <p className="leave-modal__dropzone-hint">{t('leaveform_dropzone_hint', { mb: MAX_ATTACHMENT_MB })}</p>
                   </>
                 )}
               </div>
@@ -416,35 +422,35 @@ function LeaveForm({ userProfile }) {
 
           <aside className="leave-modal__sidebar">
             <div className="leave-modal__sidebar-title">
-              假期剩餘額度 <span className="leave-modal__sidebar-subtitle">（已使用時數／總時數）</span>
+              {t('leaveform_balance_title')} <span className="leave-modal__sidebar-subtitle">{t('leaveform_balance_subtitle')}</span>
             </div>
             <div className="leave-modal__balance-list">
               {balanceRows.map(row => (
                 <div key={row.id} className="leave-modal__balance-row">
                   <span className="leave-modal__balance-dot" style={{ backgroundColor: row.color || 'var(--sys-color-primary)' }} />
-                  <span className="leave-modal__balance-name">{row.name}</span>
+                  <span className="leave-modal__balance-name">{leaveTypeName(row, lang)}</span>
                   <span className="leave-modal__balance-value">
-                    {row.used}/{row.total ?? '—'} 小時
+                    {t('common_hours', { n: `${row.used}/${row.total ?? '—'}` })}
                   </span>
                 </div>
               ))}
             </div>
 
             <div className="leave-modal__notice">
-              <div className="leave-modal__notice-title">⚠ 請假須知</div>
+              <div className="leave-modal__notice-title">{t('leaveform_notice_title')}</div>
               <ul>
-                <li>特休請於 3 日前提出申請</li>
-                <li>病假超過 2 日需附醫生證明</li>
-                <li>請假期間請指定代理人</li>
+                <li>{t('leaveform_notice_1')}</li>
+                <li>{t('leaveform_notice_2')}</li>
+                <li>{t('leaveform_notice_3')}</li>
               </ul>
             </div>
           </aside>
         </div>
 
         <div className="leave-modal__footer">
-          <Button variant="text" onClick={() => navigate(-1)}>取消</Button>
+          <Button variant="text" onClick={() => navigate(-1)}>{t('common_cancel')}</Button>
           <Button type="submit" form="leave-form" loading={loading} disabled={!userProfile?.default_flow_id}>
-            {loading ? '送出中...' : '提交申請'}
+            {loading ? t('leaveform_submitting') : t('leaveform_submit')}
           </Button>
         </div>
       </div>
@@ -452,20 +458,20 @@ function LeaveForm({ userProfile }) {
 
     {successInfo && (
       <Dialog
-        title="假單已送出"
+        title={t('leaveform_success_title')}
         labelledBy="leave-success-title"
         actions={(
           <>
-            <Button variant="outlined" onClick={() => navigate('/')}>返回首頁</Button>
-            <Button onClick={() => navigate('/leave/my')}>查看申請進度</Button>
+            <Button variant="outlined" onClick={() => navigate('/')}>{t('leaveform_back_home')}</Button>
+            <Button onClick={() => navigate('/leave/my')}>{t('leaveform_view_progress')}</Button>
           </>
         )}
       >
         <div className="leave-success-rows">
-          <div><strong>假別：</strong>{successInfo.leaveTypeName}</div>
-          <div><strong>申請日期/時間：</strong>{successInfo.dateLabel}</div>
-          <div><strong>申請時數：</strong>{successInfo.hoursLabel}</div>
-          <div><strong>審核流程：</strong>{flowSteps.length > 0 ? flowSteps.map(s => s.approver?.full_name).join(' → ') : '無須審核'}</div>
+          <div><strong>{t('field_leave_type')}{t('common_colon')}</strong>{successInfo.typeLabel}</div>
+          <div><strong>{t('leaveform_success_datetime')}{t('common_colon')}</strong>{successInfo.dateLabel}</div>
+          <div><strong>{t('leaveform_success_hours')}{t('common_colon')}</strong>{successInfo.hoursLabel}</div>
+          <div><strong>{t('leaveform_flow')}{t('common_colon')}</strong>{flowSteps.length > 0 ? flowSteps.map(s => s.approver?.full_name).join(' → ') : t('leaveform_success_no_flow')}</div>
         </div>
       </Dialog>
     )}

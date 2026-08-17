@@ -3,18 +3,17 @@ import { Link, useLocation } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, Skeleton, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
-import { fetchAnnualLeaveDays } from '../lib/leaveEntitlements'
+import { fetchAnnualLeaveDays, leaveTypeName } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import './Home.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
-const WEEKDAY_LABELS = ['日', '一', '二', '三', '四', '五', '六']
-const STATUS_MAP = {
-  pending: { label: '審核中', tone: 'warning' },
-  approved: { label: '已核准', tone: 'success' },
-  rejected: { label: '已拒絕', tone: 'error' },
-  returned: { label: '已退回', tone: 'neutral' },
-  withdrawn: { label: '已收回', tone: 'info' },
+const STATUS_TONES = {
+  pending: 'warning',
+  approved: 'success',
+  rejected: 'error',
+  returned: 'neutral',
+  withdrawn: 'info',
 }
 const AVATAR_PALETTE = ['var(--sys-color-primary)', 'var(--sys-color-tertiary)', 'var(--sys-color-secondary)', 'var(--sys-color-success)']
 
@@ -71,7 +70,7 @@ function FlowChips({ steps, currentStep, isApproved }) {
 function Home({ userProfile }) {
   const isApprover = APPROVER_ROLES.includes(userProfile?.role)
   const { showToast } = useToast()
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
 
   const [annualLeave, setAnnualLeave] = useState(null)
   const [statsLoading, setStatsLoading] = useState(true)
@@ -153,7 +152,7 @@ function Home({ userProfile }) {
       .select(`
         *,
         requester:users!leave_requests_requester_id_fkey(full_name),
-        leave_type:leave_types(name, color),
+        leave_type:leave_types(*),
         flow:approval_flows(name, steps:approval_flow_steps(*))
       `)
       .eq('status', 'pending')
@@ -176,7 +175,7 @@ function Home({ userProfile }) {
       .from('leave_requests')
       .select(`
         *,
-        leave_type:leave_types(name, color),
+        leave_type:leave_types(*),
         flow:approval_flows(steps:approval_flow_steps(step_order, approver:users!approval_flow_steps_approver_id_fkey(full_name)))
       `)
       .eq('requester_id', userProfile.id)
@@ -254,7 +253,7 @@ function Home({ userProfile }) {
       action: 'approved',
     })
     if (insertError) {
-      showToast('送出審核記錄失敗：' + insertError.message, { tone: 'error' })
+      showToast(t('error_insert_approval', { msg: insertError.message }), { tone: 'error' })
       setActingId(null)
       return
     }
@@ -265,12 +264,12 @@ function Home({ userProfile }) {
       : await supabase.from('leave_requests').update({ current_step: request.current_step + 1 }).eq('id', request.id).select()
 
     if (updateResult.error) {
-      showToast('更新假單狀態失敗：' + updateResult.error.message, { tone: 'error' })
+      showToast(t('error_update_request', { msg: updateResult.error.message }), { tone: 'error' })
       setActingId(null)
       return
     }
     if (!updateResult.data || updateResult.data.length === 0) {
-      showToast('更新假單狀態失敗：沒有權限修改這筆假單（可能是資料庫權限規則 RLS 擋下），已通知請檢查', { tone: 'error' })
+      showToast(t('error_update_request_rls'), { tone: 'error' })
       setActingId(null)
       return
     }
@@ -279,13 +278,13 @@ function Home({ userProfile }) {
       body: { type: request.current_step >= maxStep ? 'approved' : 'new_request', request_id: request.id }
     })
 
-    showToast(`已核准 ${request.requester?.full_name} 的請假`)
+    showToast(t('home_approved_toast', { name: request.requester?.full_name }))
     setActingId(null)
     fetchApprovalQueue()
   }
 
   async function handleConfirmReject() {
-    if (!rejectReason.trim()) { showToast('請填寫拒絕原因', { tone: 'error' }); return }
+    if (!rejectReason.trim()) { showToast(t('home_reject_reason_required'), { tone: 'error' }); return }
     setActingId(rejectTarget.id)
     const { error: insertError } = await supabase.from('leave_approvals').insert({
       request_id: rejectTarget.id,
@@ -295,24 +294,24 @@ function Home({ userProfile }) {
       comment: rejectReason.trim(),
     })
     if (insertError) {
-      showToast('送出審核記錄失敗：' + insertError.message, { tone: 'error' })
+      showToast(t('error_insert_approval', { msg: insertError.message }), { tone: 'error' })
       setActingId(null)
       return
     }
     const { error: updateError, data: updateData } = await supabase.from('leave_requests').update({ status: 'rejected' }).eq('id', rejectTarget.id).select()
     if (updateError) {
-      showToast('更新假單狀態失敗：' + updateError.message, { tone: 'error' })
+      showToast(t('error_update_request', { msg: updateError.message }), { tone: 'error' })
       setActingId(null)
       return
     }
     if (!updateData || updateData.length === 0) {
-      showToast('更新假單狀態失敗：沒有權限修改這筆假單（可能是資料庫權限規則 RLS 擋下），已通知請檢查', { tone: 'error' })
+      showToast(t('error_update_request_rls'), { tone: 'error' })
       setActingId(null)
       return
     }
     await supabase.functions.invoke('send-slack-notification', { body: { type: 'rejected', request_id: rejectTarget.id } })
 
-    showToast(`已拒絕 ${rejectTarget.requester?.full_name} 的請假`)
+    showToast(t('home_rejected_toast', { name: rejectTarget.requester?.full_name }))
     setActingId(null)
     setRejectTarget(null)
     setRejectReason('')
@@ -321,15 +320,21 @@ function Home({ userProfile }) {
 
   async function handleConfirmWithdraw() {
     await supabase.from('leave_requests').update({ status: 'withdrawn' }).eq('id', withdrawTarget.id)
-    showToast('假單已收回')
+    showToast(t('home_withdrawn_toast'))
     setWithdrawTarget(null)
     fetchMyRequests()
   }
 
   const now = new Date()
-  const todayLabel = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 星期${WEEKDAY_LABELS[now.getDay()]}`
+  const weekdayLabels = Array.from({ length: 7 }, (_, i) => t(`weekday_short_${i}`))
+  const todayLabel = t('home_today_date', {
+    year: now.getFullYear(),
+    month: t(`month_${now.getMonth() + 1}`),
+    day: now.getDate(),
+    weekday: t(`weekday_long_${now.getDay()}`),
+  })
   const pendingSentence = isApprover && approvalQueue.length > 0
-    ? `您目前有 ${approvalQueue.length} 筆待審核假單。`
+    ? t('home_pending_sentence', { n: approvalQueue.length })
     : ''
 
   const monthGrid = []
@@ -359,21 +364,21 @@ function Home({ userProfile }) {
     <div className="dash">
       <div className="dash-welcome">
         <h1 className="dash-welcome__title">
-          {t('home_welcome')}，{userProfile?.full_name}
-          {!isApprover && userProfile?.role === 'employee' && <span className="dash-welcome__role"> (一般員工)</span>}
+          {t('home_welcome', { name: userProfile?.full_name || '' })}
+          {!isApprover && userProfile?.role === 'employee' && <span className="dash-welcome__role"> {t('home_role_employee')}</span>}
         </h1>
-        <p className="dash-welcome__subtitle">今日是 {todayLabel}。{pendingSentence}</p>
+        <p className="dash-welcome__subtitle">{t('home_today_is', { date: todayLabel })}{pendingSentence}</p>
       </div>
 
       <div className="dash-top-grid">
         {statsLoading ? <Skeleton height="150px" /> : (
           <StatCard
             icon="📊"
-            title={t('home_annual_leave_balance') + ' (Annual)'}
+            title={t('home_annual_leave_balance')}
             value={annualLeave?.remaining ?? '—'}
             valueTone={annualLeave?.remaining < 0 ? 'negative' : undefined}
-            unit={annualLeave ? `天 / 總計 ${annualLeave.entitled} 天` : ''}
-            caption={annualLeave ? `已使用 ${annualLeave.used} 天` : '尚無資料'}
+            unit={annualLeave ? t('home_annual_unit', { total: annualLeave.entitled }) : ''}
+            caption={annualLeave ? t('home_annual_used', { used: annualLeave.used }) : t('common_no_data')}
             progress={annualLeave?.entitled ? (annualLeave.used / annualLeave.entitled) * 100 : 0}
           />
         )}
@@ -382,7 +387,7 @@ function Home({ userProfile }) {
           <Card className="dash-review-card">
             <div className="dash-card-header">
               <span className="dash-card-header__title">📈 {reviewActive ? reviewParticipant.review.title : t('home_review_reminder')}</span>
-              {reviewActive && <span className="dash-review-card__status-badge">進行中</span>}
+              {reviewActive && <span className="dash-review-card__status-badge">{t('home_review_in_progress')}</span>}
             </div>
             {!reviewActive ? (
               <p className="dash-empty-hint">{t('home_review_not_in_period')}</p>
@@ -394,10 +399,12 @@ function Home({ userProfile }) {
                       {/* 評分跑完後這格改講整體流程狀態。分數刻意不放在首頁
                           （首頁常被同事看到／投影），要看分數得點進考核管理。 */}
                       <div className="dash-review-card__tile-label">
-                        {reviewScored ? '✅ 考核狀態' : `📝 ${t('home_review_self_progress')}`}
+                        {reviewScored ? `✅ ${t('home_review_status')}` : `📝 ${t('home_review_self_progress')}`}
                       </div>
                       <div className="dash-review-card__tile-value">
-                        {reviewScored ? '已完成' : reviewParticipant.self_submitted ? '已提交' : '待提交'}
+                        {reviewScored
+                          ? t('home_review_completed')
+                          : reviewParticipant.self_submitted ? t('home_review_submitted') : t('home_review_not_submitted')}
                       </div>
                       <div className="dash-stat-card__progress-track">
                         <div className="dash-stat-card__progress-fill" style={{ width: reviewScored || reviewParticipant.self_submitted ? '100%' : '6%' }} />
@@ -416,7 +423,7 @@ function Home({ userProfile }) {
                       所以整個換掉，直接把人帶到過往考核紀錄那一頁。 */}
                   {canSelfAssess && (
                     reviewScored
-                      ? <Link to="/review?tab=past" className="dash-card-header__link">查看評分結果 →</Link>
+                      ? <Link to="/review?tab=past" className="dash-card-header__link">{t('home_review_view_result')} →</Link>
                       : <Link to="/review" className="dash-card-header__link">{t('home_review_fill_assessment')} →</Link>
                   )}
                   {isApprover && <Link to="/review/team" className="dash-card-header__link">{t('home_review_give_evaluation')} →</Link>}
@@ -435,27 +442,26 @@ function Home({ userProfile }) {
         {myRequestsLoading ? (
           <Skeleton height="120px" />
         ) : myRequests.length === 0 ? (
-          <p className="dash-empty-hint">尚無請假記錄</p>
+          <p className="dash-empty-hint">{t('home_no_leave_records')}</p>
         ) : (
           <div className="ui-table-wrap">
             <table className="ui-table dash-approval-table">
               <thead>
-                <tr><th>假別</th><th>請假日期</th><th>時間</th><th>時數</th><th>簽核狀態</th><th>操作</th></tr>
+                <tr><th>{t('field_leave_type')}</th><th>{t('field_leave_dates')}</th><th>{t('field_time')}</th><th>{t('field_hours')}</th><th>{t('field_approval_status')}</th><th>{t('common_actions')}</th></tr>
               </thead>
               <tbody>
                 {myRequests.map(req => {
-                  const status = STATUS_MAP[req.status] || STATUS_MAP.pending
+                  const tone = STATUS_TONES[req.status] || STATUS_TONES.pending
                   const isMultiDay = req.end_date > req.start_date
-                  const days = countDaysLabel(req.start_date, req.end_date)
                   return (
                     <tr key={req.id}>
-                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                      <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{leaveTypeName(req.leave_type, lang)}</Chip></td>
                       <td>{isMultiDay ? `${req.start_date} ~ ${req.end_date}` : req.start_date}</td>
-                      <td>{isMultiDay ? '全天' : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
-                      <td>{req.hours ? `${req.hours} 小時` : (isMultiDay ? days.trim() : '—')}</td>
+                      <td>{isMultiDay ? t('common_all_day') : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
+                      <td>{req.hours ? t('common_hours', { n: req.hours }) : (isMultiDay ? t('common_days', { n: calendarDayCount(req.start_date, req.end_date) }) : '—')}</td>
                       <td>
                         <div className="dash-status-cell">
-                          <Chip tone={status.tone}>{status.label}</Chip>
+                          <Chip tone={tone}>{t(`status_${req.status}`)}</Chip>
                           {req.status === 'pending' && (
                             <FlowChips
                               steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)}
@@ -467,7 +473,7 @@ function Home({ userProfile }) {
                       </td>
                       <td>
                         {req.status === 'pending' ? (
-                          <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>撤回</button>
+                          <button type="button" className="dash-withdraw-link" onClick={() => setWithdrawTarget(req)}>{t('home_withdraw')}</button>
                         ) : '-'}
                       </td>
                     </tr>
@@ -488,7 +494,7 @@ function Home({ userProfile }) {
           {queueLoading ? (
             <Skeleton height="120px" />
           ) : approvalQueue.length === 0 ? (
-            <p className="dash-empty-hint">目前沒有待審核的假單 🎉</p>
+            <p className="dash-empty-hint">{t('home_no_pending')}</p>
           ) : (() => {
             const totalPages = Math.max(1, Math.ceil(approvalQueue.length / APPROVAL_PAGE_SIZE))
             const safePage = Math.min(approvalPage, totalPages)
@@ -498,7 +504,7 @@ function Home({ userProfile }) {
                 <div className="ui-table-wrap">
                   <table className="ui-table dash-approval-table">
                     <thead>
-                      <tr><th>員工姓名</th><th>假別</th><th>請假日期</th><th>操作</th></tr>
+                      <tr><th>{t('home_employee_name')}</th><th>{t('field_leave_type')}</th><th>{t('field_leave_dates')}</th><th>{t('common_actions')}</th></tr>
                     </thead>
                     <tbody>
                       {pageRows.map(req => (
@@ -509,12 +515,12 @@ function Home({ userProfile }) {
                               {req.requester?.full_name}
                             </div>
                           </td>
-                          <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{req.leave_type?.name}</Chip></td>
+                          <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{leaveTypeName(req.leave_type, lang)}</Chip></td>
                           <td>{req.start_date}</td>
                           <td>
                             <div className="dash-approval-table__actions">
-                              <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label="拒絕">✕</Button>
-                              <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label="核准">✓</Button>
+                              <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label={t('home_reject')}>✕</Button>
+                              <Button size="sm" variant="danger" disabled={actingId === req.id} onClick={() => handleApprove(req)} aria-label={t('home_approve')}>✓</Button>
                             </div>
                           </td>
                         </tr>
@@ -523,9 +529,9 @@ function Home({ userProfile }) {
                   </table>
                 </div>
                 <div className="leave-mgmt-pagination">
-                  <Button size="sm" variant="outlined" disabled={safePage <= 1} onClick={() => setApprovalPage(p => p - 1)}>上一頁</Button>
-                  <span className="leave-mgmt-pagination__label">第 {safePage} / {totalPages} 頁</span>
-                  <Button size="sm" variant="outlined" disabled={safePage >= totalPages} onClick={() => setApprovalPage(p => p + 1)}>下一頁</Button>
+                  <Button size="sm" variant="outlined" disabled={safePage <= 1} onClick={() => setApprovalPage(p => p - 1)}>{t('common_prev_page')}</Button>
+                  <span className="leave-mgmt-pagination__label">{t('common_page_indicator', { page: safePage, total: totalPages })}</span>
+                  <Button size="sm" variant="outlined" disabled={safePage >= totalPages} onClick={() => setApprovalPage(p => p + 1)}>{t('common_next_page')}</Button>
                 </div>
               </>
             )
@@ -539,14 +545,14 @@ function Home({ userProfile }) {
             <div className="dash-card-header">
               <span className="dash-card-header__title">📅 {t('home_leave_calendar')}</span>
               <div className="dash-calendar-nav">
-                <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))} aria-label="上個月">‹</button>
-                <span>{calendarMonth.getFullYear()}年 {calendarMonth.getMonth() + 1}月</span>
-                <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))} aria-label="下個月">›</button>
+                <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() - 1, 1))} aria-label={t('home_prev_month')}>‹</button>
+                <span>{t('home_calendar_month', { year: calendarMonth.getFullYear(), month: t(`month_${calendarMonth.getMonth() + 1}`) })}</span>
+                <button type="button" onClick={() => setCalendarMonth(m => new Date(m.getFullYear(), m.getMonth() + 1, 1))} aria-label={t('home_next_month')}>›</button>
               </div>
             </div>
             {calendarLoading ? <Skeleton height="260px" /> : (
               <div className="dash-mini-calendar">
-                {WEEKDAY_LABELS.map(w => <div key={w} className="dash-mini-calendar__weekday">{w}</div>)}
+                {weekdayLabels.map((w, i) => <div key={i} className="dash-mini-calendar__weekday">{w}</div>)}
                 {monthGrid.map((cell, i) => (
                   <div key={i} className="dash-mini-calendar__cell">
                     {cell && (
@@ -575,7 +581,7 @@ function Home({ userProfile }) {
               <div className="dash-today-colleagues dash-today-colleagues--vertical">
                 <span className="dash-today-colleagues__label">{selectedDate}</span>
                 {selectedDateColleagues.length === 0 ? (
-                  <span className="dash-today-colleagues__empty">目前沒有人請假</span>
+                  <span className="dash-today-colleagues__empty">{t('home_nobody_on_leave')}</span>
                 ) : (
                   <div className="dash-today-colleagues__avatars">
                     {selectedDateColleagues.slice(0, 4).map(c => {
@@ -607,18 +613,18 @@ function Home({ userProfile }) {
 
       {rejectTarget && (
         <ConfirmDialog
-          title={`拒絕 ${rejectTarget.requester?.full_name} 的請假`}
+          title={t('home_reject_title', { name: rejectTarget.requester?.full_name })}
           description={(
             <Textarea
-              label="拒絕原因"
+              label={t('home_reject_reason')}
               required
               value={rejectReason}
               onChange={e => setRejectReason(e.target.value)}
               rows={3}
-              placeholder="請填寫拒絕原因"
+              placeholder={t('home_reject_reason_placeholder')}
             />
           )}
-          confirmLabel="拒絕"
+          confirmLabel={t('home_reject')}
           danger
           loading={actingId === rejectTarget.id}
           onConfirm={handleConfirmReject}
@@ -628,9 +634,9 @@ function Home({ userProfile }) {
 
       {withdrawTarget && (
         <ConfirmDialog
-          title="收回假單"
-          description="確定要收回這張假單嗎？收回後需要重新送出。"
-          confirmLabel="收回"
+          title={t('home_withdraw_title')}
+          description={t('home_withdraw_desc')}
+          confirmLabel={t('home_withdraw_confirm')}
           danger
           onConfirm={handleConfirmWithdraw}
           onCancel={() => setWithdrawTarget(null)}
@@ -640,11 +646,10 @@ function Home({ userProfile }) {
   )
 }
 
-function countDaysLabel(startDate, endDate) {
+function calendarDayCount(startDate, endDate) {
   const start = new Date(startDate)
   const end = new Date(endDate)
-  const days = Math.round((end - start) / 86400000) + 1
-  return ` (${days}天)`
+  return Math.round((end - start) / 86400000) + 1
 }
 
 export default Home
