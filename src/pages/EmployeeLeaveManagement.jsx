@@ -2,11 +2,12 @@ import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, Dialog, PageHeader, Select, Skeleton, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
-import { HOURS_PER_DAY, isAnnualLeaveType } from '../lib/leaveEntitlements'
+import { useLanguage } from '../context/LanguageContext'
+import { HOURS_PER_DAY, isAnnualLeaveType, leaveTypeName } from '../lib/leaveEntitlements'
 import LeaveTypeNames from './LeaveTypeNames'
 import './AdminPanel.css'
 
-function formatTenure(hireDate) {
+function formatTenure(hireDate, t) {
   if (!hireDate) return '—'
   const start = new Date(hireDate)
   const now = new Date()
@@ -15,7 +16,7 @@ function formatTenure(hireDate) {
   if (now.getDate() < start.getDate()) months -= 1
   if (months < 0) { years -= 1; months += 12 }
   if (years < 0) return '—'
-  return `${years}年${months}個月`
+  return t('finleave_tenure', { y: years, m: months })
 }
 
 // 特休 is talked about in days (labour law), everything else in hours --
@@ -59,6 +60,7 @@ function EmployeeLeaveManagement({ userProfile }) {
   const [bulkSaving, setBulkSaving] = useState(false)
 
   const { showToast } = useToast()
+  const { t, lang } = useLanguage()
 
   useEffect(() => { fetchAll() }, [])
 
@@ -78,32 +80,33 @@ function EmployeeLeaveManagement({ userProfile }) {
     setLeaveTypes(lt.data || [])
     setEntitlements(ent.data || [])
     setAnnualSummary(Object.fromEntries((summary.data || []).map(s => [s.user_id, s])))
-    setDefaults(Object.fromEntries((lt.data || []).map(t => [t.id, t.annual_quota_hours != null ? String(t.annual_quota_hours) : ''])))
+    setDefaults(Object.fromEntries((lt.data || []).map(row => [row.id, row.annual_quota_hours != null ? String(row.annual_quota_hours) : ''])))
     setLoading(false)
   }
 
   async function handleSaveDefaults() {
     setSavingDefaults(true)
-    for (const t of leaveTypes) {
-      if (isAnnualLeaveType(t)) continue // 特休 comes from the seniority formula, not a flat default
-      const raw = defaults[t.id]
+    // 迴圈變數刻意不叫 t —— 那會遮蔽翻譯用的 t()
+    for (const lt of leaveTypes) {
+      if (isAnnualLeaveType(lt)) continue // 特休 comes from the seniority formula, not a flat default
+      const raw = defaults[lt.id]
       const value = raw === '' ? null : Number(raw)
       if (value !== null && (Number.isNaN(value) || value < 0)) {
-        showToast(`「${t.name}」的時數請填有效數字`, { tone: 'error' })
+        showToast(t('finleave_err_number', { name: leaveTypeName(lt, lang) }), { tone: 'error' })
         setSavingDefaults(false)
         return
       }
-      if ((t.annual_quota_hours ?? null) === value) continue
+      if ((lt.annual_quota_hours ?? null) === value) continue
       const { data: updated, error } = await supabase.from('leave_types')
-        .update({ annual_quota_hours: value }).eq('id', t.id).select()
+        .update({ annual_quota_hours: value }).eq('id', lt.id).select()
       if (error || !updated?.length) {
-        showToast(`「${t.name}」儲存失敗：` + (error?.message || '沒有權限寫入'), { tone: 'error' })
+        showToast(t('finleave_err_save', { name: leaveTypeName(lt, lang), msg: error?.message || t('admin_no_write_permission') }), { tone: 'error' })
         setSavingDefaults(false)
         return
       }
     }
     setSavingDefaults(false)
-    showToast('已更新全公司預設額度')
+    showToast(t('finleave_defaults_saved'))
     fetchAll()
   }
 
@@ -124,7 +127,7 @@ function EmployeeLeaveManagement({ userProfile }) {
       return error
     }
     const days = Number(rawDays)
-    if (Number.isNaN(days) || days < 0) return new Error('請填有效數字')
+    if (Number.isNaN(days) || days < 0) return new Error(t('finleave_err_valid_number'))
     const { error } = await supabase.from('user_leave_entitlements').upsert({
       user_id: userId,
       leave_type_id: annualType.id,
@@ -145,7 +148,7 @@ function EmployeeLeaveManagement({ userProfile }) {
         .update({ hire_date: patch.hire_date || null }).eq('id', userId).select()
       if (error || !data?.length) {
         setRowStatus(s => ({ ...s, [userId]: 'error' }))
-        showToast('入職日期儲存失敗：' + (error?.message || '沒有權限寫入'), { tone: 'error' })
+        showToast(t('finleave_err_hire_date', { msg: error?.message || t('admin_no_write_permission') }), { tone: 'error' })
         return
       }
     }
@@ -154,7 +157,7 @@ function EmployeeLeaveManagement({ userProfile }) {
       const error = await writeAnnualDays(userId, patch.annual_days)
       if (error) {
         setRowStatus(s => ({ ...s, [userId]: 'error' }))
-        showToast('特休額度儲存失敗：' + error.message, { tone: 'error' })
+        showToast(t('finleave_err_annual_quota', { msg: error.message }), { tone: 'error' })
         return
       }
     }
@@ -178,16 +181,16 @@ function EmployeeLeaveManagement({ userProfile }) {
   // ===== 批次套用 =====
 
   async function handleBulkApply() {
-    if (!bulkTypeId) { showToast('請選擇假別', { tone: 'error' }); return }
-    if (selected.length === 0) { showToast('請先勾選要套用的員工', { tone: 'error' }); return }
+    if (!bulkTypeId) { showToast(t('finleave_err_select_type'), { tone: 'error' }); return }
+    if (selected.length === 0) { showToast(t('finleave_err_select_users'), { tone: 'error' }); return }
 
-    const type = leaveTypes.find(t => t.id === bulkTypeId)
+    const type = leaveTypes.find(lt => lt.id === bulkTypeId)
     const annual = isAnnualLeaveType(type)
     let hours = null
     if (bulkMode === 'manual') {
       const n = Number(bulkValue)
       if (bulkValue === '' || Number.isNaN(n) || n < 0) {
-        showToast('請填有效數字', { tone: 'error' }); return
+        showToast(t('finleave_err_valid_number'), { tone: 'error' }); return
       }
       hours = annual ? n * HOURS_PER_DAY : n
     }
@@ -202,13 +205,13 @@ function EmployeeLeaveManagement({ userProfile }) {
         : await supabase.from('user_leave_entitlements')
             .delete().eq('user_id', userId).eq('leave_type_id', bulkTypeId)
       if (error) {
-        showToast('批次套用失敗：' + error.message, { tone: 'error' })
+        showToast(t('finleave_err_bulk', { msg: error.message }), { tone: 'error' })
         setBulkSaving(false)
         return
       }
     }
     setBulkSaving(false)
-    showToast(`已將「${type.name}」套用到 ${selected.length} 位員工`)
+    showToast(t('finleave_bulk_done', { name: leaveTypeName(type, lang), n: selected.length }))
     setSelected([])
     setBulkValue('')
     fetchAll()
@@ -233,7 +236,7 @@ function EmployeeLeaveManagement({ userProfile }) {
       .update({ hire_date: editing.hire_date || null })
       .eq('id', editing.user.id).select()
     if (userError || !updatedUser?.length) {
-      showToast('入職日期儲存失敗：' + (userError?.message || '沒有權限寫入'), { tone: 'error' })
+      showToast(t('finleave_err_hire_date', { msg: userError?.message || t('admin_no_write_permission') }), { tone: 'error' })
       setSaving(false)
       return
     }
@@ -244,7 +247,7 @@ function EmployeeLeaveManagement({ userProfile }) {
       if (row.mode === 'manual') {
         const hours = toHours(row.value, annual)
         if (hours == null || hours < 0) {
-          showToast(`「${lt.name}」選了手動調整，請填有效數字`, { tone: 'error' })
+          showToast(t('finleave_err_manual_number', { name: leaveTypeName(lt, lang) }), { tone: 'error' })
           setSaving(false)
           return
         }
@@ -256,22 +259,22 @@ function EmployeeLeaveManagement({ userProfile }) {
           updated_at: new Date().toISOString(),
           updated_by: userProfile.id,
         }, { onConflict: 'user_id,leave_type_id' })
-        if (error) { showToast(`「${lt.name}」儲存失敗：` + error.message, { tone: 'error' }); setSaving(false); return }
+        if (error) { showToast(t('finleave_err_save', { name: leaveTypeName(lt, lang), msg: error.message }), { tone: 'error' }); setSaving(false); return }
       } else {
         // 比照勞基法 -- drop any previous manual row so it falls back to the default.
         const { error } = await supabase.from('user_leave_entitlements')
           .delete().eq('user_id', editing.user.id).eq('leave_type_id', lt.id)
-        if (error) { showToast(`「${lt.name}」儲存失敗：` + error.message, { tone: 'error' }); setSaving(false); return }
+        if (error) { showToast(t('finleave_err_save', { name: leaveTypeName(lt, lang), msg: error.message }), { tone: 'error' }); setSaving(false); return }
       }
     }
 
     setSaving(false)
-    showToast(`已更新 ${editing.user.full_name} 的假期設定`)
+    showToast(t('finleave_updated', { name: editing.user.full_name }))
     setEditing(null)
     fetchAll()
   }
 
-  if (loading) return <div><PageHeader title="員工假期管理" /><Skeleton height="200px" /></div>
+  if (loading) return <div><PageHeader title={t('finleave_title')} /><Skeleton height="200px" /></div>
 
   const departments = [...new Set(users.map(u => u.department).filter(Boolean))].sort()
 
@@ -289,13 +292,6 @@ function EmployeeLeaveManagement({ userProfile }) {
   function annualStatutoryDays(userId) {
     const summary = annualSummary[userId]
     return summary?.entitled_days != null ? Number(summary.entitled_days) : null
-  }
-
-  function annualQuotaLabel(user) {
-    const override = annualOverrideDays(user.id)
-    if (override != null) return `${override} 天`
-    const statutory = annualStatutoryDays(user.id)
-    return statutory != null ? `${statutory} 天` : '—'
   }
 
   const visibleUsers = users.filter(u => {
@@ -320,36 +316,31 @@ function EmployeeLeaveManagement({ userProfile }) {
 
   return (
     <div>
-      <PageHeader title="員工假期管理" />
+      <PageHeader title={t('finleave_title')} />
       <p className="admin-hint">
-        設定每位員工各假別的可用額度。預設一律「比照勞基法」（特休依入職日期與年資自動計算，其他假別用下方的全公司預設值）；
-        若有個別談定的條件，改成「手動調整」並填入數字即可覆蓋。
+        {t('finleave_hint_1')}
         <br />
-        <strong>入職日期與特休天數可以直接在表格裡修改，改完會自動儲存</strong>；特休留白＝依年資自動計算。
-        其他假別請按「編輯」，或勾選多位員工後使用批次套用。
+        <strong>{t('finleave_hint_2_strong')}</strong>{t('finleave_hint_2_rest')}
       </p>
 
       <Card className="admin-form-card">
-        <h4 className="admin-form-card__title">全公司預設額度</h4>
-        <p className="admin-form-card__hint">
-          沒有特別談過的員工都會套用這裡的數字。單位為小時，留白＝依勞基法（不顯示固定時數）。
-          特休不在此設定，因為它是依每個人的入職日期與年資自動計算。
-        </p>
+        <h4 className="admin-form-card__title">{t('finleave_defaults_title')}</h4>
+        <p className="admin-form-card__hint">{t('finleave_defaults_hint')}</p>
         <div className="admin-form-grid">
-          {leaveTypes.filter(t => !isAnnualLeaveType(t)).map(t => (
+          {leaveTypes.filter(lt => !isAnnualLeaveType(lt)).map(lt => (
             <TextField
-              key={t.id}
-              label={`${t.name}（小時）`}
+              key={lt.id}
+              label={t('finleave_defaults_field', { name: leaveTypeName(lt, lang) })}
               type="number"
               min="0"
-              value={defaults[t.id] ?? ''}
-              onChange={e => setDefaults(p => ({ ...p, [t.id]: e.target.value }))}
-              placeholder="留白＝依勞基法"
+              value={defaults[lt.id] ?? ''}
+              onChange={e => setDefaults(p => ({ ...p, [lt.id]: e.target.value }))}
+              placeholder={t('finleave_defaults_placeholder')}
             />
           ))}
         </div>
         <div className="admin-form-actions">
-          <Button loading={savingDefaults} onClick={handleSaveDefaults}>儲存預設額度</Button>
+          <Button loading={savingDefaults} onClick={handleSaveDefaults}>{t('finleave_defaults_save')}</Button>
         </div>
       </Card>
 
@@ -357,31 +348,29 @@ function EmployeeLeaveManagement({ userProfile }) {
 
       <div className="admin-inline-form">
         <Select value={filterDept} onChange={e => setFilterDept(e.target.value)} style={{ maxWidth: '200px' }}>
-          <option value="">所有部門</option>
+          <option value="">{t('common_all_departments')}</option>
           {departments.map(d => <option key={d} value={d}>{d}</option>)}
         </Select>
         <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ maxWidth: '220px' }}>
-          <option value="">所有狀態</option>
-          <option value="no_hire_date">入職日期未填</option>
-          <option value="has_manual">有個別調整</option>
-          <option value="all_statutory">全部比照勞基法</option>
+          <option value="">{t('finleave_all_statuses')}</option>
+          <option value="no_hire_date">{t('finleave_status_no_hire_date')}</option>
+          <option value="has_manual">{t('finleave_status_has_manual')}</option>
+          <option value="all_statutory">{t('finleave_status_all_statutory')}</option>
         </Select>
       </div>
 
       {selected.length > 0 && (
         <Card className="admin-form-card">
-          <h4 className="admin-form-card__title">批次套用（已選 {selected.length} 人）</h4>
-          <p className="admin-form-card__hint">
-            把同一個假別的額度一次套用到選取的員工。選「比照勞基法」會清除他們在這個假別的個別調整。
-          </p>
+          <h4 className="admin-form-card__title">{t('finleave_bulk_title', { n: selected.length })}</h4>
+          <p className="admin-form-card__hint">{t('finleave_bulk_hint')}</p>
           <div className="admin-inline-form">
             <Select value={bulkTypeId} onChange={e => setBulkTypeId(e.target.value)} style={{ maxWidth: '200px' }}>
-              <option value="">選擇假別</option>
-              {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+              <option value="">{t('finleave_select_type')}</option>
+              {leaveTypes.map(lt => <option key={lt.id} value={lt.id}>{leaveTypeName(lt, lang)}</option>)}
             </Select>
             <Select value={bulkMode} onChange={e => setBulkMode(e.target.value)} style={{ maxWidth: '160px' }}>
-              <option value="manual">手動調整</option>
-              <option value="statutory">比照勞基法</option>
+              <option value="manual">{t('finleave_mode_manual')}</option>
+              <option value="statutory">{t('finleave_mode_statutory')}</option>
             </Select>
             {bulkMode === 'manual' && (
               <input
@@ -391,17 +380,17 @@ function EmployeeLeaveManagement({ userProfile }) {
                 style={{ maxWidth: '160px' }}
                 value={bulkValue}
                 onChange={e => setBulkValue(e.target.value)}
-                placeholder={bulkTypeId && isAnnualLeaveType(leaveTypes.find(t => t.id === bulkTypeId)) ? '天' : '小時'}
+                placeholder={bulkTypeId && isAnnualLeaveType(leaveTypes.find(lt => lt.id === bulkTypeId)) ? t('finleave_unit_days') : t('finleave_unit_hours')}
               />
             )}
-            <Button loading={bulkSaving} onClick={handleBulkApply}>套用</Button>
-            <Button variant="text" onClick={() => setSelected([])}>取消選取</Button>
+            <Button loading={bulkSaving} onClick={handleBulkApply}>{t('finleave_apply')}</Button>
+            <Button variant="text" onClick={() => setSelected([])}>{t('finleave_clear_selection')}</Button>
           </div>
         </Card>
       )}
 
       {visibleUsers.length === 0 ? (
-        <Card><p className="admin-hint">沒有符合條件的員工資料</p></Card>
+        <Card><p className="admin-hint">{t('common_no_matching_users')}</p></Card>
       ) : (
         <div className="ui-table-wrap">
           <table className="ui-table">
@@ -410,14 +399,14 @@ function EmployeeLeaveManagement({ userProfile }) {
                 <th>
                   <input
                     type="checkbox"
-                    aria-label="全選"
+                    aria-label={t('finleave_select_all')}
                     checked={allVisibleSelected}
                     onChange={e => setSelected(e.target.checked ? visibleIds : [])}
                   />
                 </th>
-                <th>姓名</th><th>部門</th><th>職稱</th>
-                <th>入職日期</th><th>年資</th><th>特休天數</th>
-                <th>個別調整</th><th>操作</th>
+                <th>{t('adminusers_col_name')}</th><th>{t('adminusers_col_department')}</th><th>{t('adminusers_col_title')}</th>
+                <th>{t('finleave_col_hire_date')}</th><th>{t('finleave_col_tenure')}</th><th>{t('finleave_col_annual_days')}</th>
+                <th>{t('finleave_col_manual')}</th><th>{t('common_actions')}</th>
               </tr>
             </thead>
             <tbody>
@@ -430,7 +419,7 @@ function EmployeeLeaveManagement({ userProfile }) {
                     <td>
                       <input
                         type="checkbox"
-                        aria-label={`選取 ${user.full_name}`}
+                        aria-label={t('finleave_select_user', { name: user.full_name })}
                         checked={selected.includes(user.id)}
                         onChange={e => setSelected(prev =>
                           e.target.checked ? [...prev, user.id] : prev.filter(id => id !== user.id))}
@@ -443,22 +432,22 @@ function EmployeeLeaveManagement({ userProfile }) {
                       <input
                         className="ui-field__control admin-cell-input"
                         type="date"
-                        aria-label={`${user.full_name} 的入職日期`}
+                        aria-label={t('finleave_aria_hire_date', { name: user.full_name })}
                         value={cellValue(user, 'hire_date')}
                         onChange={e => editCell(user.id, 'hire_date', e.target.value)}
                       />
-                      {!cellValue(user, 'hire_date') && <span className="review-missing-manager"> ⚠ 未填</span>}
+                      {!cellValue(user, 'hire_date') && <span className="review-missing-manager"> {t('finleave_not_filled')}</span>}
                     </td>
-                    <td>{formatTenure(cellValue(user, 'hire_date'))}</td>
+                    <td>{formatTenure(cellValue(user, 'hire_date'), t)}</td>
                     <td>
                       <input
                         className="ui-field__control admin-cell-input"
                         type="number"
                         min="0"
                         step="0.5"
-                        aria-label={`${user.full_name} 的特休天數`}
+                        aria-label={t('finleave_aria_annual', { name: user.full_name })}
                         // 留白時用依年資算出來的天數當提示，讓人看得出「沒填不等於 0」
-                        placeholder={statutory != null ? `依年資 ${statutory}` : '依年資'}
+                        placeholder={statutory != null ? t('finleave_by_seniority_n', { n: statutory }) : t('finleave_by_seniority')}
                         value={cellValue(user, 'annual_days')}
                         onChange={e => editCell(user.id, 'annual_days', e.target.value)}
                         disabled={!annualType}
@@ -466,14 +455,14 @@ function EmployeeLeaveManagement({ userProfile }) {
                     </td>
                     <td>
                       {manualCount > 0
-                        ? <Chip tone="info">{manualCount} 項手動調整</Chip>
-                        : <Chip tone="neutral">全部比照勞基法</Chip>}
+                        ? <Chip tone="info">{t('finleave_manual_count', { n: manualCount })}</Chip>
+                        : <Chip tone="neutral">{t('finleave_status_all_statutory')}</Chip>}
                     </td>
                     <td className="admin-cell-actions">
-                      <Button size="sm" variant="outlined" onClick={() => openEdit(user)}>編輯</Button>
-                      {status === 'saving' && <span className="admin-save-hint">儲存中…</span>}
-                      {status === 'saved' && <span className="admin-save-hint admin-save-hint--ok">✓ 已儲存</span>}
-                      {status === 'error' && <span className="admin-save-hint admin-save-hint--error">✕ 未儲存</span>}
+                      <Button size="sm" variant="outlined" onClick={() => openEdit(user)}>{t('common_edit')}</Button>
+                      {status === 'saving' && <span className="admin-save-hint">{t('finleave_saving')}</span>}
+                      {status === 'saved' && <span className="admin-save-hint admin-save-hint--ok">{t('finleave_saved')}</span>}
+                      {status === 'error' && <span className="admin-save-hint admin-save-hint--error">{t('finleave_save_error')}</span>}
                     </td>
                   </tr>
                 )
@@ -486,32 +475,32 @@ function EmployeeLeaveManagement({ userProfile }) {
       {editing && (
         <Dialog
           size="lg"
-          title={`假期設定 — ${editing.user.full_name}`}
+          title={t('finleave_edit_title', { name: editing.user.full_name })}
           labelledBy="edit-entitlement-dialog-title"
           onClose={() => setEditing(null)}
           actions={(
             <>
-              <Button variant="text" onClick={() => setEditing(null)}>取消</Button>
-              <Button loading={saving} onClick={handleSave}>儲存</Button>
+              <Button variant="text" onClick={() => setEditing(null)}>{t('common_cancel')}</Button>
+              <Button loading={saving} onClick={handleSave}>{t('common_save')}</Button>
             </>
           )}
         >
           <div className="admin-form-grid">
             <TextField
-              label="入職日期"
+              label={t('finleave_col_hire_date')}
               type="date"
               value={editing.hire_date}
               onChange={e => setEditing(p => ({ ...p, hire_date: e.target.value }))}
             />
             <div>
-              <div className="admin-row__meta">年資</div>
-              <div className="admin-row__title">{formatTenure(editing.hire_date)}</div>
+              <div className="admin-row__meta">{t('finleave_col_tenure')}</div>
+              <div className="admin-row__title">{formatTenure(editing.hire_date, t)}</div>
             </div>
           </div>
 
           <table className="ui-table" style={{ marginTop: 'var(--space-200)' }}>
             <thead>
-              <tr><th>假別</th><th>額度設定</th><th>數值</th></tr>
+              <tr><th>{t('field_leave_type')}</th><th>{t('finleave_col_quota_mode')}</th><th>{t('finleave_col_value')}</th></tr>
             </thead>
             <tbody>
               {leaveTypes.map(lt => {
@@ -519,7 +508,7 @@ function EmployeeLeaveManagement({ userProfile }) {
                 const row = editing.rows[lt.id]
                 return (
                   <tr key={lt.id}>
-                    <td>{lt.name}{annual && <> <Chip tone="neutral">依年資計算</Chip></>}</td>
+                    <td>{leaveTypeName(lt, lang)}{annual && <> <Chip tone="neutral">{t('finleave_by_seniority_chip')}</Chip></>}</td>
                     <td>
                       <select
                         className="ui-field__control"
@@ -529,8 +518,8 @@ function EmployeeLeaveManagement({ userProfile }) {
                           rows: { ...p.rows, [lt.id]: { ...p.rows[lt.id], mode: e.target.value } },
                         }))}
                       >
-                        <option value="statutory">比照勞基法</option>
-                        <option value="manual">手動調整</option>
+                        <option value="statutory">{t('finleave_mode_statutory')}</option>
+                        <option value="manual">{t('finleave_mode_manual')}</option>
                       </select>
                     </td>
                     <td>
@@ -544,17 +533,17 @@ function EmployeeLeaveManagement({ userProfile }) {
                             ...p,
                             rows: { ...p.rows, [lt.id]: { ...p.rows[lt.id], value: e.target.value } },
                           }))}
-                          placeholder={annual ? '天' : '小時'}
+                          placeholder={annual ? t('finleave_unit_days') : t('finleave_unit_hours')}
                           helper={annual
-                            ? (row.value !== '' ? `= ${Number(row.value) * HOURS_PER_DAY} 小時` : '單位：天')
-                            : '單位：小時'}
+                            ? (row.value !== '' ? t('finleave_equals_hours', { n: Number(row.value) * HOURS_PER_DAY }) : t('finleave_unit_days_helper'))
+                            : t('finleave_unit_hours_helper')}
                         />
                       ) : (
                         <span className="admin-row__meta">
-                          {annual ? '依入職日期與年資自動計算' : (
-                            leaveTypes.find(t => t.id === lt.id)?.annual_quota_hours != null
-                              ? `${leaveTypes.find(t => t.id === lt.id).annual_quota_hours} 小時（公司預設）`
-                              : '依勞基法（未設定固定時數）'
+                          {annual ? t('finleave_auto_by_hire_date') : (
+                            lt.annual_quota_hours != null
+                              ? t('finleave_company_default', { n: lt.annual_quota_hours })
+                              : t('finleave_no_fixed')
                           )}
                         </span>
                       )}

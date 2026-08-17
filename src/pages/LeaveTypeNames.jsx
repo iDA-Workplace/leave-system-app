@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
 import { Button, Card, Skeleton, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
+import { useLanguage } from '../context/LanguageContext'
 import './AdminPanel.css'
 
 /**
@@ -19,62 +20,62 @@ function LeaveTypeNames() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
+  const { t } = useLanguage()
 
   useEffect(() => { fetchTypes() }, [])
 
   async function fetchTypes() {
     const { data, error } = await supabase.from('leave_types').select('*').order('name')
     if (error) {
-      showToast('讀取假別失敗：' + error.message, { tone: 'error' })
+      showToast(t('ltnames_err_fetch', { msg: error.message }), { tone: 'error' })
       setLoading(false)
       return
     }
     setLeaveTypes(data || [])
-    setNamesEn(Object.fromEntries((data || []).map(t => [t.id, t.name_en || ''])))
+    setNamesEn(Object.fromEntries((data || []).map(lt => [lt.id, lt.name_en || ''])))
     setLoading(false)
   }
 
   async function handleSave() {
     setSaving(true)
-    for (const t of leaveTypes) {
-      const value = (namesEn[t.id] || '').trim() || null
-      if ((t.name_en ?? null) === value) continue
+    // 迴圈變數刻意不叫 t —— 那會遮蔽翻譯用的 t()
+    for (const lt of leaveTypes) {
+      const value = (namesEn[lt.id] || '').trim() || null
+      if ((lt.name_en ?? null) === value) continue
       const { data: updated, error } = await supabase.from('leave_types')
-        .update({ name_en: value }).eq('id', t.id).select()
+        .update({ name_en: value }).eq('id', lt.id).select()
       // RLS 擋下 UPDATE 時 Postgres 不會報錯，只會回 0 列 —— 所以 0 列也算失敗，
       // 否則會出現「顯示已儲存、實際上什麼都沒寫進去」。
       if (error || !updated?.length) {
-        showToast(`「${t.name}」的英文名儲存失敗：` + (error?.message || '沒有權限寫入'), { tone: 'error' })
+        showToast(t('ltnames_err_save', { name: lt.name, msg: error?.message || t('admin_no_write_permission') }), { tone: 'error' })
         setSaving(false)
         return
       }
     }
     setSaving(false)
-    showToast('已更新假別英文名稱')
+    showToast(t('ltnames_saved'))
     fetchTypes()
   }
 
   return (
     <Card className="admin-form-card">
-      <h4 className="admin-form-card__title">假別英文名稱</h4>
-      <p className="admin-form-card__hint">
-        同仁把介面語言切成 English 時顯示的假別名稱。留白的話會直接顯示中文名，不會變空白。
-      </p>
+      <h4 className="admin-form-card__title">{t('ltnames_title')}</h4>
+      <p className="admin-form-card__hint">{t('ltnames_hint')}</p>
       {loading ? <Skeleton height="120px" /> : (
         <>
           <div className="admin-form-grid">
-            {leaveTypes.map(t => (
+            {leaveTypes.map(lt => (
               <TextField
-                key={t.id}
-                label={t.name}
-                value={namesEn[t.id] ?? ''}
-                onChange={e => setNamesEn(p => ({ ...p, [t.id]: e.target.value }))}
-                placeholder="留白＝顯示中文名"
+                key={lt.id}
+                label={lt.name}
+                value={namesEn[lt.id] ?? ''}
+                onChange={e => setNamesEn(p => ({ ...p, [lt.id]: e.target.value }))}
+                placeholder={t('ltnames_placeholder')}
               />
             ))}
           </div>
           <div className="admin-form-actions">
-            <Button loading={saving} onClick={handleSave}>儲存英文名稱</Button>
+            <Button loading={saving} onClick={handleSave}>{t('ltnames_save')}</Button>
           </div>
         </>
       )}

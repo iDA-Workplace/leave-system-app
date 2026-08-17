@@ -3,6 +3,8 @@ import { supabase } from '../lib/supabase'
 import * as XLSX from 'xlsx'
 import { Button, Card, PageHeader, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
+import { useLanguage } from '../context/LanguageContext'
+import { leaveTypeName } from '../lib/leaveEntitlements'
 import './ExportReport.css'
 
 function toISODate(d) {
@@ -18,10 +20,11 @@ function ExportReport() {
   })
   const [endDate, setEndDate] = useState(() => toISODate(new Date()))
   const { showToast } = useToast()
+  const { t, lang } = useLanguage()
 
   async function handleExport() {
-    if (!startDate || !endDate) { showToast('請選擇起訖日期', { tone: 'error' }); return }
-    if (endDate < startDate) { showToast('結束日期不能早於開始日期', { tone: 'error' }); return }
+    if (!startDate || !endDate) { showToast(t('export_err_dates'), { tone: 'error' }); return }
+    if (endDate < startDate) { showToast(t('leaveform_err_date_order'), { tone: 'error' }); return }
 
     setLoading(true)
 
@@ -30,7 +33,7 @@ function ExportReport() {
       .select(`
         *,
         requester:users!leave_requests_requester_id_fkey(full_name, email),
-        leave_type:leave_types(name),
+        leave_type:leave_types(*),
         proxy:users!leave_requests_proxy_user_id_fkey(full_name),
         approvals:leave_approvals(
           action, comment, created_at,
@@ -42,35 +45,30 @@ function ExportReport() {
       .order('start_date')
 
     if (!data || data.length === 0) {
-      showToast('這段時間沒有假單資料', { tone: 'error' })
+      showToast(t('export_err_no_data'), { tone: 'error' })
       setLoading(false)
       return
     }
 
-    const statusMap = {
-      pending: '審核中',
-      approved: '已核准',
-      rejected: '已拒絕',
-      returned: '已退回',
-      withdrawn: '已收回'
-    }
-
+    // 報表欄位跟著介面語言走：切成英文的人拿到的檔案就該是英文表頭，
+    // 否則匯出來還是得找人翻。假別名稱用 leave_types.name_en。
+    const locale = lang === 'en' ? 'en-US' : 'zh-TW'
     const rows = data.map(lr => ({
-      '申請人': lr.requester?.full_name || '',
-      'Email': lr.requester?.email || '',
-      '假別': lr.leave_type?.name || '',
-      '開始日期': lr.start_date || '',
-      '結束日期': lr.end_date || '',
-      '開始時間': lr.start_time || '',
-      '結束時間': lr.end_time || '',
-      '時數': lr.hours || '',
-      '狀態': statusMap[lr.status] || lr.status,
-      '工作代理人': lr.proxy?.full_name || '',
-      '請假原因': lr.reason || '',
-      '申請時間': lr.created_at ? new Date(lr.created_at).toLocaleString('zh-TW') : '',
-      '審核人': lr.approvals?.map(a => a.approver?.full_name).join(', ') || '',
-      '審核結果': lr.approvals?.map(a => a.action === 'approved' ? '核准' : '拒絕').join(', ') || '',
-      '審核備註': lr.approvals?.map(a => a.comment).filter(Boolean).join(', ') || '',
+      [t('xls_col_requester')]: lr.requester?.full_name || '',
+      [t('xls_col_email')]: lr.requester?.email || '',
+      [t('xls_col_leave_type')]: leaveTypeName(lr.leave_type, lang),
+      [t('xls_col_start_date')]: lr.start_date || '',
+      [t('xls_col_end_date')]: lr.end_date || '',
+      [t('xls_col_start_time')]: lr.start_time || '',
+      [t('xls_col_end_time')]: lr.end_time || '',
+      [t('xls_col_hours')]: lr.hours || '',
+      [t('xls_col_status')]: lr.status ? t(`status_${lr.status}`) : '',
+      [t('xls_col_proxy')]: lr.proxy?.full_name || '',
+      [t('xls_col_reason')]: lr.reason || '',
+      [t('xls_col_created_at')]: lr.created_at ? new Date(lr.created_at).toLocaleString(locale) : '',
+      [t('xls_col_approvers')]: lr.approvals?.map(a => a.approver?.full_name).join(', ') || '',
+      [t('xls_col_decisions')]: lr.approvals?.map(a => a.action === 'approved' ? t('myleaves_action_approved') : t('myleaves_action_rejected')).join(', ') || '',
+      [t('xls_col_comments')]: lr.approvals?.map(a => a.comment).filter(Boolean).join(', ') || '',
     }))
 
     const ws = XLSX.utils.json_to_sheet(rows)
@@ -84,9 +82,9 @@ function ExportReport() {
     ]
 
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, '請假記錄')
+    XLSX.utils.book_append_sheet(wb, ws, t('xls_sheet_name'))
 
-    const fileName = `請假記錄_${startDate}_至_${endDate}.xlsx`
+    const fileName = t('xls_file_name', { start: startDate, end: endDate }) + '.xlsx'
 
     XLSX.writeFile(wb, fileName)
     setLoading(false)
@@ -94,20 +92,18 @@ function ExportReport() {
 
   return (
     <div className="export-report-page">
-      <PageHeader title="匯出請假報表" />
+      <PageHeader title={t('export_title')} />
 
       <Card>
         <div className="export-report-grid">
-          <TextField label="起始日期" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
-          <TextField label="結束日期" type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} />
+          <TextField label={t('export_start_date')} type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+          <TextField label={t('export_end_date')} type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} />
         </div>
 
-        <div className="export-report-hint">
-          匯出內容包含：申請人、假別、日期、時數、狀態、代理人、原因、審核記錄
-        </div>
+        <div className="export-report-hint">{t('export_hint')}</div>
 
         <Button block loading={loading} onClick={handleExport}>
-          {loading ? '匯出中...' : '📥 匯出 Excel'}
+          {loading ? t('export_exporting') : t('export_button')}
         </Button>
       </Card>
     </div>
