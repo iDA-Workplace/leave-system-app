@@ -31,8 +31,10 @@ comment on column public.leave_types.name_en is
 update public.leave_types set name_en = v.name_en
 from (values
   ('特休',       'Annual Leave'),
+  ('特休假',     'Annual Leave'),
   ('特別休假',   'Annual Leave'),
   ('年假',       'Annual Leave'),
+  ('年休假',     'Annual Leave'),
   ('事假',       'Personal Leave'),
   ('病假',       'Sick Leave'),
   ('普通傷病假', 'Sick Leave'),
@@ -53,6 +55,13 @@ from (values
 ) as v(name, name_en)
 where public.leave_types.name = v.name
   and public.leave_types.name_en is null;
+
+-- 上面是精準比對，差一個字就對不到（第一版就漏掉了「特休假」）。特休是唯一
+-- 一個系統邏輯真的認得的假別（額度用年資算，跟其他假別不同），所以這裡再補
+-- 一條模糊比對當保險。其他假別漏掉頂多是顯示中文名，特休漏掉最刺眼。
+update public.leave_types
+set name_en = 'Annual Leave'
+where name_en is null and name like '%特休%';
 
 -- ===== 2. 使用者語言偏好 =====
 
