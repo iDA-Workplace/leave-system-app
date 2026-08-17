@@ -160,3 +160,24 @@
   gap: var(--space-100);
   margin-bottom: var(--space-200);
 }
+
+/* 表格內直接編輯用的輸入框：比一般欄位窄，才不會把表格撐爆 */
+.admin-cell-input {
+  min-width: 0;
+  max-width: 140px;
+  padding: var(--space-050) var(--space-100);
+}
+
+.admin-cell-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-100);
+  white-space: nowrap;
+}
+
+.admin-save-hint {
+  font: var(--type-label-small-size)/var(--type-label-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+.admin-save-hint--ok { color: var(--sys-color-success, var(--sys-color-primary)); }
+.admin-save-hint--error { color: var(--sys-color-error); }

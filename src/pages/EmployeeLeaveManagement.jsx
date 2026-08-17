@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { Button, Card, Chip, Dialog, PageHeader, Skeleton, TextField } from '../components/ui'
+import { Button, Card, Chip, Dialog, PageHeader, Select, Skeleton, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import { HOURS_PER_DAY, isAnnualLeaveType } from '../lib/leaveEntitlements'
 import './AdminPanel.css'
@@ -42,9 +42,29 @@ function EmployeeLeaveManagement({ userProfile }) {
   const [saving, setSaving] = useState(false)
   const [defaults, setDefaults] = useState({})
   const [savingDefaults, setSavingDefaults] = useState(false)
+  const [filterStatus, setFilterStatus] = useState('')
+
+  // 表格內直接編輯：drafts 是畫面上的值（打字要立刻反應），rowStatus 是每一列
+  // 的儲存狀態。實際寫入延遲 700ms，避免每按一個鍵就打一次資料庫。
+  const [drafts, setDrafts] = useState({})
+  const [rowStatus, setRowStatus] = useState({})
+  const saveTimers = useRef({})
+
+  // 批次套用
+  const [selected, setSelected] = useState([])
+  const [bulkTypeId, setBulkTypeId] = useState('')
+  const [bulkMode, setBulkMode] = useState('manual')
+  const [bulkValue, setBulkValue] = useState('')
+  const [bulkSaving, setBulkSaving] = useState(false)
+
   const { showToast } = useToast()
 
   useEffect(() => { fetchAll() }, [])
+
+  // 離開頁面時把還沒觸發的存檔計時器清掉，避免元件卸載後才寫入
+  useEffect(() => () => {
+    for (const t of Object.values(saveTimers.current)) clearTimeout(t)
+  }, [])
 
   async function fetchAll() {
     const [u, lt, ent, summary] = await Promise.all([
@@ -83,6 +103,113 @@ function EmployeeLeaveManagement({ userProfile }) {
     }
     setSavingDefaults(false)
     showToast('已更新全公司預設額度')
+    fetchAll()
+  }
+
+  // 放在所有處理函式之前：底下的 writeAnnualDays 等函式會用到它
+  const annualType = leaveTypes.find(isAnnualLeaveType)
+
+  // ===== 表格內直接編輯 =====
+
+  /**
+   * 把「特休天數」寫進個人額度：填了數字＝手動調整，清空＝改回依年資計算。
+   * 這跟編輯視窗裡的語意完全一致，兩個入口不會做出不同的結果。
+   */
+  async function writeAnnualDays(userId, rawDays) {
+    if (!annualType) return null
+    if (rawDays === '' || rawDays == null) {
+      const { error } = await supabase.from('user_leave_entitlements')
+        .delete().eq('user_id', userId).eq('leave_type_id', annualType.id)
+      return error
+    }
+    const days = Number(rawDays)
+    if (Number.isNaN(days) || days < 0) return new Error('請填有效數字')
+    const { error } = await supabase.from('user_leave_entitlements').upsert({
+      user_id: userId,
+      leave_type_id: annualType.id,
+      mode: 'manual',
+      quota_hours: days * HOURS_PER_DAY,
+      updated_at: new Date().toISOString(),
+      updated_by: userProfile.id,
+    }, { onConflict: 'user_id,leave_type_id' })
+    return error
+  }
+
+  async function saveRow(userId, patch) {
+    setRowStatus(s => ({ ...s, [userId]: 'saving' }))
+
+    if ('hire_date' in patch) {
+      // 被 RLS 擋下的 UPDATE 不會報錯，只會回 0 筆 —— 要一起檢查資料列數
+      const { data, error } = await supabase.from('users')
+        .update({ hire_date: patch.hire_date || null }).eq('id', userId).select()
+      if (error || !data?.length) {
+        setRowStatus(s => ({ ...s, [userId]: 'error' }))
+        showToast('入職日期儲存失敗：' + (error?.message || '沒有權限寫入'), { tone: 'error' })
+        return
+      }
+    }
+
+    if ('annual_days' in patch) {
+      const error = await writeAnnualDays(userId, patch.annual_days)
+      if (error) {
+        setRowStatus(s => ({ ...s, [userId]: 'error' }))
+        showToast('特休額度儲存失敗：' + error.message, { tone: 'error' })
+        return
+      }
+    }
+
+    setRowStatus(s => ({ ...s, [userId]: 'saved' }))
+    await fetchAll()
+    // 「已儲存」顯示一下就淡出，不然整張表會一直掛著綠色勾勾
+    setTimeout(() => setRowStatus(s => {
+      if (s[userId] !== 'saved') return s
+      const next = { ...s }; delete next[userId]; return next
+    }), 2500)
+  }
+
+  /** 畫面立刻反應，實際寫入延遲 700ms（同一列再次輸入會重新計時）。 */
+  function editCell(userId, field, value) {
+    setDrafts(d => ({ ...d, [userId]: { ...d[userId], [field]: value } }))
+    clearTimeout(saveTimers.current[userId])
+    saveTimers.current[userId] = setTimeout(() => saveRow(userId, { [field]: value }), 700)
+  }
+
+  // ===== 批次套用 =====
+
+  async function handleBulkApply() {
+    if (!bulkTypeId) { showToast('請選擇假別', { tone: 'error' }); return }
+    if (selected.length === 0) { showToast('請先勾選要套用的員工', { tone: 'error' }); return }
+
+    const type = leaveTypes.find(t => t.id === bulkTypeId)
+    const annual = isAnnualLeaveType(type)
+    let hours = null
+    if (bulkMode === 'manual') {
+      const n = Number(bulkValue)
+      if (bulkValue === '' || Number.isNaN(n) || n < 0) {
+        showToast('請填有效數字', { tone: 'error' }); return
+      }
+      hours = annual ? n * HOURS_PER_DAY : n
+    }
+
+    setBulkSaving(true)
+    for (const userId of selected) {
+      const { error } = bulkMode === 'manual'
+        ? await supabase.from('user_leave_entitlements').upsert({
+            user_id: userId, leave_type_id: bulkTypeId, mode: 'manual', quota_hours: hours,
+            updated_at: new Date().toISOString(), updated_by: userProfile.id,
+          }, { onConflict: 'user_id,leave_type_id' })
+        : await supabase.from('user_leave_entitlements')
+            .delete().eq('user_id', userId).eq('leave_type_id', bulkTypeId)
+      if (error) {
+        showToast('批次套用失敗：' + error.message, { tone: 'error' })
+        setBulkSaving(false)
+        return
+      }
+    }
+    setBulkSaving(false)
+    showToast(`已將「${type.name}」套用到 ${selected.length} 位員工`)
+    setSelected([])
+    setBulkValue('')
     fetchAll()
   }
 
@@ -146,20 +273,48 @@ function EmployeeLeaveManagement({ userProfile }) {
   if (loading) return <div><PageHeader title="員工假期管理" /><Skeleton height="200px" /></div>
 
   const departments = [...new Set(users.map(u => u.department).filter(Boolean))].sort()
-  const visibleUsers = filterDept ? users.filter(u => u.department === filterDept) : users
-  const annualType = leaveTypes.find(isAnnualLeaveType)
 
   function manualCountFor(userId) {
     return entitlements.filter(e => e.user_id === userId && e.mode === 'manual').length
   }
 
+  /** 這個人的特休有沒有被手動指定；沒有就用依年資算出來的天數。 */
+  function annualOverrideDays(userId) {
+    if (!annualType) return null
+    const row = entitlements.find(e => e.user_id === userId && e.leave_type_id === annualType.id && e.mode === 'manual')
+    return row?.quota_hours != null ? Number(row.quota_hours) / HOURS_PER_DAY : null
+  }
+
+  function annualStatutoryDays(userId) {
+    const summary = annualSummary[userId]
+    return summary?.entitled_days != null ? Number(summary.entitled_days) : null
+  }
+
   function annualQuotaLabel(user) {
-    if (annualType) {
-      const override = entitlements.find(e => e.user_id === user.id && e.leave_type_id === annualType.id && e.mode === 'manual')
-      if (override && override.quota_hours != null) return `${Number(override.quota_hours) / HOURS_PER_DAY} 天`
-    }
-    const summary = annualSummary[user.id]
-    return summary?.entitled_days != null ? `${summary.entitled_days} 天` : '—'
+    const override = annualOverrideDays(user.id)
+    if (override != null) return `${override} 天`
+    const statutory = annualStatutoryDays(user.id)
+    return statutory != null ? `${statutory} 天` : '—'
+  }
+
+  const visibleUsers = users.filter(u => {
+    if (filterDept && u.department !== filterDept) return false
+    if (filterStatus === 'no_hire_date') return !u.hire_date
+    if (filterStatus === 'has_manual') return manualCountFor(u.id) > 0
+    if (filterStatus === 'all_statutory') return manualCountFor(u.id) === 0
+    return true
+  })
+
+  const visibleIds = visibleUsers.map(u => u.id)
+  const allVisibleSelected = visibleIds.length > 0 && visibleIds.every(id => selected.includes(id))
+
+  /** 表格格子目前該顯示的值：優先用還沒存完的草稿，否則用資料庫的值。 */
+  function cellValue(user, field) {
+    const draft = drafts[user.id]?.[field]
+    if (draft !== undefined) return draft
+    if (field === 'hire_date') return user.hire_date || ''
+    const override = annualOverrideDays(user.id)
+    return override != null ? String(override) : ''
   }
 
   return (
@@ -168,6 +323,9 @@ function EmployeeLeaveManagement({ userProfile }) {
       <p className="admin-hint">
         設定每位員工各假別的可用額度。預設一律「比照勞基法」（特休依入職日期與年資自動計算，其他假別用下方的全公司預設值）；
         若有個別談定的條件，改成「手動調整」並填入數字即可覆蓋。
+        <br />
+        <strong>入職日期與特休天數可以直接在表格裡修改，改完會自動儲存</strong>；特休留白＝依年資自動計算。
+        其他假別請按「編輯」，或勾選多位員工後使用批次套用。
       </p>
 
       <Card className="admin-form-card">
@@ -195,11 +353,49 @@ function EmployeeLeaveManagement({ userProfile }) {
       </Card>
 
       <div className="admin-inline-form">
-        <select className="ui-field__control" value={filterDept} onChange={e => setFilterDept(e.target.value)} style={{ maxWidth: '200px' }}>
+        <Select value={filterDept} onChange={e => setFilterDept(e.target.value)} style={{ maxWidth: '200px' }}>
           <option value="">所有部門</option>
           {departments.map(d => <option key={d} value={d}>{d}</option>)}
-        </select>
+        </Select>
+        <Select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} style={{ maxWidth: '220px' }}>
+          <option value="">所有狀態</option>
+          <option value="no_hire_date">入職日期未填</option>
+          <option value="has_manual">有個別調整</option>
+          <option value="all_statutory">全部比照勞基法</option>
+        </Select>
       </div>
+
+      {selected.length > 0 && (
+        <Card className="admin-form-card">
+          <h4 className="admin-form-card__title">批次套用（已選 {selected.length} 人）</h4>
+          <p className="admin-form-card__hint">
+            把同一個假別的額度一次套用到選取的員工。選「比照勞基法」會清除他們在這個假別的個別調整。
+          </p>
+          <div className="admin-inline-form">
+            <Select value={bulkTypeId} onChange={e => setBulkTypeId(e.target.value)} style={{ maxWidth: '200px' }}>
+              <option value="">選擇假別</option>
+              {leaveTypes.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </Select>
+            <Select value={bulkMode} onChange={e => setBulkMode(e.target.value)} style={{ maxWidth: '160px' }}>
+              <option value="manual">手動調整</option>
+              <option value="statutory">比照勞基法</option>
+            </Select>
+            {bulkMode === 'manual' && (
+              <input
+                className="ui-field__control"
+                type="number"
+                min="0"
+                style={{ maxWidth: '160px' }}
+                value={bulkValue}
+                onChange={e => setBulkValue(e.target.value)}
+                placeholder={bulkTypeId && isAnnualLeaveType(leaveTypes.find(t => t.id === bulkTypeId)) ? '天' : '小時'}
+              />
+            )}
+            <Button loading={bulkSaving} onClick={handleBulkApply}>套用</Button>
+            <Button variant="text" onClick={() => setSelected([])}>取消選取</Button>
+          </div>
+        </Card>
+      )}
 
       {visibleUsers.length === 0 ? (
         <Card><p className="admin-hint">沒有符合條件的員工資料</p></Card>
@@ -207,25 +403,75 @@ function EmployeeLeaveManagement({ userProfile }) {
         <div className="ui-table-wrap">
           <table className="ui-table">
             <thead>
-              <tr><th>姓名</th><th>部門</th><th>職稱</th><th>入職日期</th><th>年資</th><th>特休額度</th><th>個別調整</th><th>操作</th></tr>
+              <tr>
+                <th>
+                  <input
+                    type="checkbox"
+                    aria-label="全選"
+                    checked={allVisibleSelected}
+                    onChange={e => setSelected(e.target.checked ? visibleIds : [])}
+                  />
+                </th>
+                <th>姓名</th><th>部門</th><th>職稱</th>
+                <th>入職日期</th><th>年資</th><th>特休天數</th>
+                <th>個別調整</th><th>操作</th>
+              </tr>
             </thead>
             <tbody>
               {visibleUsers.map(user => {
                 const manualCount = manualCountFor(user.id)
+                const status = rowStatus[user.id]
+                const statutory = annualStatutoryDays(user.id)
                 return (
                   <tr key={user.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`選取 ${user.full_name}`}
+                        checked={selected.includes(user.id)}
+                        onChange={e => setSelected(prev =>
+                          e.target.checked ? [...prev, user.id] : prev.filter(id => id !== user.id))}
+                      />
+                    </td>
                     <td>{user.full_name}</td>
                     <td>{user.department || '—'}</td>
                     <td>{user.job_title || '—'}</td>
-                    <td>{user.hire_date || <span className="review-missing-manager">⚠ 未填</span>}</td>
-                    <td>{formatTenure(user.hire_date)}</td>
-                    <td>{annualQuotaLabel(user)}</td>
+                    <td>
+                      <input
+                        className="ui-field__control admin-cell-input"
+                        type="date"
+                        aria-label={`${user.full_name} 的入職日期`}
+                        value={cellValue(user, 'hire_date')}
+                        onChange={e => editCell(user.id, 'hire_date', e.target.value)}
+                      />
+                      {!cellValue(user, 'hire_date') && <span className="review-missing-manager"> ⚠ 未填</span>}
+                    </td>
+                    <td>{formatTenure(cellValue(user, 'hire_date'))}</td>
+                    <td>
+                      <input
+                        className="ui-field__control admin-cell-input"
+                        type="number"
+                        min="0"
+                        step="0.5"
+                        aria-label={`${user.full_name} 的特休天數`}
+                        // 留白時用依年資算出來的天數當提示，讓人看得出「沒填不等於 0」
+                        placeholder={statutory != null ? `依年資 ${statutory}` : '依年資'}
+                        value={cellValue(user, 'annual_days')}
+                        onChange={e => editCell(user.id, 'annual_days', e.target.value)}
+                        disabled={!annualType}
+                      />
+                    </td>
                     <td>
                       {manualCount > 0
                         ? <Chip tone="info">{manualCount} 項手動調整</Chip>
                         : <Chip tone="neutral">全部比照勞基法</Chip>}
                     </td>
-                    <td><Button size="sm" variant="outlined" onClick={() => openEdit(user)}>編輯</Button></td>
+                    <td className="admin-cell-actions">
+                      <Button size="sm" variant="outlined" onClick={() => openEdit(user)}>編輯</Button>
+                      {status === 'saving' && <span className="admin-save-hint">儲存中…</span>}
+                      {status === 'saved' && <span className="admin-save-hint admin-save-hint--ok">✓ 已儲存</span>}
+                      {status === 'error' && <span className="admin-save-hint admin-save-hint--error">✕ 未儲存</span>}
+                    </td>
                   </tr>
                 )
               })}
