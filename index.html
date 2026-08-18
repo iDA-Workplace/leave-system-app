@@ -1,10 +1,23 @@
 <!doctype html>
-<html lang="en">
+<html lang="zh-Hant">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>iDA Workplace</title>
+
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>leave-system-app</title>
+
+    <!-- 安裝成 App 用的設定檔與圖示。theme-color 是手機上網址列／狀態列的
+         底色，兩種佈景各給一個，深色模式下才不會是刺眼的白。 -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#fafafa" media="(prefers-color-scheme: light)" />
+    <meta name="theme-color" content="#101010" media="(prefers-color-scheme: dark)" />
+
+    <!-- iOS 不看 manifest 的這幾項，要另外用它自己的 meta 標籤指定 -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="iDA Workplace" />
   </head>
   <body>
     <div id="root"></div>

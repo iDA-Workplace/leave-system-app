@@ -89,3 +89,14 @@
   background: var(--sys-color-primary-container);
   color: var(--sys-color-on-primary-container);
 }
+
+.settings-install-body {
+  margin: 0 0 var(--space-200);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+
+.settings-install-link {
+  font: 500 var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-primary);
+}

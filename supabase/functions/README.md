@@ -5,7 +5,7 @@
 | 目錄 | 做什麼 | 誰觸發 |
 |---|---|---|
 | `send-slack-notification` | 假單送出／核准／拒絕的即時通知 | 前端在動作完成後呼叫 |
-| `daily-leave-digest` | 每天上午 9:00 發「今日請假名單」到公開頻道 | 排程（pg_cron） |
+| `daily-leave-digest` | 上午 9:00 發「今日請假名單」；前一天下午 4:00 發「下個上班日」的預告 | 排程（pg_cron），兩個時段各一條 |
 | `daily-leave-job` | 待審假單逾期 7 天自動退回；未逾期的每天提醒該簽核的主管 | 排程（pg_cron） |
 | `slack-interactions` | 在 Slack 裡送假單、在 Slack 裡核准／駁回 | Slack（事件與互動） |
 
@@ -237,6 +237,50 @@ select cron.schedule(
 ```
 
 只想上班日發就維持 `1-5`；要含週末改成 `*`。
+
+### 前一天下午 4:00 的預告
+
+同一支 function，網址後面加上 `?scope=next` 就會改發「下個上班日有誰請假」。
+時間是台北 16:00 = UTC 08:00：
+
+```sql
+select cron.schedule(
+  'daily-leave-preview',
+  '0 8 * * 1-5',                       -- UTC 08:00 = 台北 16:00，週一到週五
+  $$
+  select net.http_post(
+    url     := 'https://<你的專案ref>.supabase.co/functions/v1/daily-leave-digest?scope=next',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'apikey',        '<你的 secret key（新制）或 service_role key（舊制）>',
+      'Authorization', 'Bearer <同一把 key>'
+    )
+  );
+  $$
+);
+```
+
+兩則的差別：
+
+| | 上午 9:00（`scope` 不帶） | 下午 16:00（`?scope=next`） |
+|---|---|---|
+| 看哪一天 | 今天 | 下個上班日（週一～週四＝明天，**週五＝下週一**） |
+| 沒有人請假 | 安靜跳過，不發 | 還是發一則「沒有人請假」 |
+| 標題 | 「8/19（三）今日請假名單」 | 「明天（8/20 週四）請假名單」／「下個上班日（8/24 週一）請假名單」 |
+
+週五之所以跳到下週一，是因為預告「明天（週六）」沒有意義；大家週五下班前
+真正想先知道的是週一誰不在。國定假日不特別處理 —— 系統裡沒有行事曆資料，
+硬猜只會猜錯，而那些日子本來就沒人請假，最後會是一則「沒有人請假」，無害。
+
+下午 4:00 之後才送出並核准的隔日假單，預告那則不會有他，但**隔天 9:00 那則
+會有** —— 9:00 是重新查一次資料庫，不是把預告存起來重發。
+
+想先看看會發成什麼樣子，可以手動打一次（把 `?scope=next` 拿掉就是今日名單）：
+
+```bash
+curl -X POST 'https://<你的專案ref>.supabase.co/functions/v1/daily-leave-digest?scope=next' \
+  -H 'Authorization: Bearer <你的 key>' -H 'apikey: <你的 key>'
+```
 
 `daily-leave-job`（逾期假單自動退回＋提醒主管）如果也要排程，同樣的寫法，
 `cron.schedule` 的第一個參數換成 `'daily-leave-job'`，`url` 換成

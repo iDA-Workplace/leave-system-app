@@ -60,6 +60,9 @@ function Layout({ children, userProfile }) {
   const { t } = useLanguage()
   const [pendingCount, setPendingCount] = useState(0)
   const [reviewTodoCount, setReviewTodoCount] = useState(0)
+  // 斷線提示。刻意不做離線暫存：請假牽涉額度與簽核流程，離線存起來再補送會
+  // 跟別人的假單打架，寧可當下就講清楚現在送不出去。
+  const [online, setOnline] = useState(() => navigator.onLine !== false)
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_EXPANDED_KEY) === 'true'
   )
@@ -126,6 +129,17 @@ function Layout({ children, userProfile }) {
   // 換頁時重算。跟訂閱分開兩個 effect：訂閱只在使用者變的時候重建，
   // 不會每換一次頁就把即時訂閱拆掉重接。
   useEffect(() => { refreshReviewTodo() }, [refreshReviewTodo, location.pathname])
+
+  useEffect(() => {
+    const goOnline = () => setOnline(true)
+    const goOffline = () => setOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -209,6 +223,10 @@ function Layout({ children, userProfile }) {
   return (
     <div className="shell">
       <a href="#main-content" className="skip-link">{t('app_skip_to_content')}</a>
+
+      {!online && (
+        <div className="shell-offline" role="status">{t('offline_banner')}</div>
+      )}
 
       <header className="app-bar">
         <form className="app-bar__search" ref={searchRef} onSubmit={handleSearchSubmit}>

@@ -610,3 +610,14 @@ button:focus-visible {
 .more-sheet__item:hover {
   background: var(--sys-color-surface-container-highest);
 }
+
+/* 斷線提示：放在版面最上方，把 App Bar 往下推而不是蓋住它 ——
+   蓋住的話搜尋框跟使用者名稱會被切一半，看起來像壞掉而不是提示。 */
+.shell-offline {
+  padding: var(--space-100) var(--space-200);
+  padding-top: calc(var(--space-100) + env(safe-area-inset-top));
+  background: var(--sys-color-error-container);
+  color: var(--sys-color-on-error-container);
+  font: 500 var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  text-align: center;
+}

@@ -83,6 +83,16 @@ const T = {
     digest_footer: '由請假系統自動發送。完整行事曆請見系統首頁。',
     digest_summary_text: '今日請假名單（共 {n} 筆）',
 
+    // 前一天下午的預告。週一到週四發的是「明天」，週五發的是「下個上班日」，
+    // 所以標題有兩種寫法，不能只用「明日」。
+    preview_heading_tomorrow: ':palm_tree: *明天（{month}/{day} 週{weekday}）請假名單*',
+    preview_heading_nextday: ':palm_tree: *下個上班日（{month}/{day} 週{weekday}）請假名單*',
+    preview_summary_text: '明天請假名單（共 {n} 筆）',
+    preview_summary_text_nextday: '下個上班日請假名單（共 {n} 筆）',
+    preview_empty_tomorrow: ':white_check_mark: *明天（{month}/{day} 週{weekday}）沒有人請假。*',
+    preview_empty_nextday: ':white_check_mark: *下個上班日（{month}/{day} 週{weekday}）沒有人請假。*',
+    preview_footer: '這是前一天下午的預告；當天上午 9:00 還會再發一次最新名單。',
+
     overdue_reason: '逾期未審核，系統自動退回',
     overdue_text: '您的請假申請已逾期退回',
     overdue_heading: ':warning: *您的請假申請已逾期退回*\n{detail}',
@@ -216,6 +226,17 @@ const T = {
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: 'Posted automatically by the leave system. See the homepage for the full calendar.',
     digest_summary_text: 'Out today ({n} people)',
+    digest_summary_text_one: 'Out today (1 person)',
+
+    preview_heading_tomorrow: ':palm_tree: *Out tomorrow ({month}/{day}, {weekday})*',
+    preview_heading_nextday: ':palm_tree: *Out on the next working day ({month}/{day}, {weekday})*',
+    preview_summary_text: 'Out tomorrow ({n} people)',
+    preview_summary_text_one: 'Out tomorrow (1 person)',
+    preview_summary_text_nextday: 'Out on the next working day ({n} people)',
+    preview_summary_text_nextday_one: 'Out on the next working day (1 person)',
+    preview_empty_tomorrow: ':white_check_mark: *Nobody is out tomorrow ({month}/{day}, {weekday}).*',
+    preview_empty_nextday: ':white_check_mark: *Nobody is out on the next working day ({month}/{day}, {weekday}).*',
+    preview_footer: 'This is the afternoon heads-up. The up-to-date list is posted again at 9:00 that morning.',
 
     overdue_reason: 'Automatically returned — not reviewed in time',
     overdue_text: 'Your leave request was returned (overdue)',
@@ -292,8 +313,20 @@ const T = {
 
 export type MsgKey = keyof typeof T['zh']
 
+/**
+ * 取翻譯字串。
+ *
+ * 單複數：params.n 等於 1 時先找 `<key>_one`，找不到再用原本那一句 ——
+ * 跟前端 LanguageContext 的規則一模一樣，才不會出現「Out today (1 people)」。
+ * 中文沒有單複數，字典裡不放 `_one`，自然就會落回原句。
+ */
 export function t(lang: Lang, key: MsgKey, params?: Record<string, string | number>): string {
-  let text: string = T[lang]?.[key] ?? T.zh[key] ?? key
+  let text: string | undefined
+  if (params && Number(params.n) === 1) {
+    const oneKey = `${key}_one` as MsgKey
+    text = T[lang]?.[oneKey] ?? T.zh[oneKey]
+  }
+  text ??= T[lang]?.[key] ?? T.zh[key] ?? key
   if (params) {
     for (const [name, value] of Object.entries(params)) {
       text = text.split(`{${name}}`).join(String(value))

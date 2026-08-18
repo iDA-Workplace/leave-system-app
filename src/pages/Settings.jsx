@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
 import { Button, Card, PageHeader, TextField } from '../components/ui'
 import { useTheme } from '../context/ThemeContext'
@@ -168,6 +169,19 @@ function LanguageSection() {
   )
 }
 
+// 安裝說明本身放在 /install 這個獨立網址，這裡只是入口 —— 那頁要能直接貼到
+// Slack 給全公司，網址得是乾淨的一頁，不能藏在個人設定的某個折疊區塊裡。
+function InstallSection() {
+  const { t } = useLanguage()
+  return (
+    <Card className="settings-section">
+      <h3 className="settings-section__title">{t('settings_install_title')}</h3>
+      <p className="settings-install-body">{t('settings_install_body')}</p>
+      <Link to="/install" className="settings-install-link">{t('settings_install_link')}</Link>
+    </Card>
+  )
+}
+
 function Settings({ userProfile }) {
   const { t } = useLanguage()
   return (
@@ -175,6 +189,7 @@ function Settings({ userProfile }) {
       <PageHeader title={t('nav_settings')} />
 
       <ProfileSection userProfile={userProfile} />
+      <InstallSection />
       <AppearanceSection />
       <LanguageSection />
       <ChangePasswordSection />

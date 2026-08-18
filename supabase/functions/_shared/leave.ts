@@ -27,6 +27,22 @@ export function taipeiToday(): string {
 }
 
 /**
+ * 從某一天往後找「下一個上班日」，跳過週六與週日。
+ *
+ * 用在下午 4 點的預告：週一到週四找到的是明天，週五找到的是下週一 —— 週五
+ * 下班前預告「明天（週六）」沒有意義，大家真正想先知道的是週一誰不在。
+ * 國定假日不在這裡處理：系統裡沒有行事曆資料，硬猜只會猜錯；那些日子本來
+ * 就沒人請假，最後會是一則「沒有人請假」的公告，無害。
+ */
+export function nextWorkday(fromDate: string): string {
+  const d = new Date(`${fromDate}T00:00:00Z`)
+  do {
+    d.setUTCDate(d.getUTCDate() + 1)
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
  * 用 service role 連資料庫。
  *
  * Edge function 沒有使用者的登入狀態，所以只能用 service role key，

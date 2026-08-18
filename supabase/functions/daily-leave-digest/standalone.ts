@@ -39,6 +39,22 @@ function taipeiToday(): string {
 }
 
 /**
+ * 從某一天往後找「下一個上班日」，跳過週六與週日。
+ *
+ * 用在下午 4 點的預告：週一到週四找到的是明天，週五找到的是下週一 —— 週五
+ * 下班前預告「明天（週六）」沒有意義，大家真正想先知道的是週一誰不在。
+ * 國定假日不在這裡處理：系統裡沒有行事曆資料，硬猜只會猜錯；那些日子本來
+ * 就沒人請假，最後會是一則「沒有人請假」的公告，無害。
+ */
+function nextWorkday(fromDate: string): string {
+  const d = new Date(`${fromDate}T00:00:00Z`)
+  do {
+    d.setUTCDate(d.getUTCDate() + 1)
+  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6)
+  return d.toISOString().slice(0, 10)
+}
+
+/**
  * 用 service role 連資料庫。
  *
  * Edge function 沒有使用者的登入狀態，所以只能用 service role key，
@@ -427,6 +443,16 @@ const T = {
     digest_footer: '由請假系統自動發送。完整行事曆請見系統首頁。',
     digest_summary_text: '今日請假名單（共 {n} 筆）',
 
+    // 前一天下午的預告。週一到週四發的是「明天」，週五發的是「下個上班日」，
+    // 所以標題有兩種寫法，不能只用「明日」。
+    preview_heading_tomorrow: ':palm_tree: *明天（{month}/{day} 週{weekday}）請假名單*',
+    preview_heading_nextday: ':palm_tree: *下個上班日（{month}/{day} 週{weekday}）請假名單*',
+    preview_summary_text: '明天請假名單（共 {n} 筆）',
+    preview_summary_text_nextday: '下個上班日請假名單（共 {n} 筆）',
+    preview_empty_tomorrow: ':white_check_mark: *明天（{month}/{day} 週{weekday}）沒有人請假。*',
+    preview_empty_nextday: ':white_check_mark: *下個上班日（{month}/{day} 週{weekday}）沒有人請假。*',
+    preview_footer: '這是前一天下午的預告；當天上午 9:00 還會再發一次最新名單。',
+
     overdue_reason: '逾期未審核，系統自動退回',
     overdue_text: '您的請假申請已逾期退回',
     overdue_heading: ':warning: *您的請假申請已逾期退回*\n{detail}',
@@ -560,6 +586,17 @@ const T = {
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: 'Posted automatically by the leave system. See the homepage for the full calendar.',
     digest_summary_text: 'Out today ({n} people)',
+    digest_summary_text_one: 'Out today (1 person)',
+
+    preview_heading_tomorrow: ':palm_tree: *Out tomorrow ({month}/{day}, {weekday})*',
+    preview_heading_nextday: ':palm_tree: *Out on the next working day ({month}/{day}, {weekday})*',
+    preview_summary_text: 'Out tomorrow ({n} people)',
+    preview_summary_text_one: 'Out tomorrow (1 person)',
+    preview_summary_text_nextday: 'Out on the next working day ({n} people)',
+    preview_summary_text_nextday_one: 'Out on the next working day (1 person)',
+    preview_empty_tomorrow: ':white_check_mark: *Nobody is out tomorrow ({month}/{day}, {weekday}).*',
+    preview_empty_nextday: ':white_check_mark: *Nobody is out on the next working day ({month}/{day}, {weekday}).*',
+    preview_footer: 'This is the afternoon heads-up. The up-to-date list is posted again at 9:00 that morning.',
 
     overdue_reason: 'Automatically returned — not reviewed in time',
     overdue_text: 'Your leave request was returned (overdue)',
@@ -636,8 +673,20 @@ const T = {
 
 type MsgKey = keyof typeof T['zh']
 
+/**
+ * 取翻譯字串。
+ *
+ * 單複數：params.n 等於 1 時先找 `<key>_one`，找不到再用原本那一句 ——
+ * 跟前端 LanguageContext 的規則一模一樣，才不會出現「Out today (1 people)」。
+ * 中文沒有單複數，字典裡不放 `_one`，自然就會落回原句。
+ */
 function t(lang: Lang, key: MsgKey, params?: Record<string, string | number>): string {
-  let text: string = T[lang]?.[key] ?? T.zh[key] ?? key
+  let text: string | undefined
+  if (params && Number(params.n) === 1) {
+    const oneKey = `${key}_one` as MsgKey
+    text = T[lang]?.[oneKey] ?? T.zh[oneKey]
+  }
+  text ??= T[lang]?.[key] ?? T.zh[key] ?? key
   if (params) {
     for (const [name, value] of Object.entries(params)) {
       text = text.split(`{${name}}`).join(String(value))
@@ -653,14 +702,28 @@ function weekdayKey(day: number): MsgKey {
   return WEEKDAY_KEYS[day] ?? 'weekday_0'
 }
 
-// 每日請假公告：每天上午 9 點（台北時間）把「今天有誰請假」發到公開頻道，
-// 用來取代目前的 Outlook calendar 公告。
+// 請假公告，一支 function 兩個時段：
 //
-// 沒有人請假的日子就安靜跳過，不發任何訊息。
+//   · 當天上午 9:00 —— 「今天有誰請假」（scope=today，預設）
+//   · 前一天下午 4:00 —— 「下個上班日有誰請假」的預告（scope=next）
+//
+// 兩則刻意共用同一支：內容組法完全一樣，只差在查哪一天、標題怎麼寫、
+// 以及沒人請假時要不要出聲。複製成兩支遲早會改到不一致。
+//
+// 兩者的差別：
+//   · 9:00 那則沒有人請假就安靜跳過，不洗版。
+//   · 下午 4:00 那則就算沒人請假也會發一則「沒有人請假」—— 這是刻意的，
+//     每天固定有一則，大家才知道系統活著、沒有漏發。
+//
+// 「下個上班日」會跳過週末：週一到週四發的是明天，週五發的是下週一。
+// 週五下班前預告「明天（週六）」沒有意義。
+//
+// 下午 4:00 之後才送出並核准的隔日假單，這則預告不會有他 —— 但隔天 9:00
+// 那則會有，因為那是重新查一次資料庫，不是把預告存起來重發。
 //
 // 排程方式見 supabase/functions/README.md（用 pg_cron + pg_net 定時打這支）。
-// 這支 function 不看系統時間決定「要不要發」—— 被呼叫就發，時間點交給排程
-// 決定，這樣手動觸發補發也才有用。
+// 這支不看系統時間決定「要不要發」—— 被呼叫就發，時間點交給排程決定，
+// 這樣手動觸發補發才有用。
 //
 // 語言：這是發到「公開頻道」的公告，不是私訊給某個人，沒有單一收件人可以
 // 決定語言，只能固定一種 —— 用環境變數 SLACK_CHANNEL_LANGUAGE 決定，
@@ -673,63 +736,104 @@ function channelLang(): Lang {
   return normalizeLang(Deno.env.get('SLACK_CHANNEL_LANGUAGE'))
 }
 
-Deno.serve(async () => {
+/** 日期字串轉成標題要用的 {month}/{day}/{weekday} 三個值。 */
+function dateParams(lang: Lang, date: string) {
+  const d = new Date(`${date}T00:00:00Z`)
+  return {
+    month: d.getUTCMonth() + 1,
+    day: d.getUTCDate(),
+    weekday: t(lang, weekdayKey(d.getUTCDay())),
+  }
+}
+
+/** 兩個日期是不是差剛好一天（決定標題要說「明天」還是「下個上班日」）。 */
+function isTomorrow(from: string, target: string): boolean {
+  const d = new Date(`${from}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + 1)
+  return d.toISOString().slice(0, 10) === target
+}
+
+Deno.serve(async req => {
   try {
     const db = adminClient()
-    const today = taipeiToday()
     const lang = channelLang()
 
-    // 涵蓋今天的所有已核准假單：開始日在今天或更早，結束日在今天或更晚。
+    // scope=next → 前一天下午的預告；沒帶或帶別的值 → 維持原本的「今天」。
+    // 用查詢字串而不是 request body：pg_cron 那邊 net.http_post 只要改網址，
+    // 不必再組 JSON，出錯的機會少一點。
+    const scope = new URL(req.url).searchParams.get('scope') === 'next' ? 'next' : 'today'
+    const today = taipeiToday()
+    const target = scope === 'next' ? nextWorkday(today) : today
+    const tomorrow = scope === 'next' && isTomorrow(today, target)
+    const params = dateParams(lang, target)
+
+    // 涵蓋目標日的所有已核准假單：開始日在當天或更早，結束日在當天或更晚。
     // （表單強制要填 end_date，單日假的 end_date 會等於 start_date，
     //   所以這個範圍條件對單日與多日都成立。）
     const { data, error } = await db
       .from('leave_requests')
       .select(LEAVE_SELECT)
       .eq('status', 'approved')
-      .lte('start_date', today)
-      .gte('end_date', today)
+      .lte('start_date', target)
+      .gte('end_date', target)
     if (error) throw new Error(`讀取假單失敗：${error.message}`)
 
     const leaves = (data ?? []) as LeaveRow[]
+
     if (leaves.length === 0) {
-      return new Response(JSON.stringify({ date: today, count: 0, posted: false }), {
-        headers: { 'Content-Type': 'application/json' },
-      })
+      // 9:00 那則安靜跳過；下午的預告則明確說「沒有人請假」。
+      if (scope === 'today') {
+        return json({ scope, date: target, count: 0, posted: false })
+      }
+      const emptyKey: MsgKey = tomorrow ? 'preview_empty_tomorrow' : 'preview_empty_nextday'
+      const line = t(lang, emptyKey, params)
+      await postToChannel(requireEnv('SLACK_LEAVE_CHANNEL'), line, [
+        section(line),
+        contextLine(t(lang, 'preview_footer')),
+      ])
+      return json({ scope, date: target, count: 0, posted: true })
     }
 
     // 分成全天／上午／下午三組 —— 大家真正想知道的是「這個人現在找不找得到」，
     // 全部擠成一串會看不出誰是整天不在、誰只是半天。
     const { fullDay, morning, afternoon } = groupBySlot(leaves)
 
-    const d = new Date(today)
-    const weekday = t(lang, weekdayKey(d.getUTCDay()))
-    const heading = t(lang, 'digest_heading', { month: d.getUTCMonth() + 1, day: d.getUTCDate(), weekday })
+    const headingKey: MsgKey = scope === 'today'
+      ? 'digest_heading'
+      : (tomorrow ? 'preview_heading_tomorrow' : 'preview_heading_nextday')
 
     const groups: [string, LeaveRow[]][] = [
       [t(lang, 'digest_group_fullday'), fullDay],
       [t(lang, 'digest_group_morning'), morning],
       [t(lang, 'digest_group_afternoon'), afternoon],
     ]
-    const blocks: unknown[] = [section(heading)]
+    const blocks: unknown[] = [section(t(lang, headingKey, params))]
     for (const [label, rows] of groups) {
       if (rows.length === 0) continue   // 空的組別整段不顯示
       blocks.push(section(t(lang, 'digest_group_heading', { label, lines: rows.map(l => digestLine(l, lang)).join('\n') })))
     }
-    blocks.push(contextLine(t(lang, 'digest_footer')))
+    blocks.push(contextLine(t(lang, scope === 'today' ? 'digest_footer' : 'preview_footer')))
+
+    // 摘要文字是手機通知列上看到的那一行，週五那則不能寫「明天」
+    const summaryKey: MsgKey = scope === 'today'
+      ? 'digest_summary_text'
+      : (tomorrow ? 'preview_summary_text' : 'preview_summary_text_nextday')
 
     await postToChannel(
       requireEnv('SLACK_LEAVE_CHANNEL'),
-      t(lang, 'digest_summary_text', { n: leaves.length }),
+      t(lang, summaryKey, { n: leaves.length }),
       blocks,
     )
 
-    return new Response(JSON.stringify({ date: today, count: leaves.length, posted: true }), {
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return json({ scope, date: target, count: leaves.length, posted: true })
   } catch (e) {
-    return new Response(JSON.stringify({ error: (e as Error).message }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json' },
-    })
+    return json({ error: (e as Error).message }, 500)
   }
 })
+
+function json(body: unknown, status = 200): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { 'Content-Type': 'application/json' },
+  })
+}
