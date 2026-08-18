@@ -7,12 +7,14 @@
 --   2. 刪掉考核的自評作答與主管評分
 --   3. 考核參與者「人留著」，只把流程狀態退回最開始（未交自評、未評分、
 --      沒有分數、未讀已讀標記清掉），主管一進系統就是乾淨的待辦清單
+--   4. 把個人假期額度的「手動調整」清掉，全部回到「比照勞基法／全公司預設」
 --
 -- 這份腳本刻意不做的事（依照需求確認過的範圍）：
 --   × 不刪、不改 users —— 同仁的帳號、部門、職稱、入職日期都是真實資料
 --   × 不刪 Supabase Auth 的登入帳號 —— 大家的密碼與登入方式維持原樣
 --   × 不刪 Storage（leave-attachments）裡的附件檔案
---   × 不刪考核週期、簽核流程、考核題目範本、假別、個人假期額度等設定
+--   × 不刪考核週期 —— 測試期間開的那幾個週期先留著
+--   × 不刪簽核流程、考核題目範本、假別，以及「全公司預設額度」
 --
 -- 附註：
 --   · annual_leave_summary 是「檢視表(view)」不是資料表，特休的已用時數是
@@ -51,6 +53,14 @@ set
   has_dispute             = false,
   dispute_comment         = null;
 
+-- ---- 4. 個人假期額度：清掉手動調整，回到預設 --------------------------------
+-- 這張表存的是「財務針對某個人、某個假別另外談定的額度」。沒有資料列＝這個人
+-- 這個假別走預設（特休依入職日期與年資自動算，其他假別用全公司預設值），
+-- 所以「歸零」就是把資料列刪掉，而不是把數字改成 0 —— 改成 0 會變成
+-- 「這個人明確被設定成一天都不能請」，那是完全不同的意思。
+-- 全公司預設額度存在別的地方，不會被這一行動到。
+delete from public.user_leave_entitlements;
+
 commit;
 
 -- ============================================================================
@@ -63,6 +73,8 @@ union all
 select '考核自評作答', count(*) from public.review_responses
 union all
 select '考核主管評分', count(*) from public.review_evaluations
+union all
+select '個人假期額度的手動調整', count(*) from public.user_leave_entitlements
 union all
 select '已交自評的人', count(*) from public.annual_review_participants where self_submitted
 union all

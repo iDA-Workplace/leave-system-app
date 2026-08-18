@@ -1,6 +1,7 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAwaitingMyScoreCount, REVIEW_TODO_EVENT } from '../lib/reviewTodo'
 import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../context/LanguageContext'
 import {
@@ -21,11 +22,16 @@ const RAIL_EXPANDED_KEY = 'leave-system-rail-expanded'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 
-function buildNavItems(userProfile, t) {
+// 評核人（主管／副主管／老闆）才會有「待我評分」這種待辦，一般員工不會。
+const EVALUATOR_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
+
+function buildNavItems(userProfile, t, reviewTodoCount) {
   const items = [
     { path: '/', label: t('nav_home'), icon: DashboardIcon, end: true },
     { path: '/leave/my', label: t('nav_leave_management'), icon: ListIcon },
-    { path: '/review', label: t('nav_review'), icon: ReviewIcon },
+    // 徽章＝有幾位部屬已經交出自評、正等著我評分。只放在側邊選單還不夠直觀，
+    // 主管平常不會沒事點進考核管理，數字要在外面就看得到。
+    { path: '/review', label: t('nav_review'), icon: ReviewIcon, badge: reviewTodoCount },
   ]
 
   if (userProfile?.is_admin || userProfile?.is_finance) {
@@ -53,6 +59,7 @@ function Layout({ children, userProfile }) {
   const { mode, setMode, resolvedTheme } = useTheme()
   const { t } = useLanguage()
   const [pendingCount, setPendingCount] = useState(0)
+  const [reviewTodoCount, setReviewTodoCount] = useState(0)
   const [railExpanded, setRailExpanded] = useState(
     () => localStorage.getItem(RAIL_EXPANDED_KEY) === 'true'
   )
@@ -85,6 +92,40 @@ function Layout({ children, userProfile }) {
       }
     }
   }, [userProfile])
+
+  // 側邊選單「考核管理」上的待辦數字。判定規則跟考核頁面共用 lib/reviewTodo.js，
+  // 不在這裡自己再寫一次，否則兩邊遲早會對不起來。
+  //
+  // 三種情況都要更新數字：
+  //   · 換頁（最基本的一種，成本也最低）
+  //   · 自己在考核頁面按下「送出評分」（reviewTodo 發出的事件）
+  //   · 別人剛交出自評（Supabase 即時訂閱；若這張表沒開啟 Realtime 也不會出錯，
+  //     只是要等到下次換頁才更新）
+  const refreshReviewTodo = useCallback(() => {
+    if (!EVALUATOR_ROLES.includes(userProfile?.role)) { setReviewTodoCount(0); return }
+    fetchAwaitingMyScoreCount(userProfile, userProfile.role === 'boss').then(setReviewTodoCount)
+  }, [userProfile])
+
+  useEffect(() => {
+    if (!EVALUATOR_ROLES.includes(userProfile?.role)) return
+
+    window.addEventListener(REVIEW_TODO_EVENT, refreshReviewTodo)
+    const subscription = supabase
+      .channel('review_participants_changes')
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'annual_review_participants',
+      }, refreshReviewTodo)
+      .subscribe()
+
+    return () => {
+      window.removeEventListener(REVIEW_TODO_EVENT, refreshReviewTodo)
+      supabase.removeChannel(subscription)
+    }
+  }, [userProfile, refreshReviewTodo])
+
+  // 換頁時重算。跟訂閱分開兩個 effect：訂閱只在使用者變的時候重建，
+  // 不會每換一次頁就把即時訂閱拆掉重接。
+  useEffect(() => { refreshReviewTodo() }, [refreshReviewTodo, location.pathname])
 
   useEffect(() => {
     function handleClickOutside(e) {
@@ -136,7 +177,7 @@ function Layout({ children, userProfile }) {
     })
   }
 
-  const navItems = buildNavItems(userProfile, t)
+  const navItems = buildNavItems(userProfile, t, reviewTodoCount)
   const bottomNavItems = navItems.slice(0, 3)
   const moreItems = navItems.slice(3)
 

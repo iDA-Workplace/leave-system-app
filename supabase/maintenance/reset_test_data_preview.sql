@@ -17,6 +17,8 @@ select '會刪除：考核自評作答',   count(*) from public.review_responses
 union all
 select '會刪除：考核主管評分',   count(*) from public.review_evaluations
 union all
+select '會刪除：個人假期額度手動調整', count(*) from public.user_leave_entitlements
+union all
 -- 會被改成「未開始」但不會刪掉的資料
 select '會歸零(不刪)：考核參與者', count(*) from public.annual_review_participants
 union all
@@ -26,8 +28,6 @@ union all
 select '不動：考核週期',         count(*) from public.annual_reviews
 union all
 select '不動：假別設定',         count(*) from public.leave_types
-union all
-select '不動：個人假期額度',     count(*) from public.user_leave_entitlements
 union all
 select '不動：請假簽核流程',     count(*) from public.approval_flows
 union all
