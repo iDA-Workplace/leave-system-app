@@ -1821,12 +1821,13 @@ function ReviewParticipants({ userProfile, isBoss }) {
   const [selectedReviewId, setSelectedReviewId] = useState('')
   const [users, setUsers] = useState([])
   const [participants, setParticipants] = useState([])
+  const [flows, setFlows] = useState([])
   const [loading, setLoading] = useState(true)
   const [manualSelection, setManualSelection] = useState([])
   const { showToast } = useToast()
   const { t } = useLanguage()
 
-  useEffect(() => { fetchReviews() }, [])
+  useEffect(() => { fetchReviews(); fetchFlows() }, [])
   useEffect(() => { if (selectedReviewId) { fetchUsers(); fetchParticipants() } }, [selectedReviewId])
 
   async function fetchReviews() {
@@ -1841,6 +1842,14 @@ function ReviewParticipants({ userProfile, isBoss }) {
     if (!isBoss) query = query.eq('department', userProfile.department)
     const { data } = await query
     setUsers(data || [])
+  }
+
+  // 可以指派給名單上某個人的流程。主管只看得到自己部門的流程加上沒綁部門的
+  // 那幾條（例如老闆建的「主管考核流程」）；老闆看得到全部。
+  async function fetchFlows() {
+    const { data } = await supabase.from('review_flows').select('id, name, department').order('name')
+    const all = data || []
+    setFlows(isBoss ? all : all.filter(f => !f.department || f.department === userProfile.department))
   }
 
   async function fetchParticipants() {
@@ -1895,6 +1904,37 @@ function ReviewParticipants({ userProfile, isBoss }) {
     const { error } = await supabase.from('annual_review_participants')
       .update({ supervisor_id: supervisorId || null }).eq('id', participantId)
     if (error) { showToast(t('reviewpart_err_set_supervisor', { msg: error.message }), { tone: 'error' }); return }
+    fetchParticipants()
+  }
+
+  /**
+   * 逐人改考核流程。
+   *
+   * 加人的時候是照那個人的部門自動帶流程，但同一個部門裡總有例外 —— 最常見
+   * 的就是部門主管：部門欄位要跟部屬一樣（報表、篩選都靠它），評分流程卻不
+   * 該由自己的部屬那條走。與其為了這種例外去改部門欄位，不如直接在名單上把
+   * 那一列的流程換掉。
+   *
+   * 換流程時把進度退回第一關：新舊流程的關卡數與順序不一樣，留著舊的關卡
+   * 編號會變成「停在一個新流程裡不存在的關」，那個人就永遠等不到人評分。
+   * 已經評完的人不動進度，避免把完成的紀錄改成半完成。
+   */
+  async function handleChangeFlow(participant, flowId) {
+    if (!flowId || flowId === participant.flow_id) return
+    const patch = { flow_id: flowId }
+    if (!participant.supervisor_submitted) patch.current_step = 1
+
+    // 被權限規則擋下的 UPDATE 不會報錯，只會回 0 筆，所以要一起看資料列數
+    const { data, error } = await supabase.from('annual_review_participants')
+      .update(patch).eq('id', participant.id).select()
+    if (error || !data?.length) {
+      showToast(
+        error ? t('reviewpart_err_set_flow', { msg: error.message }) : t('reviewpart_err_set_flow_rls'),
+        { tone: 'error' },
+      )
+      return
+    }
+    showToast(t('reviewpart_flow_changed'))
     fetchParticipants()
   }
 
@@ -1965,7 +2005,12 @@ function ReviewParticipants({ userProfile, isBoss }) {
         <div className="ui-table-wrap">
           <table className="ui-table">
             <thead>
-              <tr><th>{t('adminusers_col_name')}</th><th>{t('adminusers_col_manager')}</th><th>{t('common_actions')}</th></tr>
+              <tr>
+                <th>{t('adminusers_col_name')}</th>
+                <th>{t('adminusers_col_manager')}</th>
+                <th>{t('reviewpart_col_flow')}</th>
+                <th>{t('common_actions')}</th>
+              </tr>
             </thead>
             <tbody>
               {participants.map(p => (
@@ -1977,6 +2022,27 @@ function ReviewParticipants({ userProfile, isBoss }) {
                       {users.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
                     </select>
                     {!p.supervisor_id && <div className="review-missing-manager">{t('reviewpart_missing_manager')}</div>}
+                  </td>
+                  <td>
+                    <select
+                      className="ui-field__control"
+                      value={p.flow_id || ''}
+                      onChange={e => handleChangeFlow(p, e.target.value)}
+                      aria-label={t('reviewpart_col_flow')}
+                    >
+                      {!p.flow_id && <option value="">{t('reviewpart_flow_unset')}</option>}
+                      {/* 這個人現在走的流程如果不在我看得到的清單裡（例如老闆幫他
+                          指到別的部門的流程），還是要有一個對應的選項，否則下拉
+                          會自己顯示第一筆，看起來像是被改掉了。 */}
+                      {p.flow_id && !flows.some(f => f.id === p.flow_id) && (
+                        <option value={p.flow_id}>{t('reviewpart_flow_other_dept')}</option>
+                      )}
+                      {flows.map(f => (
+                        <option key={f.id} value={f.id}>
+                          {f.department ? t('reviewpart_flow_option', { name: f.name, dept: f.department }) : f.name}
+                        </option>
+                      ))}
+                    </select>
                   </td>
                   <td><Button size="sm" variant="danger-outlined" onClick={() => handleRemove(p.id)}>{t('adminnotify_remove')}</Button></td>
                 </tr>
