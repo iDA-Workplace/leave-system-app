@@ -485,7 +485,7 @@ button:focus-visible {
   flex: 1;
   min-width: 0;
   padding: var(--space-200);
-  padding-bottom: calc(var(--shell-bottom-nav-height) + var(--space-200));
+  padding-bottom: calc(var(--shell-bottom-nav-height) + env(safe-area-inset-bottom) + var(--space-200));
 }
 @media (min-width: 600px) {
   .shell__content {
@@ -504,12 +504,16 @@ button:focus-visible {
 }
 
 /* ---- Bottom Navigation (mobile) ---- */
+/* 高度要「加上」home indicator 的安全區，不能只加 padding —— 專案全域是
+   box-sizing: border-box，所以 padding 是從 height 裡面扣的。原本寫成
+   height: 64px + padding-bottom: env(...) 的結果是：iPhone 上那 34px 的
+   安全區直接吃掉一半，圖示跟文字只剩 30px 可用，看起來就是擠成一團。 */
 .bottom-nav {
   position: fixed;
   left: 0;
   right: 0;
   bottom: 0;
-  height: var(--shell-bottom-nav-height);
+  height: calc(var(--shell-bottom-nav-height) + env(safe-area-inset-bottom));
   padding-bottom: env(safe-area-inset-bottom);
   display: flex;
   background: var(--sys-color-surface-container-low);
@@ -523,16 +527,21 @@ button:focus-visible {
 }
 .bottom-nav-item {
   flex: 1;
+  min-width: 0;              /* 讓長標籤可以換行而不是把其他項目擠掉 */
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2px;
+  gap: var(--space-050);
+  padding: var(--space-050) var(--space-025);
   color: var(--sys-color-on-surface-variant);
   text-decoration: none;
   border: none;
   background: none;
-  font: var(--type-label-medium-size)/var(--type-label-medium-line) var(--font-family-base);
+  /* 英文的「Leave Management」「Performance Review」會換成兩行，行高要壓緊
+     一點，兩行才不會把圖示往上頂。 */
+  font: var(--type-label-medium-size)/1.25 var(--font-family-base);
+  text-align: center;
   position: relative;
   cursor: pointer;
 }

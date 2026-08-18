@@ -102,6 +102,7 @@ export const translations = {
     login_submit: '登入',
     login_submitting: '登入中...',
     login_error: '帳號或密碼錯誤，請重新輸入',
+    login_remember_me: '記住我的電子郵件',
 
     // ===== 首頁 =====
     home_welcome: '歡迎回來，{name}',
@@ -808,6 +809,7 @@ export const translations = {
     login_hide: 'Hide',
     login_submit: 'Sign in',
     login_submitting: 'Signing in...',
+    login_remember_me: 'Remember my email',
     login_error: 'Incorrect email or password, please try again',
 
     // ===== Home =====

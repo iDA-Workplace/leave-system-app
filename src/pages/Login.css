@@ -87,3 +87,22 @@
   font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
   padding: var(--space-050);
 }
+
+/* 「記住我」：整塊都可以點（label 包住 checkbox），手機上才不用去戳那個小方格。 */
+.login-card__remember {
+  display: flex;
+  align-items: center;
+  gap: var(--space-100);
+  cursor: pointer;
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  margin-top: calc(var(--space-100) * -1);
+}
+
+.login-card__remember input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--sys-color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}

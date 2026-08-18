@@ -177,7 +177,9 @@
   --shell-rail-expanded: 240px;
   --shell-app-bar-height: 64px;
   --shell-app-bar-height-compact: 56px;
-  --shell-bottom-nav-height: 64px;
+  /* 不含 home indicator 安全區；實際高度是這個值再加上 env(safe-area-inset-bottom)，
+     見 AppShell.css 的 .bottom-nav。 */
+  --shell-bottom-nav-height: 76px;
   --shell-content-max-width: 1440px;
 
   color-scheme: light;
