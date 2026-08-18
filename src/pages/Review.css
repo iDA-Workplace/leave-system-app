@@ -436,3 +436,102 @@
   padding-bottom: var(--space-100);
   border-bottom: 1px solid var(--sys-color-outline-variant);
 }
+
+/* ===== 考核結果列印（員工把自己的考核結果另存成 PDF）=====
+   走瀏覽器內建的列印／另存為 PDF。畫面上這個標頭是多餘的（視窗標題已經
+   寫了是哪一份考核），所以平常藏起來，只有印到紙上才需要它來標示這份文件
+   是誰的、哪一年的。 */
+.review-print-header {
+  display: none;
+}
+
+@media print {
+  /* 不是列印區、也不是列印區祖先的元素通通不印 —— 側邊欄、頁首、其他分頁的
+     內容、視窗的按鈕都不該出現在 PDF 裡。用 display:none 而不是 visibility，
+     不然它們會留下空白撐出好幾張空頁。 */
+  body :not(:has(.review-print-area)):not(.review-print-area):not(.review-print-area *) {
+    display: none !important;
+  }
+
+  /* 祖先（scrim、視窗、版面容器）只是把內容包在裡面，它們的固定定位、捲動
+     和高度上限在紙上只會把內容裁掉，全部拆掉。 */
+  body :has(.review-print-area) {
+    position: static !important;
+    display: block !important;
+    overflow: visible !important;
+    width: auto !important;
+    height: auto !important;
+    max-width: none !important;
+    max-height: none !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    background: none !important;
+    box-shadow: none !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    margin: 0;
+    padding: 0;
+  }
+
+  @page {
+    margin: 16mm;
+  }
+
+  /* 瀏覽器預設不印背景色，所以那些靠底色區分的區塊（主管評語、總評）在紙上
+     會變成一片白，深色模式下更會變成白底白字。這裡一律換成黑字白底加細框線，
+     不管使用者是什麼佈景、有沒有開「列印背景圖形」都讀得到。 */
+  .review-print-area,
+  .review-print-area * {
+    color: #000 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+  }
+
+  .review-print-area {
+    font-size: 11pt;
+  }
+
+  .review-print-header {
+    display: block;
+    margin-bottom: 8mm;
+    padding-bottom: 3mm;
+    border-bottom: 1.5pt solid #000;
+  }
+
+  .review-print-header__title {
+    font-size: 16pt;
+    font-weight: 600;
+    margin-bottom: 2mm;
+  }
+
+  .review-print-header__meta {
+    font-size: 10pt;
+  }
+
+  /* 一題連同它的自評、各關主管評語盡量不要被切到兩頁。 */
+  .review-print-area .review-result-question,
+  .review-print-area .review-overall {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  .review-print-area .review-result-box,
+  .review-print-area .review-overall {
+    border: 0.5pt solid #999 !important;
+    border-radius: 0 !important;
+  }
+
+  .review-print-area .review-result-box__label,
+  .review-print-area .review-result-box__note {
+    opacity: 1 !important;
+  }
+
+  .review-print-hide {
+    display: none !important;
+  }
+}

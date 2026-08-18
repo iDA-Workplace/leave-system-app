@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
+import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import {
   Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea,
@@ -24,6 +25,44 @@ const RATING_BANDS = [
 function ratingFor(score) {
   if (score === null || score === undefined) return null
   return RATING_BANDS.find(b => score >= b.min && score <= b.max) || null
+}
+
+/**
+ * 把「團隊年度考核」名冊匯出成 Excel。
+ *
+ * 刻意只用畫面上已經載入的欄位，不另外去資料庫撈東西 —— 匯出是個一次性
+ * 動作，多打幾次資料庫只是多幾種失敗的可能。要看單一員工的完整作答與評語，
+ * 走「查看詳情」那條路（員工本人也可以在自己的紀錄裡匯出 PDF）。
+ *
+ * 用 xlsx 而不是自己拼 CSV：中文在 CSV 裡的編碼問題（Excel 開啟變亂碼）
+ * 要靠 BOM 處理，而這個專案本來就有 xlsx 這個相依套件、「匯出報表」也是
+ * 用它，沿用同一套最省事也最不會出錯。
+ */
+function exportRosterToExcel(rows, { t, lang, scopeLabel }) {
+  const data = rows.map(r => {
+    const rating = ratingFor(r.final_score)
+    return {
+      [t('xlsr_col_name')]: r.user?.full_name ?? '',
+      [t('xlsr_col_dept')]: r.user?.department ?? '',
+      [t('xlsr_col_title')]: r.user?.job_title ?? '',
+      [t('xlsr_col_year')]: r.review?.year ?? '',
+      [t('xlsr_col_cycle')]: r.review?.title ?? '',
+      [t('xlsr_col_score')]: r.final_score ?? '',
+      [t('xlsr_col_rating')]: rating ? t(`rating_${rating.key}`) : '',
+      [t('xlsr_col_done_at')]: r.supervisor_submitted_at
+        ? new Date(r.supervisor_submitted_at).toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW')
+        : '',
+    }
+  })
+
+  const ws = XLSX.utils.json_to_sheet(data)
+  ws['!cols'] = [
+    { wch: 14 }, { wch: 14 }, { wch: 14 }, { wch: 10 },
+    { wch: 24 }, { wch: 10 }, { wch: 14 }, { wch: 14 },
+  ]
+  const wb = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(wb, ws, t('review_export_sheet'))
+  XLSX.writeFile(wb, t('review_export_filename', { scope: scopeLabel }) + '.xlsx')
 }
 
 function formatTenure(hireDate, t) {
@@ -57,6 +96,59 @@ async function resolveFlowId(department) {
   }
   const { data } = await supabase.from('review_flows').select('id').is('department', null).limit(1)
   return data && data.length > 0 ? data[0].id : null
+}
+
+/**
+ * 我擔任評核人的所有簽核關卡。
+ * 回傳 flow_id:step_order 的集合（用來比對「這一關是不是我」）與我涉入的流程清單。
+ */
+async function fetchMyStepSet(userId) {
+  const { data } = await supabase
+    .from('review_flow_steps').select('flow_id, step_order').eq('evaluator_id', userId)
+  const pairs = data || []
+  return {
+    myStepSet: new Set(pairs.map(s => `${s.flow_id}:${s.step_order}`)),
+    myFlowIds: [...new Set(pairs.map(s => s.flow_id))],
+  }
+}
+
+/**
+ * 「現在輪到我評分」的唯一判定規則。
+ *
+ * 分頁上的徽章數字、團隊管理的統計格、以及「開始評分」按鈕出不出現，
+ * 三個地方共用這一份 —— 各自寫一次的話，遲早會變成徽章說有 3 個待辦、
+ * 點進去只看到 2 個，而且沒人知道哪一邊才是對的。
+ *
+ * 已結束的考核週期不算：那種情況按鈕本來就不會出現，算進待辦只會讓人
+ * 一直看到一個永遠消不掉的數字。
+ */
+function isAwaitingMyScore(participant, myStepSet) {
+  return !!(
+    participant.self_submitted &&
+    !participant.supervisor_submitted &&
+    participant.flow_id &&
+    participant.review?.status === 'active' &&
+    myStepSet.has(`${participant.flow_id}:${participant.current_step}`)
+  )
+}
+
+/**
+ * 分頁徽章用的輕量查詢：只要一個數字，所以不抓簽核鏈與草稿。
+ * 判定規則走上面的 isAwaitingMyScore()，跟清單同一套。
+ */
+async function fetchAwaitingMyScoreCount(userProfile, isBoss) {
+  if (!userProfile?.id) return 0
+  const { myStepSet, myFlowIds } = await fetchMyStepSet(userProfile.id)
+  if (!isBoss && myFlowIds.length === 0) return 0
+
+  let query = supabase
+    .from('annual_review_participants')
+    .select('flow_id, current_step, self_submitted, supervisor_submitted, review:annual_reviews(status)')
+  if (!isBoss) query = query.in('flow_id', myFlowIds)
+
+  const { data, error } = await query
+  if (error) return 0   // 徽章拿不到數字就不顯示，不要因此讓整個頁面壞掉
+  return (data || []).filter(p => isAwaitingMyScore(p, myStepSet)).length
 }
 
 async function fetchQuestionsAndResponses(templateId, participantId) {
@@ -259,7 +351,7 @@ function EmployeeReviewSection({ userProfile }) {
   const [loading, setLoading] = useState(true)
   const [page, setPage] = useState(1)
   const { showToast } = useToast()
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
 
   const [assessModal, setAssessModal] = useState(null)
   const [assessQuestions, setAssessQuestions] = useState([])
@@ -516,14 +608,37 @@ function EmployeeReviewSection({ userProfile }) {
           title={t('review_result_title', { title: detailModal.review?.title })}
           onClose={() => setDetailModal(null)}
           labelledBy="detail-dialog-title"
-          actions={<Button variant="text" onClick={() => setDetailModal(null)}>{t('common_close')}</Button>}
+          actions={(
+            <>
+              <Button variant="outlined" onClick={() => window.print()}>{t('review_export_pdf')}</Button>
+              <Button variant="text" onClick={() => setDetailModal(null)}>{t('common_close')}</Button>
+            </>
+          )}
         >
-          <ReviewResultBody
-            questions={detailQuestions}
-            responses={detailResponses}
-            steps={detailSteps}
-            finalScore={detailModal.final_score}
-          />
+          {/* 列印時只有這一塊會出現在紙上（見 Review.css 的 @media print）。
+              走瀏覽器內建的「另存為 PDF」而不是拉一個 PDF 產生套件進來：
+              考核結果就是一份直式的圖文，瀏覽器排得出來，多一個相依套件
+              只是多一份要維護、而且中文字型在那些套件裡常常要另外處理。 */}
+          <div className="review-print-area">
+            <div className="review-print-header">
+              <div className="review-print-header__title">{t('review_pdf_heading')}</div>
+              <div className="review-print-header__meta">
+                {userProfile.full_name}
+                {userProfile.department ? `　${userProfile.department}` : ''}
+                {detailModal.review?.year ? `　${t('review_year_label', { y: detailModal.review.year })}` : ''}
+              </div>
+              <div className="review-print-header__meta">
+                {t('review_pdf_printed_at', { date: new Date().toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW') })}
+              </div>
+            </div>
+            <ReviewResultBody
+              questions={detailQuestions}
+              responses={detailResponses}
+              steps={detailSteps}
+              finalScore={detailModal.final_score}
+            />
+          </div>
+          <p className="review-hint review-print-hide">{t('review_pdf_filename_hint')}</p>
         </Dialog>
       )}
     </div>
@@ -531,7 +646,7 @@ function EmployeeReviewSection({ userProfile }) {
 }
 
 // ===== 團隊管理與年度考核（主管：走得到的簽核鏈／老闆：全公司） =====
-function TeamReviewManagement({ userProfile, isBoss }) {
+function TeamReviewManagement({ userProfile, isBoss, onScored }) {
   const [participants, setParticipants] = useState([])
   const [loading, setLoading] = useState(true)
   const [selected, setSelected] = useState(null)
@@ -549,9 +664,7 @@ function TeamReviewManagement({ userProfile, isBoss }) {
   useEffect(() => { fetchParticipants() }, [])
 
   async function fetchParticipants() {
-    const { data: myStepsData } = await supabase.from('review_flow_steps').select('flow_id, step_order').eq('evaluator_id', userProfile.id)
-    const myFlowStepPairs = myStepsData || []
-    const myFlowIds = [...new Set(myFlowStepPairs.map(s => s.flow_id))]
+    const { myStepSet, myFlowIds } = await fetchMyStepSet(userProfile.id)
 
     if (!isBoss && myFlowIds.length === 0) { setParticipants([]); setLoading(false); return }
 
@@ -592,10 +705,9 @@ function TeamReviewManagement({ userProfile, isBoss }) {
       flowsById = Object.fromEntries((flows || []).map(f => [f.id, f]))
     }
 
-    const myStepSet = new Set(myFlowStepPairs.map(s => `${s.flow_id}:${s.step_order}`))
     for (const p of rows) {
       p.flow = flowsById[p.flow_id] || null
-      p._myTurn = p.self_submitted && !p.supervisor_submitted && p.flow_id && myStepSet.has(`${p.flow_id}:${p.current_step}`)
+      p._myTurn = isAwaitingMyScore(p, myStepSet)
     }
 
     // 有草稿 = 這一關已經寫過評分、但流程還沒往下走。分開查一次而不是塞進
@@ -781,6 +893,7 @@ function TeamReviewManagement({ userProfile, isBoss }) {
     setSubmitting(false)
     setSelected(null)
     fetchParticipants()
+    onScored?.()   // 分頁徽章的數字要跟著少一個
   }
 
   if (loading) return <div><PageHeader title={isBoss ? t('review_team_title') : t('review_team_title_long')} /><Skeleton height="80px" /></div>
@@ -835,7 +948,7 @@ function TeamReviewManagement({ userProfile, isBoss }) {
                   {p.supervisor_submitted && (
                     <Button size="sm" variant="outlined" onClick={() => handleSelect(p, true)}>{t('review_view_result')}</Button>
                   )}
-                  {!p.supervisor_submitted && p._myTurn && p.review?.status === 'active' && (
+                  {!p.supervisor_submitted && p._myTurn && (
                     <Button size="sm" onClick={() => handleSelect(p, false)}>
                       {p._hasDraft ? t('review_continue_score') : t('review_start_score')}
                     </Button>
@@ -955,7 +1068,7 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
   const [detail, setDetail] = useState(null)
   const [detailData, setDetailData] = useState(null)
   const { showToast } = useToast()
-  const { t } = useLanguage()
+  const { t, lang } = useLanguage()
 
   useEffect(() => { fetchRows() }, [])
 
@@ -1016,9 +1129,27 @@ function CompanyReviewRoster({ userProfile, isBoss }) {
 
   if (loading) return <div><PageHeader title={t('review_roster_title')} /><Skeleton height="80px" /></div>
 
+  // 匯出的範圍就是畫面上篩選後的結果 —— 看到什麼就匯出什麼，
+  // 才不會出現「畫面只有業務部、檔案卻是全公司」這種對不上的情況。
+  function handleExport() {
+    if (visible.length === 0) { showToast(t('review_export_empty'), { tone: 'error' }); return }
+    const scopeLabel = [
+      dept === 'all' ? t('review_export_scope_all') : dept,
+      year === 'all' ? '' : year,
+    ].filter(Boolean).join('_')
+    exportRosterToExcel(visible, { t, lang, scopeLabel })
+  }
+
   return (
     <div>
-      <PageHeader title={t('review_roster_title')} />
+      <PageHeader
+        title={t('review_roster_title')}
+        actions={
+          <Button size="sm" variant="outlined" onClick={handleExport} disabled={visible.length === 0}>
+            {t('review_export_excel')}
+          </Button>
+        }
+      />
 
       <div className="review-filters">
         <Select value={dept} onChange={e => setDept(e.target.value)} style={{ maxWidth: '200px' }} aria-label={t('review_filter_dept')}>
@@ -1940,6 +2071,21 @@ function Review({ userProfile }) {
   const isTeamManager = EVALUATOR_ROLES.includes(userProfile?.role)
   const canSelfAssess = userProfile?.role !== 'boss'
 
+  // 「團隊管理」分頁上的待辦數字：有幾位部屬已經交出自評、正等著我評分。
+  // 評完一個就少一個，全部評完徽章消失 —— 跟隔壁「過往考核紀錄」的未讀
+  // 徽章是同一種行為。
+  const [awaitingMyScore, setAwaitingMyScore] = useState(0)
+
+  const refreshAwaitingCount = useCallback(() => {
+    if (!isTeamManager) return
+    fetchAwaitingMyScoreCount(userProfile, isBoss).then(setAwaitingMyScore)
+  }, [userProfile, isBoss, isTeamManager])
+
+  // 切分頁時重算：主管在別的分頁改完東西再切回來，數字要是新的。
+  // 評分送出的當下也會由 TeamReviewManagement 直接呼叫一次（見下方 onScored），
+  // 這樣人停在原地不動也看得到數字減少。
+  useEffect(() => { refreshAwaitingCount() }, [refreshAwaitingCount, location.pathname])
+
   // 一般員工（不是主管／老闆）：不需要額外的「考核管理」外層分頁，
   // 員工資訊卡＋年度自評／過往考核紀錄本身就是整個頁面。
   if (canSelfAssess && !isTeamManager) {
@@ -1952,7 +2098,7 @@ function Review({ userProfile }) {
     tabs.push({ key: 'setup', path: '/review/setup', label: t('reviewsetup_title') })
     // 主管以前沒有獨立的「團隊年度考核」分頁，所以標籤叫「團隊管理與年度考核」；
     // 現在兩個分頁都有了，再留著那個名字只會跟隔壁分頁混淆。
-    tabs.push({ key: 'team', path: '/review/team', label: t('review_team_title') })
+    tabs.push({ key: 'team', path: '/review/team', label: t('review_team_title'), badge: awaitingMyScore })
   }
   // Was "/review/team/annual" -- a sibling page nested under the same URL
   // segment as "/review/team" (團隊管理), so a plain startsWith() prefix
@@ -1965,10 +2111,12 @@ function Review({ userProfile }) {
   return (
     <div>
       <PageHeader title={t('nav_review')} />
-      <Tabs tabs={tabs.map(t => ({
-        ...t,
-        to: t.path,
-        active: t.end ? location.pathname === t.path : (location.pathname === t.path || location.pathname.startsWith(t.path + '/')),
+      {/* 這裡的參數刻意不叫 t —— 外層的 t 是翻譯函式，同名會被蓋掉，
+          之後有人在這個 map 裡加一句 t('...') 就會壞在執行期。 */}
+      <Tabs tabs={tabs.map(tab => ({
+        ...tab,
+        to: tab.path,
+        active: tab.end ? location.pathname === tab.path : (location.pathname === tab.path || location.pathname.startsWith(tab.path + '/')),
       }))} />
 
       <Routes>
@@ -1978,7 +2126,7 @@ function Review({ userProfile }) {
             : <Navigate to="team" replace />
         } />
         {isTeamManager && <Route path="setup/*" element={<DepartmentReviewSetup userProfile={userProfile} isBoss={isBoss} />} />}
-        {isTeamManager && <Route path="team" element={<TeamReviewManagement userProfile={userProfile} isBoss={isBoss} />} />}
+        {isTeamManager && <Route path="team" element={<TeamReviewManagement userProfile={userProfile} isBoss={isBoss} onScored={refreshAwaitingCount} />} />}
         {isTeamManager && <Route path="team-annual" element={<CompanyReviewRoster userProfile={userProfile} isBoss={isBoss} />} />}
         <Route path="*" element={<Navigate to="/review" replace />} />
       </Routes>

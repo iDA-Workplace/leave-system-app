@@ -653,6 +653,26 @@ export const translations = {
     reviewpart_added: '已加入 {n} 位參與者',
     reviewpart_missing_manager: '⚠ 未指定，也可以到「員工帳號管理」設定這個人的直屬主管',
     reviewpart_err_set_supervisor: '設定失敗：{msg}',
+
+    // ===== 考核紀錄匯出 =====
+    review_export_excel: '匯出 Excel',
+    review_export_pdf: '匯出 PDF',
+    review_export_empty: '目前沒有可匯出的紀錄',
+    review_export_filename: '考核紀錄_{scope}',
+    review_export_scope_all: '全公司',
+    review_export_sheet: '考核紀錄',
+    xlsr_col_name: '員工姓名',
+    xlsr_col_dept: '部門',
+    xlsr_col_title: '職稱',
+    xlsr_col_year: '考核年度',
+    xlsr_col_cycle: '考核名稱',
+    xlsr_col_score: '最終分數',
+    xlsr_col_rating: '等級',
+    xlsr_col_done_at: '評分完成日',
+    review_pdf_heading: '年度考核結果',
+    review_pdf_printed_at: '列印日期：{date}',
+    review_pdf_filename_hint: '在列印視窗選擇「另存為 PDF」即可存檔。',
+
   },
 
   en: {
@@ -1307,5 +1327,25 @@ export const translations = {
     reviewpart_added_one: 'Added 1 participant',
     reviewpart_missing_manager: '⚠ Not assigned — you can also set this person’s manager under “Employee Accounts”',
     reviewpart_err_set_supervisor: 'Could not save: {msg}',
+
+    // ===== Review record export =====
+    review_export_excel: 'Export Excel',
+    review_export_pdf: 'Export PDF',
+    review_export_empty: 'There are no records to export',
+    review_export_filename: 'Review-Records_{scope}',
+    review_export_scope_all: 'All',
+    review_export_sheet: 'Review Records',
+    xlsr_col_name: 'Employee',
+    xlsr_col_dept: 'Department',
+    xlsr_col_title: 'Job Title',
+    xlsr_col_year: 'Review Year',
+    xlsr_col_cycle: 'Review Cycle',
+    xlsr_col_score: 'Final Score',
+    xlsr_col_rating: 'Rating',
+    xlsr_col_done_at: 'Completed On',
+    review_pdf_heading: 'Annual Review Result',
+    review_pdf_printed_at: 'Printed: {date}',
+    review_pdf_filename_hint: 'Choose “Save as PDF” in the print dialog to save the file.',
+
   },
 }
