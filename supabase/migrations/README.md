@@ -1,0 +1,25 @@
+# Manual migrations
+
+This app's Supabase project isn't wired into this repo (no CLI project link,
+no service-role key here) -- so these `.sql` files are **not** applied
+automatically by anything. Run them by hand:
+
+1. Go to your Supabase project dashboard → **SQL Editor** → **New query**.
+2. Paste the contents of the migration file in filename order.
+3. Run it. Every statement here is idempotent, so re-running a file that's
+   already been applied is harmless.
+
+| File | What it does | Required before |
+|---|---|---|
+| `20260730_annual_review_overhaul.sql` | Adds `users.manager_id`, per-cycle deadlines on `annual_reviews`, and the calibration/publish/acknowledge columns on `annual_review_participants`. | The new `/review/*` and `/admin/reviews/*` screens (Epic H / B18-B22) — they will error on missing columns until this runs. |
+| `20260731_leave_form_attachments_and_quotas.sql` | Adds `leave_requests.attachment_url`/`attachment_name`, `leave_types.annual_quota_hours`, and creates a public `leave-attachments` storage bucket with basic upload/read policies. | The redesigned 申請請假 modal's file-upload field and per-leave-type balance sidebar — without this, uploads will fail and non-特休 balances will show as "未設定額度". |
+| `20260805_role_flag_review_templates_notify.sql` | Adds `users.is_admin` (backfilling from the old `role = 'admin'` rows, then collapsing those rows' `role` to `employee` — revisit each one in 員工帳號管理 and correct the primary role if needed), and `annual_reviews.supervisor_template_id`/`boss_template_id`. (核准通知對象 already existed as `notification_targets` / AdminPanel's 通知對象 tab — no schema change was needed for that.) | The is_admin-based role model everywhere in the app, and per-role review questionnaires. |
+| `20260806_user_department_title.sql` | Adds `users.department`, `users.job_title` (both plain nullable text). | The 年度自評 screen's 員工資訊 block (姓名/職稱/入職日/部門/評核年度) and 員工帳號管理's new fields. |
+| `20260807_approver_update_leave_requests_rls.sql` | Adds an RLS policy letting the assigned approver (or their delegate, or an admin) UPDATE a `leave_requests` row — not just the requester. This is a **hypothesis fix**, not a confirmed diagnosis (this session can't read your project's actual policies) for: approving/rejecting a leave request records the approval but the request's status never actually changes. | Approve/reject actually taking effect, if the cause is what we think it is. |
+| `20260808_review_templates_by_department.sql` | Adds `review_templates.department` (NULL = 全公司預設模板). Does not touch or drop the old calibration/publish columns — the app just stops reading/writing them. | The department-scoped question editing in 考核管理's new 部門考核設定 tab. |
+| `20260809_review_flows_and_scoring.sql` | Adds `users.english_name`; new `review_flows`/`review_flow_steps` tables (a leave-approval-flow-style configurable evaluator chain, scoped by department); `annual_review_participants.flow_id`/`current_step`/`final_score`; `review_evaluations.step_order`/`example_note`; `review_responses.example_note`. | The rebuilt 員工資訊 header, multi-step 考核流程 evaluation chain, and per-question "相關事例" reasoning notes in 考核管理. |
+| `20260810_remove_approval_delegates.sql` | Recreates the `approvers_can_update_leave_requests` RLS policy without its delegate clause, then drops `approval_delegates` entirely. | Removing 代理審核設定 (management wants it gone, DB table included) without breaking approve/reject, which depends on that policy. |
+| `20260811_admin_write_approval_flows_rls.sql` | Adds admin INSERT/UPDATE/DELETE RLS policies for `approval_flows` and `approval_flow_steps` (confirmed missing: 新增流程 in 管理後台 → 審核流程管理 failed with "new row violates row-level security policy"). Additive only -- doesn't touch any existing policy. | 新增流程／重新命名／設定審核人／刪除 in 審核流程管理 actually working for admins. |
+| `20260812_admin_update_users_rls.sql` | Adds an admin UPDATE RLS policy on `public.users` (confirmed missing: 編輯員工 → 儲存 showed a success toast but 部門/職稱/審核流程/管理員 never actually changed -- Postgres RLS reports success with 0 rows affected when its policy excludes every target row, it doesn't raise an error). Additive only. | 員工帳號管理's 編輯 actually persisting 部門/職稱/審核流程/管理員 for admins. |
+| `20260813_review_flows_rls.sql` | Adds SELECT (anyone) + INSERT/UPDATE/DELETE (supervisor/deputy_supervisor/boss/admin) RLS policies for `review_flows` and `review_flow_steps` -- brand-new tables from 20260809 that never got any policies at all, unlike the older review_* tables. Confirmed missing: 部門考核設定 → 考核流程 → 新增流程 failed with "new row violates row-level security policy". | 考核流程 (新增/設定關卡/刪除) actually working for supervisors and boss, not just admins. |
+| `20260814_finance_role_and_leave_entitlements.sql` | Adds `users.is_finance` (an independent permission flag like `is_admin`), the `user_leave_entitlements` table (per-employee, per-leave-type quota with a 比照勞基法/手動調整 mode, stored in hours) plus its RLS, and RLS letting finance update `leave_types` (company defaults) and `users` (入職日期). | The new 員工假期管理 screen, per-employee quota overrides showing up in employees' own balance panels, and the 財務/管理員 split. |

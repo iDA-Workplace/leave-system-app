@@ -1,17 +1,84 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAwaitingMyScoreCount, REVIEW_TODO_EVENT } from '../lib/reviewTodo'
+import { useTheme } from '../context/ThemeContext'
+import { useLanguage } from '../context/LanguageContext'
+import {
+  DashboardIcon, AddNoteIcon, ListIcon,
+  ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
+  BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon, SearchIcon,
+} from './icons'
+import './AppShell.css'
+
+const ROLE_BADGE_LABELS = {
+  employee: 'EMPLOYEE',
+  deputy_supervisor: 'DEPUTY',
+  supervisor: 'SUPERVISOR',
+  boss: 'BOSS',
+}
+
+const RAIL_EXPANDED_KEY = 'leave-system-rail-expanded'
+
+const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
+
+// 評核人（主管／副主管／老闆）才會有「待我評分」這種待辦，一般員工不會。
+const EVALUATOR_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
+
+function buildNavItems(userProfile, t, reviewTodoCount) {
+  const items = [
+    { path: '/', label: t('nav_home'), icon: DashboardIcon, end: true },
+    { path: '/leave/my', label: t('nav_leave_management'), icon: ListIcon },
+    // 徽章＝有幾位部屬已經交出自評、正等著我評分。只放在側邊選單還不夠直觀，
+    // 主管平常不會沒事點進考核管理，數字要在外面就看得到。
+    { path: '/review', label: t('nav_review'), icon: ReviewIcon, badge: reviewTodoCount },
+  ]
+
+  if (userProfile?.is_admin || userProfile?.is_finance) {
+    items.push({ path: '/admin', label: t('nav_admin'), icon: AdminIcon })
+  }
+
+  items.push({ path: '/settings', label: t('nav_settings'), icon: SettingsIcon })
+
+  return items
+}
+
+function isItemActive(item, pathname) {
+  if (item.end) return pathname === item.path
+  return pathname === item.path || pathname.startsWith(item.path + '/')
+}
+
+function initials(name) {
+  if (!name) return '?'
+  return name.trim().slice(0, 1).toUpperCase()
+}
 
 function Layout({ children, userProfile }) {
   const navigate = useNavigate()
   const location = useLocation()
+  const { mode, setMode, resolvedTheme } = useTheme()
+  const { t } = useLanguage()
   const [pendingCount, setPendingCount] = useState(0)
+  const [reviewTodoCount, setReviewTodoCount] = useState(0)
+  // 斷線提示。刻意不做離線暫存：請假牽涉額度與簽核流程，離線存起來再補送會
+  // 跟別人的假單打架，寧可當下就講清楚現在送不出去。
+  const [online, setOnline] = useState(() => navigator.onLine !== false)
+  const [railExpanded, setRailExpanded] = useState(
+    () => localStorage.getItem(RAIL_EXPANDED_KEY) === 'true'
+  )
+  const [avatarMenuOpen, setAvatarMenuOpen] = useState(false)
+  const [themeMenuOpen, setThemeMenuOpen] = useState(false)
+  const [moreSheetOpen, setMoreSheetOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchOpen, setSearchOpen] = useState(false)
+  const avatarMenuRef = useRef(null)
+  const themeMenuRef = useRef(null)
+  const searchRef = useRef(null)
 
   useEffect(() => {
-    if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin' || userProfile?.role === 'boss') {
-  fetchPendingCount()
+    if (APPROVER_ROLES.includes(userProfile?.role)) {
+      fetchPendingCount()
 
-      // 即時監聽假單狀態變更
       const subscription = supabase
         .channel('leave_requests_changes')
         .on('postgres_changes', {
@@ -29,33 +96,74 @@ function Layout({ children, userProfile }) {
     }
   }, [userProfile])
 
-  async function fetchPendingCount() {
-    const today = new Date().toISOString().split('T')[0]
+  // 側邊選單「考核管理」上的待辦數字。判定規則跟考核頁面共用 lib/reviewTodo.js，
+  // 不在這裡自己再寫一次，否則兩邊遲早會對不起來。
+  //
+  // 三種情況都要更新數字：
+  //   · 換頁（最基本的一種，成本也最低）
+  //   · 自己在考核頁面按下「送出評分」（reviewTodo 發出的事件）
+  //   · 別人剛交出自評（Supabase 即時訂閱；若這張表沒開啟 Realtime 也不會出錯，
+  //     只是要等到下次換頁才更新）
+  const refreshReviewTodo = useCallback(() => {
+    if (!EVALUATOR_ROLES.includes(userProfile?.role)) { setReviewTodoCount(0); return }
+    fetchAwaitingMyScoreCount(userProfile, userProfile.role === 'boss').then(setReviewTodoCount)
+  }, [userProfile])
 
+  useEffect(() => {
+    if (!EVALUATOR_ROLES.includes(userProfile?.role)) return
+
+    window.addEventListener(REVIEW_TODO_EVENT, refreshReviewTodo)
+    const subscription = supabase
+      .channel('review_participants_changes')
+      .on('postgres_changes', {
+        event: '*', schema: 'public', table: 'annual_review_participants',
+      }, refreshReviewTodo)
+      .subscribe()
+
+    return () => {
+      window.removeEventListener(REVIEW_TODO_EVENT, refreshReviewTodo)
+      supabase.removeChannel(subscription)
+    }
+  }, [userProfile, refreshReviewTodo])
+
+  // 換頁時重算。跟訂閱分開兩個 effect：訂閱只在使用者變的時候重建，
+  // 不會每換一次頁就把即時訂閱拆掉重接。
+  useEffect(() => { refreshReviewTodo() }, [refreshReviewTodo, location.pathname])
+
+  useEffect(() => {
+    const goOnline = () => setOnline(true)
+    const goOffline = () => setOnline(false)
+    window.addEventListener('online', goOnline)
+    window.addEventListener('offline', goOffline)
+    return () => {
+      window.removeEventListener('online', goOnline)
+      window.removeEventListener('offline', goOffline)
+    }
+  }, [])
+
+  useEffect(() => {
+    function handleClickOutside(e) {
+      if (avatarMenuRef.current && !avatarMenuRef.current.contains(e.target)) {
+        setAvatarMenuOpen(false)
+      }
+      if (themeMenuRef.current && !themeMenuRef.current.contains(e.target)) {
+        setThemeMenuOpen(false)
+      }
+      if (searchRef.current && !searchRef.current.contains(e.target)) {
+        setSearchOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  async function fetchPendingCount() {
     const { data: flowSteps } = await supabase
       .from('approval_flow_steps')
       .select('flow_id, step_order')
       .eq('approver_id', userProfile.id)
 
-    const { data: delegateFor } = await supabase
-      .from('approval_delegates')
-      .select('original_approver_id')
-      .eq('delegate_user_id', userProfile.id)
-      .eq('is_active', true)
-      .lte('start_date', today)
-      .gte('end_date', today)
-
-    const originalApproverIds = delegateFor?.map(d => d.original_approver_id) || []
-    let delegateSteps = []
-    if (originalApproverIds.length > 0) {
-      const { data } = await supabase
-        .from('approval_flow_steps')
-        .select('flow_id, step_order')
-        .in('approver_id', originalApproverIds)
-      delegateSteps = data || []
-    }
-
-    const allSteps = [...(flowSteps || []), ...delegateSteps]
+    const allSteps = flowSteps || []
     if (allSteps.length === 0) { setPendingCount(0); return }
 
     const { data: requests } = await supabase
@@ -75,63 +183,263 @@ function Layout({ children, userProfile }) {
     navigate('/')
   }
 
-  const navItems = [
-  { path: '/', label: '首頁' },
-  { path: '/calendar', label: '請假行事曆' },
-  { path: '/past-leaves', label: '過往假期' },
-  { path: '/leave/new', label: '申請請假' },
-  { path: '/leave/my', label: '我的假單' },
-  { path: '/review', label: '年度考核' },
-]
+  function toggleRail() {
+    setRailExpanded(prev => {
+      const next = !prev
+      localStorage.setItem(RAIL_EXPANDED_KEY, String(next))
+      return next
+    })
+  }
 
-  if (userProfile?.role === 'supervisor' || userProfile?.role === 'admin' || userProfile?.role === 'boss') {
-  navItems.push({ path: '/approval', label: '審核假單', badge: pendingCount })
-}
+  const navItems = buildNavItems(userProfile, t, reviewTodoCount)
+  const bottomNavItems = navItems.slice(0, 3)
+  const moreItems = navItems.slice(3)
 
-  navItems.push({ path: '/admin', label: '管理後台' })
+  const searchMatches = searchQuery.trim()
+    ? navItems.filter(item => item.label.toLowerCase().includes(searchQuery.trim().toLowerCase()))
+    : []
+
+  function handleSearchSubmit(e) {
+    e.preventDefault()
+    if (searchMatches.length > 0) {
+      navigate(searchMatches[0].path)
+      setSearchQuery('')
+      setSearchOpen(false)
+    }
+  }
+
+  function handleSearchSelect(path) {
+    navigate(path)
+    setSearchQuery('')
+    setSearchOpen(false)
+  }
+
+  const themeOptions = [
+    { value: 'light', label: t('theme_light'), icon: SunIcon },
+    { value: 'dark', label: t('theme_dark'), icon: MoonIcon },
+    { value: 'system', label: t('theme_system'), icon: DashboardIcon },
+  ]
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#f5f5f5' }}>
-      <nav style={{
-        backgroundColor: '#4F46E5', padding: '0 24px',
-        display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-        height: '60px', boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '24px' }}>
-          <span style={{ color: 'white', fontWeight: 'bold', fontSize: '18px' }}>請假系統</span>
-          {navItems.map(item => (
-            <Link key={item.path} to={item.path} style={{
-              color: location.pathname === item.path ? '#fff' : 'rgba(255,255,255,0.75)',
-              textDecoration: 'none', fontSize: '14px',
-              fontWeight: location.pathname === item.path ? '600' : '400',
-              borderBottom: location.pathname === item.path ? '2px solid white' : 'none',
-              paddingBottom: '4px', display: 'flex', alignItems: 'center', gap: '6px'
-            }}>
-              {item.label}
-              {item.badge > 0 && (
-                <span style={{
-                  backgroundColor: '#EF4444', color: 'white',
-                  borderRadius: '20px', padding: '1px 7px',
-                  fontSize: '11px', fontWeight: '600', lineHeight: '1.6'
-                }}>
-                  {item.badge}
+    <div className="shell">
+      <a href="#main-content" className="skip-link">{t('app_skip_to_content')}</a>
+
+      {!online && (
+        <div className="shell-offline" role="status">{t('offline_banner')}</div>
+      )}
+
+      <header className="app-bar">
+        <form className="app-bar__search" ref={searchRef} onSubmit={handleSearchSubmit}>
+          <SearchIcon size={18} className="app-bar__search-icon" />
+          <input
+            type="search"
+            className="app-bar__search-input"
+            placeholder={t('app_bar_search_placeholder')}
+            value={searchQuery}
+            onChange={e => { setSearchQuery(e.target.value); setSearchOpen(true) }}
+            onFocus={() => setSearchOpen(true)}
+            aria-label={t('app_bar_search_placeholder')}
+          />
+          {searchOpen && searchMatches.length > 0 && (
+            <ul className="app-bar__search-results" role="listbox">
+              {searchMatches.map(item => (
+                <li key={item.path}>
+                  <button type="button" onClick={() => handleSearchSelect(item.path)}>
+                    <item.icon size={18} />
+                    {item.label}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </form>
+        <div className="app-bar__actions">
+          <div className="avatar-menu" ref={themeMenuRef}>
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={t('app_bar_theme_toggle')}
+              aria-haspopup="menu"
+              aria-expanded={themeMenuOpen}
+              onClick={() => setThemeMenuOpen(o => !o)}
+            >
+              {resolvedTheme === 'dark' ? <MoonIcon size={20} /> : <SunIcon size={20} />}
+            </button>
+            {themeMenuOpen && (
+              <div className="theme-menu__panel" role="menu">
+                {themeOptions.map(opt => (
+                  <button
+                    key={opt.value}
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={mode === opt.value}
+                    className={`theme-menu__option${mode === opt.value ? ' theme-menu__option--selected' : ''}`}
+                    onClick={() => { setMode(opt.value); setThemeMenuOpen(false) }}
+                  >
+                    <opt.icon size={18} />
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            className="icon-button"
+            aria-label={t('app_bar_pending_aria', { n: pendingCount })}
+            onClick={() => navigate('/#pending-team-approvals')}
+          >
+            <BellIcon size={20} />
+            {pendingCount > 0 && <span className="icon-button__badge">{pendingCount}</span>}
+          </button>
+
+          <div className="avatar-menu" ref={avatarMenuRef}>
+            <button
+              type="button"
+              className="app-bar__identity"
+              aria-label={t('app_bar_user_menu')}
+              aria-haspopup="menu"
+              aria-expanded={avatarMenuOpen}
+              onClick={() => setAvatarMenuOpen(o => !o)}
+            >
+              {ROLE_BADGE_LABELS[userProfile?.role] && (
+                <span className="app-bar__role-badge">
+                  {ROLE_BADGE_LABELS[userProfile.role]}{userProfile?.is_admin ? ' · ADMIN' : ''}
                 </span>
               )}
+              <span className="avatar">{initials(userProfile?.full_name)}</span>
+              <span className="app-bar__name">{userProfile?.full_name}</span>
+            </button>
+            {avatarMenuOpen && (
+              <div className="avatar-menu__panel" role="menu">
+                <div className="avatar-menu__identity">
+                  <div className="avatar-menu__name">{userProfile?.full_name}</div>
+                  <div className="avatar-menu__role">
+                    {userProfile?.role ? t(`role_${userProfile.role}`) : ''}{userProfile?.is_admin ? t('role_admin_suffix') : ''}
+                  </div>
+                </div>
+                <button type="button" className="avatar-menu__item avatar-menu__item--danger" onClick={handleLogout}>
+                  <LogoutIcon size={18} />
+                  {t('app_bar_logout')}
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <div className="shell__body">
+        <nav className={`rail${railExpanded ? ' rail--expanded' : ''}`} aria-label={t('app_nav_primary')}>
+          <div className="rail__brand">
+            {/* Placeholder wordmark until the real logo file can be added to
+                the repo (this session can't extract a pasted chat image to
+                disk) -- swap for <img src="/logo.png" .../> once it lands. */}
+            <span className="rail__brand-name">
+              <span className="rail__brand-name-full">iDA Workplace</span>
+              <span className="rail__brand-name-short">iDA</span>
+            </span>
+            <span className="rail__brand-caption">{t('app_brand_caption')}</span>
+          </div>
+
+          <Link to="/leave/new" className="rail__cta" title={t('nav_leave_apply')}>
+            <AddNoteIcon size={18} />
+            <span className="rail__cta-label">{t('nav_leave_apply')}</span>
+          </Link>
+
+          <div className="rail__toggle-row">
+            <button
+              type="button"
+              className="icon-button"
+              aria-label={railExpanded ? t('app_rail_collapse') : t('app_rail_expand')}
+              onClick={toggleRail}
+              style={{ transform: railExpanded ? 'none' : 'rotate(180deg)' }}
+            >
+              <ChevronLeftIcon size={20} />
+            </button>
+          </div>
+          <ul className="rail__list">
+            {navItems.map(item => {
+              const active = isItemActive(item, location.pathname)
+              return (
+                <li key={item.path}>
+                  <Link
+                    to={item.path}
+                    className={`rail-item${active ? ' rail-item--active' : ''}`}
+                    aria-current={active ? 'page' : undefined}
+                    title={item.label}
+                  >
+                    <span className="rail-item__icon">
+                      <item.icon size={22} filled={active} />
+                    </span>
+                    <span className="rail-item__label">{item.label}</span>
+                    {item.badge > 0 && <span className="rail-item__badge">{item.badge}</span>}
+                  </Link>
+                </li>
+              )
+            })}
+          </ul>
+        </nav>
+
+        <main id="main-content" className="shell__content">
+          <div className="shell__content-inner">
+            {children}
+          </div>
+        </main>
+      </div>
+
+      <nav className="bottom-nav" aria-label={t('app_nav_primary_mobile')}>
+        {bottomNavItems.map(item => {
+          const active = isItemActive(item, location.pathname)
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`bottom-nav-item${active ? ' bottom-nav-item--active' : ''}`}
+              aria-current={active ? 'page' : undefined}
+            >
+              <item.icon size={22} filled={active} />
+              {item.label}
+              {item.badge > 0 && <span className="bottom-nav-item__badge">{item.badge}</span>}
             </Link>
-          ))}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-          <span style={{ color: 'rgba(255,255,255,0.9)', fontSize: '14px' }}>{userProfile?.full_name}</span>
-          <button onClick={handleLogout} style={{
-            backgroundColor: 'rgba(255,255,255,0.2)', color: 'white',
-            border: 'none', padding: '6px 14px', borderRadius: '6px',
-            cursor: 'pointer', fontSize: '14px'
-          }}>登出</button>
-        </div>
+          )
+        })}
+        <button type="button" className="bottom-nav-item" onClick={() => setMoreSheetOpen(true)} aria-haspopup="dialog">
+          <MoreIcon size={22} />
+          {t('app_more')}
+        </button>
       </nav>
-      <main style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
-        {children}
-      </main>
+
+      {moreSheetOpen && (
+        <>
+          <div className="more-sheet-scrim" onClick={() => setMoreSheetOpen(false)} />
+          <div className="more-sheet" role="dialog" aria-label={t('app_more_features')}>
+            <div className="more-sheet__header">
+              <span className="more-sheet__title">{t('app_more_features')}</span>
+              <button type="button" className="icon-button" aria-label={t('common_close')} onClick={() => setMoreSheetOpen(false)}>
+                <CloseIcon size={20} />
+              </button>
+            </div>
+            <ul className="more-sheet__list">
+              {moreItems.map(item => (
+                <li key={item.path}>
+                  <Link to={item.path} className="more-sheet__item" onClick={() => setMoreSheetOpen(false)}>
+                    <item.icon size={20} />
+                    {item.label}
+                    {item.badge > 0 && <span className="rail-item__badge" style={{ marginLeft: 'auto', position: 'static' }}>{item.badge}</span>}
+                  </Link>
+                </li>
+              ))}
+              <li>
+                <button type="button" className="more-sheet__item" onClick={handleLogout}>
+                  <LogoutIcon size={20} />
+                  {t('app_bar_logout')}
+                </button>
+              </li>
+            </ul>
+          </div>
+        </>
+      )}
     </div>
   )
 }

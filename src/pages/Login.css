@@ -1,0 +1,108 @@
+.login-page {
+  min-height: 100svh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sys-color-background);
+  padding: var(--space-200);
+}
+
+.login-card {
+  width: 100%;
+  max-width: 400px;
+  /* the brand band bleeds to the card's edges, so padding moves to __body */
+  padding: 0;
+  overflow: hidden;
+}
+
+/* The logo artwork is white, so it always needs the deep brand red behind it.
+   Deliberately the *reference* token, not --sys-color-primary: the system
+   token flips to a pale salmon in dark mode (so it can sit on a dark
+   background), which would leave the white logo almost invisible. The
+   reference tone is theme-independent and is exactly the logo's own red. */
+.login-card__brand {
+  background: var(--ref-primary-40);
+  padding: var(--space-400) var(--space-300);
+  display: flex;
+  justify-content: center;
+}
+
+.login-card__logo {
+  display: block;
+  width: 168px;
+  height: auto;
+}
+
+.login-card__body {
+  padding: var(--space-300) var(--space-400) var(--space-400);
+}
+
+@media (max-width: 420px) {
+  .login-card__brand { padding: var(--space-300) var(--space-200); }
+  .login-card__logo { width: 140px; }
+  .login-card__body { padding: var(--space-300) var(--space-200) var(--space-400); }
+}
+
+.login-card__title {
+  text-align: center;
+  margin: 0 0 var(--space-050);
+  color: var(--sys-color-primary);
+  font: 600 var(--type-headline-small-size)/var(--type-headline-small-line) var(--font-family-base);
+}
+
+.login-card__subtitle {
+  text-align: center;
+  color: var(--sys-color-on-surface-variant);
+  margin: 0 0 var(--space-300);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+}
+
+.login-card__error {
+  background: var(--sys-color-error-container);
+  color: var(--sys-color-on-error-container);
+  padding: var(--space-150);
+  border-radius: var(--shape-corner-small);
+  margin-bottom: var(--space-200);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+}
+
+.login-card form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-200);
+}
+
+.login-card__password-field {
+  position: relative;
+}
+
+.login-card__toggle-password {
+  position: absolute;
+  right: var(--space-150);
+  top: 34px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  color: var(--sys-color-on-surface-variant);
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  padding: var(--space-050);
+}
+
+/* 「記住我」：整塊都可以點（label 包住 checkbox），手機上才不用去戳那個小方格。 */
+.login-card__remember {
+  display: flex;
+  align-items: center;
+  gap: var(--space-100);
+  cursor: pointer;
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  margin-top: calc(var(--space-100) * -1);
+}
+
+.login-card__remember input {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--sys-color-primary);
+  cursor: pointer;
+  flex-shrink: 0;
+}

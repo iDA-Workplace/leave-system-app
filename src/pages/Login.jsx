@@ -1,12 +1,26 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { Button, Card, TextField } from '../components/ui'
+import { useLanguage } from '../context/LanguageContext'
+import './Login.css'
+
+// 「記住我」只記 email，不記密碼。
+//
+// 密碼一律留白讓人自己打：這台裝置可能是共用的（公司的公用電腦、借人用的
+// 手機），email 被別人看到頂多是知道你的信箱，密碼被自動帶入就等於帳號送人。
+// 瀏覽器本身的密碼管理員要不要記是使用者自己的選擇，那有系統層級的保護，
+// 跟我們把密碼寫進 localStorage 是兩回事。
+const REMEMBERED_EMAIL_KEY = 'leave-system-remembered-email'
 
 function Login() {
-  const [email, setEmail] = useState('')
+  const { t } = useLanguage()
+  const [email, setEmail] = useState(() => localStorage.getItem(REMEMBERED_EMAIL_KEY) || '')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [showPassword, setShowPassword] = useState(false)
+  // 上次有記住 email 的話，勾選框預設就是勾起來的，跟畫面上帶出來的 email 一致
+  const [remember, setRemember] = useState(() => !!localStorage.getItem(REMEMBERED_EMAIL_KEY))
 
   async function handleLogin(e) {
     e.preventDefault()
@@ -16,104 +30,78 @@ function Login() {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      setError('帳號或密碼錯誤，請重新輸入')
+      setError(t('login_error'))
       setLoading(false)
+      return
     }
+
+    // 登入成功才記 —— 打錯的 email 記下來只會讓下次更難登入
+    if (remember) localStorage.setItem(REMEMBERED_EMAIL_KEY, email)
+    else localStorage.removeItem(REMEMBERED_EMAIL_KEY)
   }
 
   return (
-    <div style={{
-      minHeight: '100vh', backgroundColor: '#f5f5f5',
-      display: 'flex', alignItems: 'center', justifyContent: 'center'
-    }}>
-      <div style={{
-        backgroundColor: 'white', padding: '40px', borderRadius: '12px',
-        boxShadow: '0 4px 16px rgba(0,0,0,0.1)', width: '100%', maxWidth: '400px'
-      }}>
-        <h1 style={{ textAlign: 'center', marginBottom: '8px', color: '#4F46E5', fontSize: '24px' }}>
-          請假系統
-        </h1>
-        <p style={{ textAlign: 'center', color: '#666', marginBottom: '32px', fontSize: '14px' }}>
-          請登入您的帳號
-        </p>
+    <div className="login-page">
+      <Card className="login-card">
+        <div className="login-card__brand">
+          <img
+            className="login-card__logo"
+            src="/ida-logo-white.png"
+            alt="iDA Workplace"
+            width="900"
+            height="487"
+          />
+        </div>
 
-        {error && (
-          <div style={{
-            backgroundColor: '#FEE2E2', color: '#DC2626',
-            padding: '12px', borderRadius: '8px',
-            marginBottom: '16px', fontSize: '14px'
-          }}>
-            {error}
-          </div>
-        )}
+        <div className="login-card__body">
+          <h1 className="login-card__title">{t('login_title')}</h1>
+          <p className="login-card__subtitle">{t('login_subtitle')}</p>
 
-        <form onSubmit={handleLogin}>
-          <div style={{ marginBottom: '16px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500' }}>
-              電子郵件
-            </label>
-            <input
+          {error && <div className="login-card__error" role="alert">{error}</div>}
+
+          <form onSubmit={handleLogin}>
+            <TextField
+              label={t('login_email')}
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
               required
-              style={{
-                width: '100%', padding: '10px 12px',
-                border: '1px solid #ddd', borderRadius: '8px',
-                fontSize: '14px', boxSizing: 'border-box'
-              }}
-              placeholder="請輸入電子郵件"
+              placeholder={t('login_email_placeholder')}
             />
-          </div>
 
-          <div style={{ marginBottom: '24px' }}>
-            <label style={{ display: 'block', marginBottom: '6px', fontSize: '14px', fontWeight: '500' }}>
-              密碼
-            </label>
-            <div style={{ position: 'relative' }}>
-              <input
+            <div className="login-card__password-field">
+              <TextField
+                label={t('login_password')}
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
                 required
-                style={{
-                  width: '100%', padding: '10px 44px 10px 12px',
-                  border: '1px solid #ddd', borderRadius: '8px',
-                  fontSize: '14px', boxSizing: 'border-box'
-                }}
-                placeholder="請輸入密碼"
+                placeholder={t('login_password_placeholder')}
               />
               <button
                 type="button"
+                className="login-card__toggle-password"
                 onClick={() => setShowPassword(!showPassword)}
-                style={{
-                  position: 'absolute', right: '12px', top: '50%',
-                  transform: 'translateY(-50%)',
-                  background: 'none', border: 'none',
-                  cursor: 'pointer', color: '#9ca3af',
-                  fontSize: '13px', padding: '0'
-                }}
               >
-                {showPassword ? '隱藏' : '顯示'}
+                {showPassword ? t('login_hide') : t('login_show')}
               </button>
             </div>
-          </div>
 
-          <button
-            type="submit"
-            disabled={loading}
-            style={{
-              width: '100%', padding: '12px',
-              backgroundColor: loading ? '#a5b4fc' : '#4F46E5',
-              color: 'white', border: 'none', borderRadius: '8px',
-              fontSize: '16px', fontWeight: '600',
-              cursor: loading ? 'not-allowed' : 'pointer'
-            }}
-          >
-            {loading ? '登入中...' : '登入'}
-          </button>
-        </form>
-      </div>
+            <label className="login-card__remember">
+              <input
+                type="checkbox"
+                checked={remember}
+                onChange={e => setRemember(e.target.checked)}
+              />
+              <span>{t('login_remember_me')}</span>
+            </label>
+
+            <Button type="submit" block loading={loading} style={{ marginTop: 'var(--space-100)' }}>
+              {loading ? t('login_submitting') : t('login_submit')}
+            </Button>
+          </form>
+        </div>
+      </Card>
     </div>
   )
 }

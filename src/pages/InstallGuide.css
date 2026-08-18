@@ -1,0 +1,105 @@
+.install-page {
+  max-width: 560px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-150);
+}
+
+.install-banner__text {
+  margin: 0 0 var(--space-200);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
+.install-banner__actions {
+  display: flex;
+  gap: var(--space-100);
+  flex-wrap: wrap;
+}
+
+.install-banner--ok {
+  background: var(--sys-color-success-container);
+  color: var(--sys-color-on-success-container);
+  font: 500 var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+}
+
+/* 網址本身也印出來，讓人可以用看的抄到另一台裝置上（複製按鈕在某些
+   瀏覽器的非安全來源下會被擋掉）。 */
+.install-url {
+  margin: var(--space-150) 0 0;
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  word-break: break-all;
+}
+
+.install-platform {
+  padding: 0;
+  overflow: hidden;
+}
+
+.install-platform__head {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-150);
+  padding: var(--space-200);
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  color: var(--sys-color-on-surface);
+}
+
+.install-platform__title {
+  font: 500 var(--type-body-large-size)/var(--type-body-large-line) var(--font-family-base);
+}
+
+.install-platform__chevron {
+  font-size: 20px;
+  line-height: 1;
+  color: var(--sys-color-on-surface-variant);
+}
+
+.install-platform__body {
+  padding: 0 var(--space-200) var(--space-200);
+}
+
+/* 用 em 而不是固定 px：項目編號的寬度是跟著字級走的，寫死 px 在字大一點的
+   裝置上就會不夠。（原本這裡寫 var(--space-250)，但那個變數根本不存在 ——
+   CSS 遇到沒定義的變數會把整條宣告當成沒寫，padding-left 於是變成 0，
+   編號就跑到卡片外面被 overflow:hidden 裁掉了。） */
+.install-steps {
+  margin: 0;
+  padding-left: 1.75em;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-100);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+
+.install-note {
+  margin: var(--space-150) 0 0;
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+
+.install-footer {
+  margin: var(--space-100) 0 0;
+  font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  text-align: center;
+}
+
+/* 「你這台」標記：只是輔助資訊，不要跟分段標題搶注意力。 */
+.install-platform__here {
+  margin-left: var(--space-100);
+  padding: 2px var(--space-100);
+  border-radius: 999px;
+  background: var(--sys-color-primary-container);
+  color: var(--sys-color-on-primary-container);
+  font: 500 var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
+  white-space: nowrap;
+}
