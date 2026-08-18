@@ -82,6 +82,7 @@ const T = {
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: '由請假系統自動發送。完整行事曆請見系統首頁。',
     digest_summary_text: '今日請假名單（共 {n} 筆）',
+    digest_empty: ':white_check_mark: *{month}/{day}（{weekday}）今天沒有人請假。*',
 
     // 前一天下午的預告。週一到週四發的是「明天」，週五發的是「下個上班日」，
     // 所以標題有兩種寫法，不能只用「明日」。
@@ -226,6 +227,7 @@ const T = {
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: 'Posted automatically by the leave system. See the homepage for the full calendar.',
     digest_summary_text: 'Out today ({n} people)',
+    digest_empty: ':white_check_mark: *Nobody is out today ({month}/{day}, {weekday}).*',
     digest_summary_text_one: 'Out today (1 person)',
 
     preview_heading_tomorrow: ':palm_tree: *Out tomorrow ({month}/{day}, {weekday})*',

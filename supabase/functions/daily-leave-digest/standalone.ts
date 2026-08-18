@@ -442,6 +442,7 @@ const T = {
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: '由請假系統自動發送。完整行事曆請見系統首頁。',
     digest_summary_text: '今日請假名單（共 {n} 筆）',
+    digest_empty: ':white_check_mark: *{month}/{day}（{weekday}）今天沒有人請假。*',
 
     // 前一天下午的預告。週一到週四發的是「明天」，週五發的是「下個上班日」，
     // 所以標題有兩種寫法，不能只用「明日」。
@@ -586,6 +587,7 @@ const T = {
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: 'Posted automatically by the leave system. See the homepage for the full calendar.',
     digest_summary_text: 'Out today ({n} people)',
+    digest_empty: ':white_check_mark: *Nobody is out today ({month}/{day}, {weekday}).*',
     digest_summary_text_one: 'Out today (1 person)',
 
     preview_heading_tomorrow: ':palm_tree: *Out tomorrow ({month}/{day}, {weekday})*',
@@ -710,10 +712,9 @@ function weekdayKey(day: number): MsgKey {
 // 兩則刻意共用同一支：內容組法完全一樣，只差在查哪一天、標題怎麼寫、
 // 以及沒人請假時要不要出聲。複製成兩支遲早會改到不一致。
 //
-// 兩者的差別：
-//   · 9:00 那則沒有人請假就安靜跳過，不洗版。
-//   · 下午 4:00 那則就算沒人請假也會發一則「沒有人請假」—— 這是刻意的，
-//     每天固定有一則，大家才知道系統活著、沒有漏發。
+// 兩則都是「沒有人請假也要發一則」—— 每天固定有訊息，看到的人才分得出
+// 「今天真的沒人請假」和「排程壞了沒發出來」。安靜跳過的話，沒收到訊息的
+// 那天永遠沒辦法判斷是哪一種。
 //
 // 「下個上班日」會跳過週末：週一到週四發的是明天，週五發的是下週一。
 // 週五下班前預告「明天（週六）」沒有意義。
@@ -781,15 +782,13 @@ Deno.serve(async req => {
     const leaves = (data ?? []) as LeaveRow[]
 
     if (leaves.length === 0) {
-      // 9:00 那則安靜跳過；下午的預告則明確說「沒有人請假」。
-      if (scope === 'today') {
-        return json({ scope, date: target, count: 0, posted: false })
-      }
-      const emptyKey: MsgKey = tomorrow ? 'preview_empty_tomorrow' : 'preview_empty_nextday'
+      const emptyKey: MsgKey = scope === 'today'
+        ? 'digest_empty'
+        : (tomorrow ? 'preview_empty_tomorrow' : 'preview_empty_nextday')
       const line = t(lang, emptyKey, params)
       await postToChannel(requireEnv('SLACK_LEAVE_CHANNEL'), line, [
         section(line),
-        contextLine(t(lang, 'preview_footer')),
+        contextLine(t(lang, scope === 'today' ? 'digest_footer' : 'preview_footer')),
       ])
       return json({ scope, date: target, count: 0, posted: true })
     }
