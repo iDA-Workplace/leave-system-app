@@ -161,6 +161,13 @@ function UserManagement({ isAdmin, userProfile }) {
 
   if (loading) return <div><PageHeader title={t('adminusers_title')} /><Skeleton height="200px" /></div>
 
+  // 部門沒有自己的資料表，選項是從「現有員工填過的部門」彙整出來的 ——
+  // 篩選器與新增／編輯員工的部門下拉都吃這一份。
+  //
+  // 這代表新增員工時只能從既有部門裡挑，**介面上沒有地方可以建立新部門**。
+  // 這是使用者明確要求的做法（要純下拉、不要自由輸入），為的是避免同一個部門
+  // 出現「業務部」「業務」兩種寫法。代價是公司真的多一個部門時，得先有人在
+  // 資料庫把某位員工的 department 改成新名字，那個選項才會出現在這裡。
   const departments = [...new Set(users.map(u => u.department).filter(Boolean))].sort()
   const managerNameById = Object.fromEntries(users.map(u => [u.id, u.full_name]))
   const visibleUsers = users.filter(u => {
@@ -245,7 +252,10 @@ function UserManagement({ isAdmin, userProfile }) {
               <option value="">{t('adminusers_select_flow')}</option>
               {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </Select>
-            <TextField label={t('adminusers_col_department')} value={newUser.department} onChange={e => setNewUser(p => ({ ...p, department: e.target.value }))} placeholder={t('common_optional')} />
+            <Select label={t('adminusers_col_department')} value={newUser.department} onChange={e => setNewUser(p => ({ ...p, department: e.target.value }))}>
+              <option value="">{t('adminusers_select_department')}</option>
+              {departments.map(d => <option key={d} value={d}>{d}</option>)}
+            </Select>
             <TextField label={t('adminusers_col_title')} value={newUser.job_title} onChange={e => setNewUser(p => ({ ...p, job_title: e.target.value }))} placeholder={t('common_optional')} />
             <Select label={t('adminusers_col_manager')} value={newUser.manager_id} onChange={e => setNewUser(p => ({ ...p, manager_id: e.target.value }))}>
               <option value="">{t('adminusers_unassigned')}</option>
@@ -293,7 +303,10 @@ function UserManagement({ isAdmin, userProfile }) {
               {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </Select>
             <TextField label="Slack User ID" value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} placeholder="U0123ABCD" />
-            <TextField label={t('adminusers_col_department')} value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))} placeholder={t('common_optional')} />
+            <Select label={t('adminusers_col_department')} value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))}>
+              <option value="">{t('adminusers_select_department')}</option>
+              {departments.map(d => <option key={d} value={d}>{d}</option>)}
+            </Select>
             <TextField label={t('adminusers_col_title')} value={editing.job_title || ''} onChange={e => setEditing(p => ({ ...p, job_title: e.target.value }))} placeholder={t('common_optional')} />
             <Select label={t('adminusers_col_manager')} value={editing.manager_id || ''} onChange={e => setEditing(p => ({ ...p, manager_id: e.target.value }))}>
               <option value="">{t('adminusers_unassigned')}</option>
