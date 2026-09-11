@@ -5,8 +5,14 @@ import { supabase } from './supabase'
 // quotas are stored in hours and only converted for display.
 export const HOURS_PER_DAY = 8
 
+// 靠 leave_types.is_annual 這個旗標判斷，不是比對名稱 —— 假別名稱是管理後台
+// 可以隨時改的（「假別名稱設定」那一頁），一改名，靠名字判斷的地方會同時
+// 失效而且不報錯：已使用天數變 0、額度改吃一般假別的固定值。旗標見
+// migration 20260911_annual_leave_flag_and_pending。
+//
+// 抓 leave_types 的查詢記得帶上 is_annual 欄位（用 select('*') 的地方自然會有）。
 export function isAnnualLeaveType(leaveType) {
-  return !!leaveType?.name?.includes('特休')
+  return !!leaveType?.is_annual
 }
 
 // 假別名稱存在資料庫裡，沒辦法寫進前端字典，所以 leave_types 多了一個
@@ -204,7 +210,7 @@ export async function checkQuota({ userId, leaveType, requestedHours, lang }) {
 export async function fetchAnnualLeaveDays(userId) {
   const [summaryRes, typesRes] = await Promise.all([
     supabase.from('annual_leave_summary').select('*').eq('user_id', userId).single(),
-    supabase.from('leave_types').select('id, name'),
+    supabase.from('leave_types').select('id, name, is_annual'),
   ])
 
   const summary = summaryRes.data

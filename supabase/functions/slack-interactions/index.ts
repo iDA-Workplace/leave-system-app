@@ -386,7 +386,7 @@ function leaveRequestHours(r: { hours: number | null; start_date: string; end_da
  */
 async function checkQuota(
   db: SupabaseClient, userId: string,
-  leaveType: { id: string; name: string; name_en: string | null; annual_quota_hours: number | null },
+  leaveType: { id: string; name: string; name_en: string | null; annual_quota_hours: number | null; is_annual: boolean | null },
   requestedHours: number,
   lang: Lang,
 ): Promise<string | null> {
@@ -407,7 +407,7 @@ async function checkQuota(
   const override = overrideRes.data
   let quota: number | null = override?.quota_hours != null ? Number(override.quota_hours) : null
   if (quota == null) {
-    if (leaveType.name.includes('特休')) {
+    if (leaveType.is_annual) {
       const days = summaryRes.data?.entitled_days
       quota = days != null ? Number(days) * HOURS_PER_DAY : null
     } else {
@@ -578,7 +578,7 @@ const opt = (text: string, value: string) => ({ text: { type: 'plain_text', text
 
 async function buildLeaveModal(db: SupabaseClient, requester: { id: string }, lang: Lang) {
   const [typesRes, colleaguesRes] = await Promise.all([
-    db.from('leave_types').select('id, name, name_en').eq('is_active', true).order('name'),
+    db.from('leave_types').select('id, name, name_en, is_annual').eq('is_active', true).order('name'),
     // Slack 的下拉選單上限 100 個選項，超過就得改成需要另一個端點的動態搜尋。
     // 以這個系統的規模不會碰到，但真的超過時寧可截斷也不要整個表單開不起來。
     db.from('users').select('id, full_name').eq('is_active', true).neq('id', requester.id)
@@ -772,7 +772,7 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>, 
 
   const year = new Date().getFullYear()
   const [typesRes, overridesRes, summaryRes, usedRes] = await Promise.all([
-    db.from('leave_types').select('id, name, name_en, annual_quota_hours').eq('is_active', true).order('name'),
+    db.from('leave_types').select('id, name, name_en, annual_quota_hours, is_annual').eq('is_active', true).order('name'),
     db.from('user_leave_entitlements').select('leave_type_id, quota_hours')
       .eq('user_id', me.id).eq('mode', 'manual'),
     db.from('annual_leave_summary').select('entitled_days').eq('user_id', me.id).maybeSingle(),
@@ -814,7 +814,7 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>, 
     const typeName = lang === 'en' && row.name_en ? row.name_en : row.name
     let quota = overrides.get(row.id) ?? null
     if (quota == null) {
-      quota = row.name.includes('特休')
+      quota = row.is_annual
         ? (summaryRes.data?.entitled_days != null ? Number(summaryRes.data.entitled_days) * HOURS_PER_DAY : null)
         : (row.annual_quota_hours ?? null)
     }
@@ -826,7 +826,7 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>, 
     }
     const remaining = Math.max(0, quota - (usedByType.get(row.id) ?? 0))
     // 特休大家習慣用「天」在講，所以額外換算一份；其他假別只寫時數
-    const days = row.name.includes('特休') ? asDays(remaining) : null
+    const days = row.is_annual ? asDays(remaining) : null
     lines.push(t(lang, 'balance_line', { type: typeName, n: f(remaining), days: days ?? '' }))
   }
 
@@ -930,7 +930,7 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
   }
 
   const { data: leaveType } = await db
-    .from('leave_types').select('id, name, name_en, annual_quota_hours').eq('id', leaveTypeId).single()
+    .from('leave_types').select('id, name, name_en, annual_quota_hours, is_annual').eq('id', leaveTypeId).single()
 
   const requestedHours = isMultiDay ? countWorkdays(startDate, endDate) * HOURS_PER_DAY : (hours ?? 0)
   const quotaError = leaveType ? await checkQuota(db, me.id, leaveType, requestedHours, lang) : null
