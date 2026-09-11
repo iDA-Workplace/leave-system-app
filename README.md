@@ -47,6 +47,7 @@ iDA Workplace 內部使用的請假與年度考核系統。
 |---|---|
 | **第一次接手，不知道從哪開始** | [`docs/維護指南.md`](docs/維護指南.md) ← **從這裡開始** |
 | 知道帳號在誰手上、離職怎麼交接、怎麼備份資料 | 「系統交接與資料保全」文件（見下方連結） |
+| **改特休的計算方式** | [`docs/維護指南.md` 的「特休怎麼算」](docs/維護指南.md#特休怎麼算碰之前務必讀完這節) ← 牽涉三個地方，碰之前務必讀 |
 | 改 Slack 通知的內容或發送時間 | [`supabase/functions/README.md`](supabase/functions/README.md) |
 | 改資料庫結構（加欄位、改權限） | [`supabase/migrations/README.md`](supabase/migrations/README.md) |
 | 清除測試資料、跑維護腳本 | [`supabase/maintenance/README.md`](supabase/maintenance/README.md) |
