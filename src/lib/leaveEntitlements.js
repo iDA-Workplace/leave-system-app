@@ -62,7 +62,15 @@ export async function fetchEntitlementOverrides(userId) {
 // comes from leave_types.annual_quota_hours (in HOURS). A manual override
 // replaces whichever of those two would otherwise apply.
 export function buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides = {} }) {
-  return (leaveTypes || []).map(lt => {
+  // 特休排第一個 —— 它是唯一有年度上限、真的會用完的假別，大家最常看的就是它，
+  // 排在一長串「無年度上限」的假別後面很難找。
+  //
+  // 只用 is_annual 當排序條件，其餘假別維持原本的順序（JS 的 sort 從 ES2019
+  // 起保證是穩定排序）。先複製一份再排，不要就地改動呼叫端傳進來的陣列。
+  const ordered = [...(leaveTypes || [])]
+    .sort((a, b) => (b.is_annual ? 1 : 0) - (a.is_annual ? 1 : 0))
+
+  return ordered.map(lt => {
     const override = overrides[lt.id]
 
     if (isAnnualLeaveType(lt)) {
