@@ -809,8 +809,15 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>, 
       : t(lang, 'balance_days_hours_suffix', { days, hours: f(rest) })
   }
 
+  // 特休排第一個，跟網頁上的「假期剩餘額度」一致 —— 它是唯一有年度上限、
+  // 真的會用完的假別，排在一長串「無年度上限」後面很難找。查詢是 .order('name')
+  // 取回來的，這裡只多加 is_annual 這個條件，其餘假別維持原本的名稱排序
+  // （sort 是穩定排序）。
+  const orderedTypes = [...(typesRes.data ?? [])]
+    .sort((a, b) => (b.is_annual ? 1 : 0) - (a.is_annual ? 1 : 0))
+
   const lines: string[] = []
-  for (const row of typesRes.data ?? []) {
+  for (const row of orderedTypes) {
     const typeName = lang === 'en' && row.name_en ? row.name_en : row.name
     let quota = overrides.get(row.id) ?? null
     if (quota == null) {
