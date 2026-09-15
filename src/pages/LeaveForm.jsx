@@ -429,6 +429,7 @@ function LeaveForm({ userProfile }) {
               <div className="leave-modal__notice-title">{t('leaveform_notice_title')}</div>
               <ul>
                 <li>{t('leaveform_notice_1')}</li>
+                <li>{t('leaveform_notice_2')}</li>
                 <li>{t('leaveform_notice_3')}</li>
               </ul>
             </div>
