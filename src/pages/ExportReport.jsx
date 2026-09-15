@@ -11,6 +11,28 @@ function toISODate(d) {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 }
 
+/**
+ * 把人名整理成 Excel 能接受的分頁名稱。
+ *
+ * Excel 的限制：最多 31 個字、不能出現 : \ / ? * [ ]、不能空白、同一個
+ * 活頁簿裡不能重複。違反任一條，檔案打開會直接壞掉或被 Excel 修復，
+ * 所以這裡一次擋掉。
+ *
+ * 同名的人（或長名字被截斷後剛好一樣）會加上 (2)、(3) 區分 —— 加在
+ * 截斷之後還要確保總長度不超過 31，所以是先留位再接後綴。
+ */
+function safeSheetName(rawName, existingNames) {
+  const cleaned = String(rawName || '').replace(/[:\\/?*[\]]/g, ' ').trim()
+  const base = (cleaned || 'Sheet').slice(0, 31)
+  if (!existingNames.includes(base)) return base
+
+  for (let n = 2; ; n++) {
+    const suffix = `(${n})`
+    const candidate = base.slice(0, 31 - suffix.length) + suffix
+    if (!existingNames.includes(candidate)) return candidate
+  }
+}
+
 function ExportReport() {
   const [loading, setLoading] = useState(false)
   const [startDate, setStartDate] = useState(() => {
@@ -71,9 +93,7 @@ function ExportReport() {
       [t('xls_col_comments')]: lr.approvals?.map(a => a.comment).filter(Boolean).join(', ') || '',
     }))
 
-    const ws = XLSX.utils.json_to_sheet(rows)
-
-    ws['!cols'] = [
+    const COL_WIDTHS = [
       { wch: 12 }, { wch: 25 }, { wch: 10 },
       { wch: 12 }, { wch: 12 }, { wch: 10 },
       { wch: 10 }, { wch: 8 }, { wch: 10 },
@@ -82,7 +102,22 @@ function ExportReport() {
     ]
 
     const wb = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(wb, ws, t('xls_sheet_name'))
+
+    // 一位同仁一個分頁，而不是全部擠在同一張表 —— 人資是逐人結算的，
+    // 混在一起每次都要自己篩選。維持查詢回來的日期排序，所以分頁的順序
+    // 就是各人第一次出現的順序。
+    const byPerson = new Map()
+    for (let i = 0; i < rows.length; i++) {
+      const name = data[i].requester?.full_name || t('export_unknown_person')
+      if (!byPerson.has(name)) byPerson.set(name, [])
+      byPerson.get(name).push(rows[i])
+    }
+
+    for (const [name, personRows] of byPerson) {
+      const ws = XLSX.utils.json_to_sheet(personRows)
+      ws['!cols'] = COL_WIDTHS
+      XLSX.utils.book_append_sheet(wb, ws, safeSheetName(name, wb.SheetNames))
+    }
 
     const fileName = t('xls_file_name', { start: startDate, end: endDate }) + '.xlsx'
 

@@ -4,8 +4,8 @@ import { supabase } from '../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import {
-  buildBalanceRows, fetchEntitlementOverrides, checkQuota, leaveRequestHours,
-  leaveTypeName, errorText, HOURS_PER_DAY,
+  buildBalanceRows, fetchEntitlementOverrides,
+  leaveTypeName, HOURS_PER_DAY,
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import './MyLeaves.css'
@@ -186,22 +186,9 @@ function MyLeaves({ userProfile }) {
   }
 
   async function handleResubmit(leave) {
-    // 重新送出等於開一張新假單，所以跟「請假申請」走同一套額度檢查。
-    // 少了這裡，被退回的假單就成了繞過額度限制的後門。
-    const leaveType = leaveTypes.find(lt => lt.id === leave.leave_type_id)
-    if (leaveType) {
-      try {
-        const quota = await checkQuota({
-          userId: userProfile.id,
-          leaveType,
-          requestedHours: leaveRequestHours(leave),
-          lang,
-        })
-        if (!quota.ok) { showToast(t(quota.i18nKey, quota.i18nParams), { tone: 'error' }); return }
-      } catch (err) {
-        showToast(errorText(err, t), { tone: 'error' }); return
-      }
-    }
+    // 這裡原本跟「請假申請」走同一套額度檢查、額度不足就擋下來。
+    // 2026-09 兩邊一起移除了（見 LeaveForm.jsx 送出那段的說明）——
+    // 額度用完仍然可以請，超額怎麼處理交給人資判斷。
 
     const { data, error } = await supabase
       .from('leave_requests')

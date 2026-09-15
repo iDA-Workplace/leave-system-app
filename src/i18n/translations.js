@@ -216,7 +216,6 @@ export const translations = {
 
     // ===== 額度檢查 =====
     quota_read_used_failed: '讀取已使用時數失敗：{msg}',
-    quota_exceeded: '{type}額度不足：本次申請 {requested} 小時，但只剩 {remaining} 小時（年度額度 {quota} 小時，已使用或審核中 {used} 小時）。',
 
     // ===== 錯誤訊息（審核） =====
     error_insert_approval: '送出審核記錄失敗：{msg}',
@@ -455,7 +454,7 @@ export const translations = {
     export_exporting: '匯出中...',
     export_err_dates: '請選擇起訖日期',
     export_err_no_data: '這段時間沒有假單資料',
-    xls_sheet_name: '請假記錄',
+    export_unknown_person: '未知人員',
     xls_file_name: '請假記錄_{start}_至_{end}',
     xls_col_requester: '申請人',
     xls_col_email: 'Email',
@@ -927,7 +926,6 @@ export const translations = {
 
     // ===== Quota checks =====
     quota_read_used_failed: 'Could not read used hours: {msg}',
-    quota_exceeded: 'Not enough {type} left: this request is {requested} hours, but only {remaining} hours remain (annual quota {quota} hours; {used} hours already used or pending).',
 
     // ===== Approval errors =====
     error_insert_approval: 'Could not record the approval: {msg}',
@@ -1169,7 +1167,7 @@ export const translations = {
     export_exporting: 'Exporting...',
     export_err_dates: 'Please choose a start and end date',
     export_err_no_data: 'No leave requests in this period',
-    xls_sheet_name: 'Leave Records',
+    export_unknown_person: 'Unknown',
     xls_file_name: 'Leave-Records_{start}_to_{end}',
     xls_col_requester: 'Requester',
     xls_col_email: 'Email',

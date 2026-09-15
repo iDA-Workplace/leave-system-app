@@ -4,8 +4,8 @@ import { supabase } from '../lib/supabase'
 import { Button, Dialog, Select, Textarea, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import {
-  buildBalanceRows, fetchEntitlementOverrides, checkQuota, calcHours, countWorkdays,
-  leaveTypeName, errorText,
+  buildBalanceRows, fetchEntitlementOverrides, calcHours, countWorkdays,
+  leaveTypeName,
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import './LeaveForm.css'
@@ -177,32 +177,14 @@ function LeaveForm({ userProfile }) {
 
     setLoading(true)
 
-    // 額度檢查。刻意放在 insert 之前而且擋死 —— 沒有額度就是不能送出。
-    // 計算時把「審核中」的假單也算進去，否則同一個人可以連送好幾張各自都
-    // 剛好卡在額度內的假單，等全部核准就超額。
-    const selectedType = leaveTypes.find(lt => lt.id === form.leave_type_id)
-    const requestedHours = isMultiDay
-      ? countWorkdays(form.start_date, form.end_date) * 8
-      : hours
-    if (selectedType) {
-      try {
-        const quota = await checkQuota({
-          userId: userProfile.id,
-          leaveType: selectedType,
-          requestedHours,
-          lang,
-        })
-        if (!quota.ok) {
-          showToast(t(quota.i18nKey, quota.i18nParams), { tone: 'error' })
-          setLoading(false)
-          return
-        }
-      } catch (err) {
-        showToast(errorText(err, t), { tone: 'error' })
-        setLoading(false)
-        return
-      }
-    }
+    // 這裡原本有一段「額度不足就擋下來、不准送出」的檢查，2026-09 依需求
+    // 移除了：公司的作法是額度用完仍然可以請，只是要看得出來超了多少 ——
+    // 超額之後怎麼處理（扣薪、改假別、主管裁量）是人資的事，不是系統該擋的。
+    //
+    // 申請人不會沒有提示：右側「假期剩餘額度」面板顯示的是「已使用／總時數」，
+    // 超過時分子會大於分母（例如 64/56），一眼看得出來。
+    //
+    // 這是刻意移除，不是漏掉 —— 要加回來之前請先確認需求真的改了。
 
     const { data, error } = await supabase
       .from('leave_requests')

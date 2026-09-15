@@ -169,49 +169,9 @@ export async function fetchUsedHours(userId, leaveTypeId) {
  * 特休的公司預設存在 annual_leave_summary（以「天」為單位、依年資計算），
  * 跟其他假別存在 leave_types.annual_quota_hours 不一樣，所以要分開處理。
  */
-export async function fetchQuotaHours(userId, leaveType) {
-  const overrides = await fetchEntitlementOverrides(userId)
-  const override = overrides[leaveType.id]
-  if (override != null) return override
-
-  if (isAnnualLeaveType(leaveType)) {
-    const { data } = await supabase
-      .from('annual_leave_summary').select('entitled_days').eq('user_id', userId).single()
-    if (!data || data.entitled_days == null) return null
-    return Number(data.entitled_days) * HOURS_PER_DAY
-  }
-
-  return leaveType.annual_quota_hours ?? null
-}
-
-/**
- * 送出假單前的額度檢查。
- *
- * 回傳 { ok: true } 或 { ok: false, i18nKey, i18nParams } —— 訊息由畫面那一層
- * 用 t(i18nKey, i18nParams) 翻譯。沒有設額度的假別一律放行（額度欄位空白 =
- * 無上限），只有財務有設額度、或有個人專屬設定的假別才擋。
- */
-export async function checkQuota({ userId, leaveType, requestedHours, lang }) {
-  const quota = await fetchQuotaHours(userId, leaveType)
-  if (quota == null) return { ok: true }
-
-  const used = await fetchUsedHours(userId, leaveType.id)
-  const remaining = quota - used
-  if (requestedHours <= remaining) return { ok: true }
-
-  const fmt = h => (Number.isInteger(h) ? h : h.toFixed(1))
-  return {
-    ok: false,
-    i18nKey: 'quota_exceeded',
-    i18nParams: {
-      type: leaveTypeName(leaveType, lang),
-      requested: fmt(requestedHours),
-      remaining: fmt(Math.max(0, remaining)),
-      quota: fmt(quota),
-      used: fmt(used),
-    },
-  }
-}
+// 額度檢查（checkQuota / fetchQuotaHours / fetchUsedHours）在 2026-09 整組
+// 移除了：需求改成「額度用完仍然可以請，不擋」，這三支只服務那條擋下來的
+// 路徑，留著就是沒人呼叫的死碼。原始實作在 git 歷史裡（搜 quota_exceeded）。
 
 // The homepage shows 特休 in days rather than as a full balance table, so it
 // needs the override resolved back into days on its own.

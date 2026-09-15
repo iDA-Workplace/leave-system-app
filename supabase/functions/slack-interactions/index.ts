@@ -115,7 +115,6 @@ const T = {
     err_end_time_before_start: '結束時間必須晚於開始時間',
     err_no_flow: '您尚未被指定審核流程，請聯繫管理員設定。',
     err_submit_failed: '送出失敗：{msg}',
-    quota_exceeded: '{type}額度不足：本次申請 {requested} 小時，但只剩 {remaining} 小時（年度額度 {quota} 小時，已使用或審核中 {used} 小時）。',
 
     leave_submitted_text: '假單已送出',
     leave_submitted_heading: ':white_check_mark: *假單已送出*\n{detail}',
@@ -211,7 +210,6 @@ const T = {
     err_end_time_before_start: 'End time must be later than start time',
     err_no_flow: 'No approval flow has been assigned to you. Please contact an administrator.',
     err_submit_failed: 'Submission failed: {msg}',
-    quota_exceeded: 'Not enough {type} left: this request is {requested} hours, but only {remaining} hours remain (annual quota {quota} hours; {used} hours already used or pending).',
 
     leave_submitted_text: 'Leave request submitted',
     leave_submitted_heading: ':white_check_mark: *Leave request submitted*\n{detail}',
@@ -378,55 +376,9 @@ function leaveRequestHours(r: { hours: number | null; start_date: string; end_da
   return countWorkdays(r.start_date, r.end_date) * HOURS_PER_DAY
 }
 
-/**
- * 額度檢查，規則與網頁版完全一致：
- * 已使用時數把「審核中」也算進去（否則連送多張各自都卡在額度內的假單就能
- * 超額）；沒有設額度的假別視為無上限；財務的個人設定優先於公司預設。
- * 回傳錯誤訊息字串代表擋下，回傳 null 代表放行。`lang` 是送單人自己的語言。
- */
-async function checkQuota(
-  db: SupabaseClient, userId: string,
-  leaveType: { id: string; name: string; name_en: string | null; annual_quota_hours: number | null; is_annual: boolean | null },
-  requestedHours: number,
-  lang: Lang,
-): Promise<string | null> {
-  // 三個查詢一次發出去，不要一個等一個 —— 這段在「送出表單」的同步路徑上，
-  // 必須在 Slack 的 3 秒限制內跑完。特休的年度天數即使用不到也一起抓，
-  // 多一個查詢的成本遠低於多一輪來回等待。
-  const year = new Date().getFullYear()
-  const [overrideRes, summaryRes, rowsRes] = await Promise.all([
-    db.from('user_leave_entitlements').select('quota_hours')
-      .eq('user_id', userId).eq('leave_type_id', leaveType.id).eq('mode', 'manual').maybeSingle(),
-    db.from('annual_leave_summary').select('entitled_days').eq('user_id', userId).maybeSingle(),
-    db.from('leave_requests').select('hours, start_date, end_date')
-      .eq('requester_id', userId).eq('leave_type_id', leaveType.id)
-      .in('status', ['approved', 'pending'])
-      .gte('start_date', `${year}-01-01`).lte('start_date', `${year}-12-31`),
-  ])
-
-  const override = overrideRes.data
-  let quota: number | null = override?.quota_hours != null ? Number(override.quota_hours) : null
-  if (quota == null) {
-    if (leaveType.is_annual) {
-      const days = summaryRes.data?.entitled_days
-      quota = days != null ? Number(days) * HOURS_PER_DAY : null
-    } else {
-      quota = leaveType.annual_quota_hours ?? null
-    }
-  }
-  if (quota == null) return null
-
-  const used = (rowsRes.data ?? []).reduce((s, r) => s + leaveRequestHours(r), 0)
-  const remaining = quota - used
-  if (requestedHours <= remaining) return null
-
-  const f = (h: number) => (Number.isInteger(h) ? h : h.toFixed(1))
-  const typeName = lang === 'en' && leaveType.name_en ? leaveType.name_en : leaveType.name
-  return t(lang, 'quota_exceeded', {
-    type: typeName, requested: f(requestedHours), remaining: f(Math.max(0, remaining)),
-    quota: f(quota), used: f(used),
-  })
-}
+// 送出假單前的額度檢查（checkQuota）在 2026-09 移除了：需求改成「額度用完
+// 仍然可以請，不擋」，網頁版送出那段也一起拿掉了。這支只服務那條擋下來的
+// 路徑，留著就是沒人呼叫的死碼。原始實作在 git 歷史裡（搜 quota_exceeded）。
 
 // ===== 共用查詢 =====
 
@@ -831,7 +783,8 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>, 
       lines.push(t(lang, 'balance_no_limit', { type: typeName }))
       continue
     }
-    const remaining = Math.max(0, quota - (usedByType.get(row.id) ?? 0))
+    // 不夾成 0 —— 超過額度時就讓它顯示負數，這樣看得出來超了多少。
+    const remaining = quota - (usedByType.get(row.id) ?? 0)
     // 特休大家習慣用「天」在講，所以額外換算一份；其他假別只寫時數
     const days = row.is_annual ? asDays(remaining) : null
     lines.push(t(lang, 'balance_line', { type: typeName, n: f(remaining), days: days ?? '' }))
@@ -939,12 +892,9 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
   const { data: leaveType } = await db
     .from('leave_types').select('id, name, name_en, annual_quota_hours, is_annual').eq('id', leaveTypeId).single()
 
-  const requestedHours = isMultiDay ? countWorkdays(startDate, endDate) * HOURS_PER_DAY : (hours ?? 0)
-  const quotaError = leaveType ? await checkQuota(db, me.id, leaveType, requestedHours, lang) : null
-  if (quotaError) {
-    // 顯示在假別欄位下方，使用者一眼看得到是哪個假別的額度問題
-    return json({ response_action: 'errors', errors: { leave_type: quotaError } })
-  }
+  // 這裡原本會擋下超過年度額度的申請（網頁版送出時也有同一道）。
+  // 2026-09 依需求兩邊一起移除：額度用完仍然可以請，超額怎麼處理交給人資
+  // 判斷，不是系統該擋的。查餘額時餘額會顯示成負數，使用者看得出來超了多少。
 
   const { data: created, error } = await db.from('leave_requests').insert({
     requester_id: me.id,
