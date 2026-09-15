@@ -439,19 +439,21 @@ function EmployeeLeaveManagement({ userProfile }) {
                       {!cellValue(user, 'hire_date') && <span className="review-missing-manager"> {t('finleave_not_filled')}</span>}
                     </td>
                     <td>{formatTenure(cellValue(user, 'hire_date'), t)}</td>
+                    {/* 特休天數只顯示、不給改 —— 列表上直接編輯太容易誤觸，
+                        而且這一格背後有「手動調整」跟「依年資計算」兩種來源，
+                        一個輸入框看不出目前是哪一種。要改請走右邊的「編輯」，
+                        那裡才有完整的模式切換。 */}
                     <td>
-                      <input
-                        className="ui-field__control admin-cell-input"
-                        type="number"
-                        min="0"
-                        step="0.5"
-                        aria-label={t('finleave_aria_annual', { name: user.full_name })}
-                        // 留白時用依年資算出來的天數當提示，讓人看得出「沒填不等於 0」
-                        placeholder={statutory != null ? t('finleave_by_seniority_n', { n: statutory }) : t('finleave_by_seniority')}
-                        value={cellValue(user, 'annual_days')}
-                        onChange={e => editCell(user.id, 'annual_days', e.target.value)}
-                        disabled={!annualType}
-                      />
+                      {(() => {
+                        const override = annualOverrideDays(user.id)
+                        if (override != null) {
+                          return <>{override} <Chip tone="info">{t('finleave_manual_chip')}</Chip></>
+                        }
+                        if (statutory != null) {
+                          return <>{statutory} <Chip tone="neutral">{t('finleave_by_seniority_chip')}</Chip></>
+                        }
+                        return <span className="review-missing-manager">{t('finleave_not_filled')}</span>
+                      })()}
                     </td>
                     <td>
                       {manualCount > 0
