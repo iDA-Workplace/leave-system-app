@@ -9,6 +9,9 @@
 //   - 待審超過 7 天 → 自動退回，並私訊申請人
 //   - 未逾期 → 私訊目前這一關的簽核人提醒（現在附上核准／駁回按鈕）
 //
+// 2026-09 多了第三件事：HR 代登記的假單過了確認期限還沒被確認的，自動
+// 視同確認，並私訊當事人留下紀錄（見 migration 20260915_hr_registered_leave）。
+//
 // 語言：每則私訊都照收件人（申請人／簽核人）自己 users.language 的設定發。
 
 import {
@@ -99,12 +102,58 @@ Deno.serve(async () => {
         .in('id', remindedIds)
     }
 
-    return json({ returned: toReturn.length, reminded: remindedIds.length })
+    const autoAcked = await autoAcknowledgeExpired(db)
+
+    return json({ returned: toReturn.length, reminded: remindedIds.length, autoAcked })
   } catch (e) {
     console.error(e)
     return json({ error: (e as Error).message }, 500)
   }
 })
+
+/**
+ * HR 代登記、但同仁過了期限還沒確認的假單，自動視同確認。
+ *
+ * 規則在登記當下就寫在通知裡了（「{日期} 前未提出異議，視同確認」），這裡
+ * 只是把它執行掉。auto_acknowledged 設成 true，是為了日後有爭議時分得出
+ * 「本人按的」與「逾期自動生效的」—— 兩者的意義完全不同。
+ *
+ * 一樣會發一則通知，讓當事人知道這件事已經定案，而不是無聲無息地生效。
+ * 通知失敗不影響確認本身：假單的狀態才是結算依據，通知只是知會。
+ */
+async function autoAcknowledgeExpired(db: ReturnType<typeof adminClient>): Promise<number> {
+  const { data, error } = await db
+    .from('leave_requests')
+    .select(LEAVE_SELECT)
+    .not('registered_by', 'is', null)
+    .is('acknowledged_at', null)
+    .lt('ack_deadline', new Date().toISOString())
+  if (error) throw new Error(`讀取待確認假單失敗：${error.message}`)
+
+  const expired = (data ?? []) as unknown as LeaveRow[]
+  if (expired.length === 0) return 0
+
+  const { error: updateError } = await db
+    .from('leave_requests')
+    .update({ acknowledged_at: new Date().toISOString(), auto_acknowledged: true })
+    .in('id', expired.map(l => l.id))
+  if (updateError) throw new Error(`自動確認失敗：${updateError.message}`)
+
+  for (const leave of expired) {
+    const slackId = leave.requester?.slack_user_id
+    if (!slackId) continue   // 沒填 Slack ID 的人收不到，但確認本身已經生效
+    const lang = normalizeLang(leave.requester?.language)
+    await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+      text: t(l, 'hrreg_auto_text'),
+      blocks: [
+        section(t(l, 'hrreg_auto_heading', { detail: leaveDetailLines(leave, l) })),
+        contextLine(t(l, 'hrreg_auto_note')),
+      ],
+    }))
+  }
+
+  return expired.length
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

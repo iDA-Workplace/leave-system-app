@@ -72,6 +72,7 @@ function adminClient(): SupabaseClient {
 // language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  registered_by, ack_deadline, acknowledged_at, auto_acknowledged,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
@@ -92,6 +93,11 @@ interface LeaveRow {
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
+  // HR 代登記的假單才有值，見 migration 20260915_hr_registered_leave
+  registered_by?: string | null
+  ack_deadline?: string | null
+  acknowledged_at?: string | null
+  auto_acknowledged?: boolean | null
 }
 
 /** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
@@ -445,6 +451,12 @@ const T = {
     digest_group_morning: '上午',
     digest_group_afternoon: '下午',
     digest_group_wfh: '在家工作',
+    hrreg_dm_text: 'HR 幫你登記了一筆請假，請確認',
+    hrreg_dm_heading: ':memo: *HR 幫你登記了一筆請假*\n{detail}',
+    hrreg_dm_note: '⚠️ 如果內容有誤，請盡快聯繫 HR。*{deadline} 前未提出異議，視同確認。*',
+    hrreg_auto_text: '你的代登記請假已視同確認',
+    hrreg_auto_heading: ':white_check_mark: *已視同確認*\n{detail}',
+    hrreg_auto_note: '這筆由 HR 代為登記的請假，已超過確認期限且未收到異議，依規定視同確認。如有問題請聯繫 HR。',
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: '由請假系統自動發送。完整行事曆請見系統首頁。',
     digest_summary_text: '今日請假名單（共 {n} 筆）',
@@ -591,6 +603,12 @@ const T = {
     digest_group_morning: 'Morning',
     digest_group_afternoon: 'Afternoon',
     digest_group_wfh: 'Working from home',
+    hrreg_dm_text: 'HR filed a leave record for you — please confirm',
+    hrreg_dm_heading: ':memo: *HR filed a leave record for you*\n{detail}',
+    hrreg_dm_note: '⚠️ If anything is wrong, contact HR as soon as possible. *If you raise no objection before {deadline}, this counts as confirmed.*',
+    hrreg_auto_text: 'Your HR-filed leave record now counts as confirmed',
+    hrreg_auto_heading: ':white_check_mark: *Counted as confirmed*\n{detail}',
+    hrreg_auto_note: 'This leave record was filed by HR. The confirmation deadline has passed with no objection, so it now counts as confirmed. Contact HR if there is a problem.',
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: 'Posted automatically by the leave system. See the homepage for the full calendar.',
     digest_summary_text: 'Out today ({n} people)',
@@ -722,6 +740,9 @@ function weekdayKey(day: number): MsgKey {
 //   - 待審超過 7 天 → 自動退回，並私訊申請人
 //   - 未逾期 → 私訊目前這一關的簽核人提醒（現在附上核准／駁回按鈕）
 //
+// 2026-09 多了第三件事：HR 代登記的假單過了確認期限還沒被確認的，自動
+// 視同確認，並私訊當事人留下紀錄（見 migration 20260915_hr_registered_leave）。
+//
 // 語言：每則私訊都照收件人（申請人／簽核人）自己 users.language 的設定發。
 
 
@@ -809,12 +830,58 @@ Deno.serve(async () => {
         .in('id', remindedIds)
     }
 
-    return json({ returned: toReturn.length, reminded: remindedIds.length })
+    const autoAcked = await autoAcknowledgeExpired(db)
+
+    return json({ returned: toReturn.length, reminded: remindedIds.length, autoAcked })
   } catch (e) {
     console.error(e)
     return json({ error: (e as Error).message }, 500)
   }
 })
+
+/**
+ * HR 代登記、但同仁過了期限還沒確認的假單，自動視同確認。
+ *
+ * 規則在登記當下就寫在通知裡了（「{日期} 前未提出異議，視同確認」），這裡
+ * 只是把它執行掉。auto_acknowledged 設成 true，是為了日後有爭議時分得出
+ * 「本人按的」與「逾期自動生效的」—— 兩者的意義完全不同。
+ *
+ * 一樣會發一則通知，讓當事人知道這件事已經定案，而不是無聲無息地生效。
+ * 通知失敗不影響確認本身：假單的狀態才是結算依據，通知只是知會。
+ */
+async function autoAcknowledgeExpired(db: ReturnType<typeof adminClient>): Promise<number> {
+  const { data, error } = await db
+    .from('leave_requests')
+    .select(LEAVE_SELECT)
+    .not('registered_by', 'is', null)
+    .is('acknowledged_at', null)
+    .lt('ack_deadline', new Date().toISOString())
+  if (error) throw new Error(`讀取待確認假單失敗：${error.message}`)
+
+  const expired = (data ?? []) as unknown as LeaveRow[]
+  if (expired.length === 0) return 0
+
+  const { error: updateError } = await db
+    .from('leave_requests')
+    .update({ acknowledged_at: new Date().toISOString(), auto_acknowledged: true })
+    .in('id', expired.map(l => l.id))
+  if (updateError) throw new Error(`自動確認失敗：${updateError.message}`)
+
+  for (const leave of expired) {
+    const slackId = leave.requester?.slack_user_id
+    if (!slackId) continue   // 沒填 Slack ID 的人收不到，但確認本身已經生效
+    const lang = normalizeLang(leave.requester?.language)
+    await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+      text: t(l, 'hrreg_auto_text'),
+      blocks: [
+        section(t(l, 'hrreg_auto_heading', { detail: leaveDetailLines(leave, l) })),
+        contextLine(t(l, 'hrreg_auto_note')),
+      ],
+    }))
+  }
+
+  return expired.length
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {

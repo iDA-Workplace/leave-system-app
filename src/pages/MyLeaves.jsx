@@ -8,6 +8,7 @@ import {
   leaveTypeName, HOURS_PER_DAY,
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
+import HrRegisterLeaveDialog from '../components/HrRegisterLeaveDialog'
 import './MyLeaves.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
@@ -22,6 +23,9 @@ const STATUS_TONES = {
 
 function MyLeaves({ userProfile }) {
   const isApprover = APPROVER_ROLES.includes(userProfile?.role)
+  // 代登記是 HR（財務）的權限，跟主管／管理員無關
+  const isHr = !!userProfile?.is_finance
+  const [showHrRegister, setShowHrRegister] = useState(false)
   const { showToast } = useToast()
   const { t, lang } = useLanguage()
 
@@ -216,13 +220,47 @@ function MyLeaves({ userProfile }) {
     }
   }
 
+  /** 同仁確認 HR 代登記的那張假單。只是標記知情，不會改變假單本身。 */
+  async function handleAcknowledge(leave) {
+    const { error } = await supabase
+      .from('leave_requests')
+      .update({ acknowledged_at: new Date().toISOString(), auto_acknowledged: false })
+      .eq('id', leave.id)
+    if (error) {
+      showToast(t('hrreg_ack_err', { msg: error.message }), { tone: 'error' })
+      return
+    }
+    showToast(t('hrreg_ack_toast'))
+    fetchMyLeaves()
+  }
+
   const pendingOwnCount = leaves.filter(l => l.status === 'pending').length
 
   const balanceRows = buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides: entitlementOverrides })
 
   return (
     <div>
-      <PageHeader title={t('nav_leave_management')} actions={<Link to="/leave/new"><Button>{t('myleaves_new_request')}</Button></Link>} />
+      <PageHeader
+        title={t('nav_leave_management')}
+        actions={(
+          <>
+            {isHr && (
+              <Button variant="outlined" onClick={() => setShowHrRegister(true)}>
+                {t('hrreg_open')}
+              </Button>
+            )}
+            <Link to="/leave/new"><Button>{t('myleaves_new_request')}</Button></Link>
+          </>
+        )}
+      />
+
+      {showHrRegister && (
+        <HrRegisterLeaveDialog
+          hrUser={userProfile}
+          onClose={() => setShowHrRegister(false)}
+          onDone={fetchMyLeaves}
+        />
+      )}
 
       <div className="leave-mgmt-stats">
         <Card className="leave-mgmt-stat">
@@ -304,13 +342,30 @@ function MyLeaves({ userProfile }) {
                           <td>{isMultiDay ? `${leave.start_date} ~ ${leave.end_date}` : leave.start_date}</td>
                           <td>{isMultiDay ? t('common_all_day') : (leave.start_time && leave.end_time ? `${leave.start_time} ~ ${leave.end_time}` : '—')}</td>
                           <td>{hoursFor(leave, t)}</td>
-                          <td><Chip tone={tone}>{t(`status_${leave.status}`)}</Chip></td>
+                          <td>
+                            <Chip tone={tone}>{t(`status_${leave.status}`)}</Chip>
+                            {/* HR 代登記的假單要一眼看得出來，而且要分得出
+                                「本人確認過」「逾期自動確認」「還沒確認」—— 
+                                事後有爭議時，這三種的意義完全不同。 */}
+                            {leave.registered_by && <> <Chip tone="info">{t('hrreg_badge')}</Chip></>}
+                            {leave.registered_by && leave.acknowledged_at && (
+                              <> <Chip tone="neutral">
+                                {leave.auto_acknowledged ? t('hrreg_ack_auto') : t('hrreg_ack_done')}
+                              </Chip></>
+                            )}
+                            {leave.registered_by && !leave.acknowledged_at && (
+                              <> <Chip tone="warning">{t('hrreg_ack_pending')}</Chip></>
+                            )}
+                          </td>
                           <td>
                             {leave.status === 'pending' && (
                               <Button variant="tonal" size="sm" onClick={() => setWithdrawTarget(leave)}>{t('myleaves_withdraw')}</Button>
                             )}
                             {(leave.status === 'returned' || leave.status === 'withdrawn') && (
                               <Button size="sm" onClick={() => handleResubmit(leave)}>{t('myleaves_resubmit')}</Button>
+                            )}
+                            {leave.registered_by && !leave.acknowledged_at && (
+                              <Button size="sm" onClick={() => handleAcknowledge(leave)}>{t('hrreg_ack_confirm')}</Button>
                             )}
                           </td>
                         </tr>
