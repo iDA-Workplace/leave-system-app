@@ -74,7 +74,7 @@ const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
-  leave_type:leave_types(name, name_en)
+  leave_type:leave_types(name, name_en, is_wfh)
 `
 
 interface LeaveRow {
@@ -91,7 +91,7 @@ interface LeaveRow {
   current_step: number | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
-  leave_type?: { name: string; name_en?: string | null } | null
+  leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
 }
 
 /** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
@@ -205,7 +205,11 @@ function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}): stri
  */
 function groupBySlot(leaves: LeaveRow[]) {
   const fullDay: LeaveRow[] = [], morning: LeaveRow[] = [], afternoon: LeaveRow[] = []
+  // 在家工作的人另外成一組，不跟請假的人混在一起 —— 他們有在工作，只是不在
+  // 辦公室。混在「今天請假名單」裡，同事會以為找不到人。
+  const wfh: LeaveRow[] = []
   for (const l of leaves) {
+    if (l.leave_type?.is_wfh) { wfh.push(l); continue }
     if (isFullDay(l)) { fullDay.push(l); continue }
     if ((l.start_time ?? '') < NOON) morning.push(l)
     if ((l.end_time ?? '') > NOON) afternoon.push(l)
@@ -219,6 +223,7 @@ function groupBySlot(leaves: LeaveRow[]) {
     fullDay: fullDay.sort(byName),
     morning: morning.sort(byTime),
     afternoon: afternoon.sort(byTime),
+    wfh: wfh.sort(byName),
   }
 }
 
@@ -439,6 +444,7 @@ const T = {
     digest_group_fullday: '全天',
     digest_group_morning: '上午',
     digest_group_afternoon: '下午',
+    digest_group_wfh: '在家工作',
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: '由請假系統自動發送。完整行事曆請見系統首頁。',
     digest_summary_text: '今日請假名單（共 {n} 筆）',
@@ -584,6 +590,7 @@ const T = {
     digest_group_fullday: 'All day',
     digest_group_morning: 'Morning',
     digest_group_afternoon: 'Afternoon',
+    digest_group_wfh: 'Working from home',
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: 'Posted automatically by the leave system. See the homepage for the full calendar.',
     digest_summary_text: 'Out today ({n} people)',
@@ -781,7 +788,15 @@ Deno.serve(async req => {
 
     const leaves = (data ?? []) as LeaveRow[]
 
-    if (leaves.length === 0) {
+    // 分成全天／上午／下午三組 —— 大家真正想知道的是「這個人現在找不找得到」，
+    // 全部擠成一串會看不出誰是整天不在、誰只是半天。在家工作再獨立成第四組。
+    const { fullDay, morning, afternoon, wfh } = groupBySlot(leaves)
+
+    // 「有幾個人請假」不能把在家工作的人算進去 —— 他們有在上班。這個數字會
+    // 出現在手機通知列那一行，算錯會讓人以為今天很多人不在。
+    const leaveCount = leaves.length - wfh.length
+
+    if (leaveCount === 0 && wfh.length === 0) {
       const emptyKey: MsgKey = scope === 'today'
         ? 'digest_empty'
         : (tomorrow ? 'preview_empty_tomorrow' : 'preview_empty_nextday')
@@ -793,18 +808,23 @@ Deno.serve(async req => {
       return json({ scope, date: target, count: 0, posted: true })
     }
 
-    // 分成全天／上午／下午三組 —— 大家真正想知道的是「這個人現在找不找得到」，
-    // 全部擠成一串會看不出誰是整天不在、誰只是半天。
-    const { fullDay, morning, afternoon } = groupBySlot(leaves)
-
-    const headingKey: MsgKey = scope === 'today'
-      ? 'digest_heading'
-      : (tomorrow ? 'preview_heading_tomorrow' : 'preview_heading_nextday')
+    // 只有在家工作、沒有人請假時，標題改用「今天沒有人請假」那句 ——
+    // 底下只掛著一段「在家工作」，標題卻寫「請假名單」會前後矛盾。
+    const headingKey: MsgKey = leaveCount === 0
+      ? (scope === 'today'
+          ? 'digest_empty'
+          : (tomorrow ? 'preview_empty_tomorrow' : 'preview_empty_nextday'))
+      : (scope === 'today'
+          ? 'digest_heading'
+          : (tomorrow ? 'preview_heading_tomorrow' : 'preview_heading_nextday'))
 
     const groups: [string, LeaveRow[]][] = [
       [t(lang, 'digest_group_fullday'), fullDay],
       [t(lang, 'digest_group_morning'), morning],
       [t(lang, 'digest_group_afternoon'), afternoon],
+      // 在家工作放最後，而且獨立成一段 —— 這些人有在工作，只是不在辦公室，
+      // 跟上面三組「找不到人」的性質不同，混在一起會讓同事誤判。
+      [t(lang, 'digest_group_wfh'), wfh],
     ]
     const blocks: unknown[] = [section(t(lang, headingKey, params))]
     for (const [label, rows] of groups) {
@@ -818,13 +838,19 @@ Deno.serve(async req => {
       ? 'digest_summary_text'
       : (tomorrow ? 'preview_summary_text' : 'preview_summary_text_nextday')
 
+    // 只有在家工作、沒有人請假時，手機通知列那行也要跟著改口 ——
+    // 寫「今日請假名單（共 0 筆）」既矛盾又沒資訊。
+    const summaryText = leaveCount === 0
+      ? t(lang, headingKey, params)
+      : t(lang, summaryKey, { n: leaveCount })
+
     await postToChannel(
       requireEnv('SLACK_LEAVE_CHANNEL'),
-      t(lang, summaryKey, { n: leaves.length }),
+      summaryText,
       blocks,
     )
 
-    return json({ scope, date: target, count: leaves.length, posted: true })
+    return json({ scope, date: target, count: leaveCount, wfh: wfh.length, posted: true })
   } catch (e) {
     return json({ error: (e as Error).message }, 500)
   }

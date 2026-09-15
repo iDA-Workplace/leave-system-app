@@ -62,7 +62,7 @@ export const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
-  leave_type:leave_types(name, name_en)
+  leave_type:leave_types(name, name_en, is_wfh)
 `
 
 export interface LeaveRow {
@@ -79,7 +79,7 @@ export interface LeaveRow {
   current_step: number | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
-  leave_type?: { name: string; name_en?: string | null } | null
+  leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
 }
 
 /** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
@@ -193,7 +193,11 @@ export function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}
  */
 export function groupBySlot(leaves: LeaveRow[]) {
   const fullDay: LeaveRow[] = [], morning: LeaveRow[] = [], afternoon: LeaveRow[] = []
+  // 在家工作的人另外成一組，不跟請假的人混在一起 —— 他們有在工作，只是不在
+  // 辦公室。混在「今天請假名單」裡，同事會以為找不到人。
+  const wfh: LeaveRow[] = []
   for (const l of leaves) {
+    if (l.leave_type?.is_wfh) { wfh.push(l); continue }
     if (isFullDay(l)) { fullDay.push(l); continue }
     if ((l.start_time ?? '') < NOON) morning.push(l)
     if ((l.end_time ?? '') > NOON) afternoon.push(l)
@@ -207,6 +211,7 @@ export function groupBySlot(leaves: LeaveRow[]) {
     fullDay: fullDay.sort(byName),
     morning: morning.sort(byTime),
     afternoon: afternoon.sort(byTime),
+    wfh: wfh.sort(byName),
   }
 }
 

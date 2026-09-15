@@ -59,6 +59,7 @@ function LeaveForm({ userProfile }) {
 
   const isMultiDay = form.start_date && form.end_date && form.end_date > form.start_date
   const hours = isMultiDay ? null : calcHours(form.start_time, form.end_time)
+  const selectedLeaveType = leaveTypes.find(lt => lt.id === form.leave_type_id)
 
   useEffect(() => {
     fetchLeaveTypes()
@@ -197,7 +198,8 @@ function LeaveForm({ userProfile }) {
         start_time: isMultiDay ? '09:00' : form.start_time,
         end_time: isMultiDay ? '18:00' : form.end_time,
         hours: isMultiDay ? null : hours,
-        proxy_user_id: form.proxy_user_id || null,
+        // WFH 不指定代理人：先選了人才改成 WFH 的話，這裡要把殘留值清掉
+        proxy_user_id: selectedLeaveType?.is_wfh ? null : (form.proxy_user_id || null),
         reason: form.reason,
         attachment_url: attachment?.url || null,
         attachment_name: attachment?.name || null,
@@ -355,14 +357,19 @@ function LeaveForm({ userProfile }) {
               placeholder={t('leaveform_reason_placeholder')}
             />
 
-            <Select
-              label={t('leaveform_proxy_optional')}
-              value={form.proxy_user_id}
-              onChange={e => setForm(prev => ({ ...prev, proxy_user_id: e.target.value }))}
-            >
-              <option value="">{t('leaveform_select_proxy')}</option>
-              {colleagues.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
-            </Select>
+            {/* 在家工作不需要職務代理人 —— 人有在上班，只是不在辦公室，
+                沒有職務要交接。整個欄位藏起來，比留著讓人猶豫要不要填好。
+                送出時也會一併清掉，避免先選了代理人才改成 WFH 的殘留值。 */}
+            {!selectedLeaveType?.is_wfh && (
+              <Select
+                label={t('leaveform_proxy_optional')}
+                value={form.proxy_user_id}
+                onChange={e => setForm(prev => ({ ...prev, proxy_user_id: e.target.value }))}
+              >
+                <option value="">{t('leaveform_select_proxy')}</option>
+                {colleagues.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+              </Select>
+            )}
 
             <div className="leave-modal__field">
               <span className="leave-modal__field-label leave-modal__field-label--center">
