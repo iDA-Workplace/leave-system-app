@@ -146,6 +146,20 @@ const T = {
     proxy_heading: ':handshake: *您被指定為職務代理人*\n{detail}',
     proxy_note: '這張假單已核准，該時段請協助代理其職務。',
 
+    // 收回假單
+    btn_withdraw: '收回假單',
+    btn_refill: '重新填寫',
+    withdraw_done_text: '假單已收回',
+    withdraw_done_heading: ':leftwards_arrow_with_hook: *假單已收回*\n{detail}',
+    withdraw_done_note: '這張假單不會再送給主管審核。日期或時間填錯的話，按下面的按鈕重填一張。',
+    withdraw_guard_not_yours: '這不是您送出的假單，無法收回。',
+    withdraw_guard_approved: '這張假單已經核准，不能收回。如果日期或時間有誤，請聯繫 HR 協助更正。',
+    withdraw_guard_not_pending: '這張假單{status}，已經不能收回。',
+    withdraw_guard_race: '這張假單剛剛已經被處理掉了（多半是簽核人同時按了核准），無法收回。請重新查看最新狀態。',
+    approver_withdrawn_text: '{name} 已收回假單',
+    approver_withdrawn_heading: ':leftwards_arrow_with_hook: *此假單已被收回*\n{detail}',
+    approver_withdrawn_note: '申請人已自行收回，您不需要處理。',
+
     // 代登記假單的確認／異議
     btn_ack_confirm: '確認',
     btn_ack_dispute: '提出修改異議',
@@ -266,6 +280,19 @@ const T = {
     proxy_text: 'You have been assigned as {name}’s proxy',
     proxy_heading: ':handshake: *You’ve been assigned as a proxy*\n{detail}',
     proxy_note: 'This leave request has been approved — please cover their responsibilities during that time.',
+
+    btn_withdraw: 'Withdraw request',
+    btn_refill: 'Submit a new one',
+    withdraw_done_text: 'Leave request withdrawn',
+    withdraw_done_heading: ':leftwards_arrow_with_hook: *Leave request withdrawn*\n{detail}',
+    withdraw_done_note: 'This request will no longer go to your manager. If the dates or times were wrong, use the button below to submit a new one.',
+    withdraw_guard_not_yours: 'This is not your leave request, so you cannot withdraw it.',
+    withdraw_guard_approved: 'This request has already been approved and cannot be withdrawn. If the dates or times are wrong, contact HR to have it corrected.',
+    withdraw_guard_not_pending: 'This request is {status}, so it can no longer be withdrawn.',
+    withdraw_guard_race: 'This request was just handled (most likely an approver clicked Approve at the same moment), so it could not be withdrawn. Please check its current status.',
+    approver_withdrawn_text: '{name} withdrew their leave request',
+    approver_withdrawn_heading: ':leftwards_arrow_with_hook: *This request has been withdrawn*\n{detail}',
+    approver_withdrawn_note: 'The requester withdrew it themselves — no action needed.',
 
     btn_ack_confirm: 'Confirm',
     btn_ack_dispute: 'Raise an objection',
@@ -448,11 +475,14 @@ async function resolveUser(db: SupabaseClient, slackUserId: string) {
 
 const LEAVE_SELECT = `
   id, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
-  registered_by, acknowledged_at, disputed_at,
+  registered_by, acknowledged_at, disputed_at, approver_message_refs,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
 `
+
+/** 一則已經發出去的待審核通知的位置。lang 一起記，改寫時才不會變成另一種語言。 */
+interface ApproverMessageRef { channel: string; ts: string; lang: Lang }
 
 interface LeaveRow {
   id: string; start_date: string; end_date: string
@@ -464,6 +494,8 @@ interface LeaveRow {
   registered_by?: string | null
   acknowledged_at?: string | null
   disputed_at?: string | null
+  // 待審核通知發到 Slack 的哪幾則訊息，見 migration 20260916_approver_message_refs
+  approver_message_refs?: ApproverMessageRef[] | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
@@ -612,11 +644,24 @@ async function notifyApprovers(db: SupabaseClient, leave: LeaveRow) {
     },
   ]
 
+  // 記下每則通知發到哪 —— 申請人之後收回假單時，要靠這個把這幾則訊息改寫成
+  // 「此假單已被收回」。事後沒有別的辦法找到它們（見 migration
+  // 20260916_approver_message_refs 的說明）。
+  const refs: ApproverMessageRef[] = []
   for (const s of steps) {
     if (!s.approver?.slack_user_id) continue
     const lang = normalizeLang(s.approver.language)
-    await dm(s.approver.slack_user_id, t(lang, 'new_request_text', { name: leave.requester?.full_name ?? '' }), buildBlocks(lang))
+    const sent = await dm(s.approver.slack_user_id, t(lang, 'new_request_text', { name: leave.requester?.full_name ?? '' }), buildBlocks(lang))
+    if (sent.ok && sent.channel && sent.ts) {
+      refs.push({ channel: String(sent.channel), ts: String(sent.ts), lang })
+    }
   }
+
+  // 整個覆蓋，不累加：上一關那則在核准的當下就已經改寫成「已核准」了。
+  // 一則都沒發成功時寫 null，免得留著上一關的舊位置、之後改寫到錯的訊息。
+  await db.from('leave_requests')
+    .update({ approver_message_refs: refs.length ? refs : null })
+    .eq('id', leave.id)
 }
 
 // ===== 假單表單 =====
@@ -923,6 +968,9 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
     if (action.action_id === 'approve_leave') {
       return await handleApprove(db, me, lang, action.value, p.response_url)
     }
+    if (action.action_id === 'withdraw_leave') {
+      return handleWithdraw(db, me, lang, action.value, p.response_url)
+    }
     if (action.action_id === 'ack_registered_leave') {
       return handleAcknowledge(db, me, lang, action.value, p.response_url)
     }
@@ -1069,6 +1117,15 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
       await dm(me.slack_user_id, t(lang, 'leave_submitted_text'), [
         section(t(lang, 'leave_submitted_heading', { detail: leaveDetailLines(row, lang) })),
         contextLine(steps.length === 0 ? t(lang, 'leave_submitted_no_flow') : t(lang, 'leave_submitted_pending')),
+        // 「收回假單」只有在還要送審時才給 —— 沒有簽核關卡的人一送出就是
+        // 已核准，而已核准的假單不能收回（使用者明確要求，2026-09）。
+        ...(steps.length === 0 ? [] : [{
+          type: 'actions',
+          elements: [{
+            type: 'button', text: { type: 'plain_text', text: t(lang, 'btn_withdraw'), emoji: true },
+            action_id: 'withdraw_leave', value: created.id,
+          }],
+        }]),
       ])
     }
   })())
@@ -1167,6 +1224,103 @@ async function handleRejectSubmit(db: SupabaseClient, me: any, lang: Lang, p: Re
   })())
 
   return json({ response_action: 'clear' })
+}
+
+// ---- 收回假單 ----
+
+/**
+ * 收回前的把關。回傳字串代表擋下並說明原因，null 代表可以動作。
+ *
+ * 「已核准的假單絕對不能收回」是使用者明確要求的規則（2026-09）—— 已核准的
+ * 假可能已經出現在早上的公告裡、時數也已經計入，讓申請人自己抽掉會讓帳跟
+ * 大家看到的事實對不起來。核准後才發現請錯日期的話，走 HR 更正。
+ */
+function guardWithdraw(me: any, leave: LeaveRow | null, lang: Lang): string | null {
+  if (!leave) return t(lang, 'guard_not_found')
+  // Slack 的互動請求是外部可以偽造 payload 的路徑，所以要驗這張是不是他自己的
+  if (leave.requester?.id !== me.id) return t(lang, 'withdraw_guard_not_yours')
+  if (leave.status === 'approved') return t(lang, 'withdraw_guard_approved')
+  if (leave.status !== 'pending') {
+    const statusKey = ({ rejected: 'status_rejected', withdrawn: 'status_withdrawn', returned: 'status_returned' } as const)[leave.status]
+    return t(lang, 'withdraw_guard_not_pending', { status: statusKey ? t(lang, statusKey) : leave.status })
+  }
+  return null
+}
+
+function handleWithdraw(db: SupabaseClient, me: any, lang: Lang, requestId: string, responseUrl: string) {
+  // 按鈕點擊有 3 秒回應限制，處理走背景（同 handleApprove）。
+  background((async () => {
+    const { data } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', requestId).single()
+    const leave = data as unknown as LeaveRow
+
+    const guard = guardWithdraw(me, leave, lang)
+    if (guard) {
+      await replaceMessage(responseUrl, guard, [section(`:information_source: ${guard}`)])
+      return
+    }
+
+    // 條件寫在 update 裡（.eq('status', 'pending')），不是先查再寫 ——
+    // 主管剛好在同一秒按下核准的話，這樣才不會把已經核准的假單改成收回。
+    // 那種情況會回 0 列，走下面那條訊息。
+    const { data: updated, error } = await db.from('leave_requests')
+      .update({ status: 'withdrawn' })
+      .eq('id', leave.id).eq('status', 'pending').select()
+
+    if (error || !updated?.length) {
+      const msg = t(lang, 'withdraw_guard_race')
+      await replaceMessage(responseUrl, msg, [section(`:information_source: ${msg}`)])
+      return
+    }
+
+    // 自己這則換成結果，並附「重新填寫」—— 收回多半是因為日期填錯，
+    // 這時候最想做的就是立刻重填一張，不該再要他自己去找入口。
+    await replaceMessage(responseUrl, t(lang, 'withdraw_done_text'), [
+      section(t(lang, 'withdraw_done_heading', { detail: leaveDetailLines(leave, lang) })),
+      contextLine(t(lang, 'withdraw_done_note')),
+      {
+        type: 'actions',
+        elements: [{
+          type: 'button', style: 'primary',
+          text: { type: 'plain_text', text: t(lang, 'btn_refill'), emoji: true },
+          action_id: 'open_leave_form', value: 'open',
+        }],
+      },
+    ])
+
+    await markApproverMessagesWithdrawn(db, leave)
+  })())
+
+  return new Response('')
+}
+
+/**
+ * 把簽核人那幾則「有一張假單待您審核」改寫成「此假單已被收回」，按鈕一併消失。
+ *
+ * 位置是當初發通知時記下來的（approver_message_refs）。改寫失敗不影響收回
+ * 本身 —— 假單狀態已經寫進資料庫了，那才是結算依據；而且就算這則訊息沒改到，
+ * 簽核人按下核准也會被 guardApproval 擋下來並顯示「已由申請人收回」。
+ */
+async function markApproverMessagesWithdrawn(db: SupabaseClient, leave: LeaveRow) {
+  const refs = leave.approver_message_refs
+  if (!Array.isArray(refs) || refs.length === 0) return
+
+  for (const ref of refs) {
+    if (!ref?.channel || !ref?.ts) continue
+    // 用當初發送時的語言改寫，不是用收回者的語言 —— 這則是寫給簽核人看的
+    const lang = normalizeLang(ref.lang)
+    await callSlack('chat.update', {
+      channel: ref.channel,
+      ts: ref.ts,
+      text: t(lang, 'approver_withdrawn_text', { name: leave.requester?.full_name ?? '' }),
+      blocks: [
+        section(t(lang, 'approver_withdrawn_heading', { detail: leaveDetailLines(leave, lang) })),
+        contextLine(t(lang, 'approver_withdrawn_note')),
+      ],
+    })
+  }
+
+  // 訊息已經不是待審核狀態了，位置留著沒有意義，清掉免得日後誤用
+  await db.from('leave_requests').update({ approver_message_refs: null }).eq('id', leave.id)
 }
 
 // ---- 代登記假單：確認 / 提出修改異議 ----
