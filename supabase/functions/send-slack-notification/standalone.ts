@@ -72,9 +72,10 @@ function adminClient(): SupabaseClient {
 // language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  registered_by, ack_deadline, acknowledged_at, auto_acknowledged,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
-  leave_type:leave_types(name, name_en)
+  leave_type:leave_types(name, name_en, is_wfh)
 `
 
 interface LeaveRow {
@@ -91,7 +92,12 @@ interface LeaveRow {
   current_step: number | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
-  leave_type?: { name: string; name_en?: string | null } | null
+  leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
+  // HR 代登記的假單才有值，見 migration 20260915_hr_registered_leave
+  registered_by?: string | null
+  ack_deadline?: string | null
+  acknowledged_at?: string | null
+  auto_acknowledged?: boolean | null
 }
 
 /** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
@@ -205,7 +211,11 @@ function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}): stri
  */
 function groupBySlot(leaves: LeaveRow[]) {
   const fullDay: LeaveRow[] = [], morning: LeaveRow[] = [], afternoon: LeaveRow[] = []
+  // 在家工作的人另外成一組，不跟請假的人混在一起 —— 他們有在工作，只是不在
+  // 辦公室。混在「今天請假名單」裡，同事會以為找不到人。
+  const wfh: LeaveRow[] = []
   for (const l of leaves) {
+    if (l.leave_type?.is_wfh) { wfh.push(l); continue }
     if (isFullDay(l)) { fullDay.push(l); continue }
     if ((l.start_time ?? '') < NOON) morning.push(l)
     if ((l.end_time ?? '') > NOON) afternoon.push(l)
@@ -219,6 +229,7 @@ function groupBySlot(leaves: LeaveRow[]) {
     fullDay: fullDay.sort(byName),
     morning: morning.sort(byTime),
     afternoon: afternoon.sort(byTime),
+    wfh: wfh.sort(byName),
   }
 }
 
@@ -417,6 +428,11 @@ const T = {
     today_leave_text: '{name} 今天請假',
     today_leave_heading: ':bell: *今日臨時請假*\n{line}',
     today_leave_note: '此假單於今日上午的請假公告發出後才核准，故補發通知。',
+    // 在家工作另外一組字：他有在工作，只是不在辦公室。用「請假」的字眼公告
+    // 會讓同事以為今天找不到他。
+    today_wfh_text: '{name} 今天在家工作',
+    today_wfh_heading: ':house_with_garden: *今日在家工作*\n{line}',
+    today_wfh_note: '此申請於今日上午的公告發出後才核准，故補發通知。仍可照常聯繫。',
     channel_posted: 'posted',
     channel_pending_digest: '尚未到彙整時間，將由每日公告一併發出',
     channel_not_today: '假期不含今天，不需公告',
@@ -439,6 +455,13 @@ const T = {
     digest_group_fullday: '全天',
     digest_group_morning: '上午',
     digest_group_afternoon: '下午',
+    digest_group_wfh: '在家工作',
+    hrreg_dm_text: 'HR 幫你登記了一筆請假，請確認',
+    hrreg_dm_heading: ':memo: *HR 幫你登記了一筆請假*\n{detail}',
+    hrreg_dm_note: '⚠️ 如果內容有誤，請盡快聯繫 HR。*{deadline} 前未提出異議，視同確認。*',
+    hrreg_auto_text: '你的代登記請假已視同確認',
+    hrreg_auto_heading: ':white_check_mark: *已視同確認*\n{detail}',
+    hrreg_auto_note: '這筆由 HR 代為登記的請假，已超過確認期限且未收到異議，依規定視同確認。如有問題請聯繫 HR。',
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: '由請假系統自動發送。完整行事曆請見系統首頁。',
     digest_summary_text: '今日請假名單（共 {n} 筆）',
@@ -562,6 +585,9 @@ const T = {
     today_leave_text: '{name} is on leave today',
     today_leave_heading: ':bell: *Same-day leave*\n{line}',
     today_leave_note: 'Approved after this morning’s leave announcement, so this is a follow-up notice.',
+    today_wfh_text: '{name} is working from home today',
+    today_wfh_heading: ':house_with_garden: *Working from home today*\n{line}',
+    today_wfh_note: 'Approved after this morning’s announcement, so this is a follow-up notice. They are still reachable as usual.',
     channel_posted: 'posted',
     channel_pending_digest: 'Not yet time for the daily digest — will be included in it',
     channel_not_today: 'The leave period does not cover today, no announcement needed',
@@ -584,6 +610,13 @@ const T = {
     digest_group_fullday: 'All day',
     digest_group_morning: 'Morning',
     digest_group_afternoon: 'Afternoon',
+    digest_group_wfh: 'Working from home',
+    hrreg_dm_text: 'HR filed a leave record for you — please confirm',
+    hrreg_dm_heading: ':memo: *HR filed a leave record for you*\n{detail}',
+    hrreg_dm_note: '⚠️ If anything is wrong, contact HR as soon as possible. *If you raise no objection before {deadline}, this counts as confirmed.*',
+    hrreg_auto_text: 'Your HR-filed leave record now counts as confirmed',
+    hrreg_auto_heading: ':white_check_mark: *Counted as confirmed*\n{detail}',
+    hrreg_auto_note: 'This leave record was filed by HR. The confirmation deadline has passed with no objection, so it now counts as confirmed. Contact HR if there is a problem.',
     digest_group_heading: '*■ {label}*\n{lines}',
     digest_footer: 'Posted automatically by the leave system. See the homepage for the full calendar.',
     digest_summary_text: 'Out today ({n} people)',
@@ -757,6 +790,7 @@ Deno.serve(async (req) => {
       case 'new_request': return json(await notifyApprovers(db, leave))
       case 'approved':    return json(await notifyApproved(db, leave))
       case 'rejected':    return json(await notifyRejected(db, leave))
+      case 'hr_registered': return json(await notifyHrRegistered(leave))
       default:            return json({ error: `未知的通知類型：${type}` }, 400)
     }
   } catch (e) {
@@ -788,6 +822,36 @@ async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveR
       contextLine(t(lang, 'review_on_web_hint')),
     ],
   }))
+}
+
+/**
+ * HR 代登記請假後，私訊當事人請他確認。
+ *
+ * 通知裡一定要明寫「期限前未提出異議視同確認」—— 這是整個機制成立的關鍵：
+ * 同仁沒按確認的情況一定會發生（本來就是因為大家會忘記才做這個功能），
+ * 所以規則必須在通知的當下就講清楚，事後才不會有爭議。
+ *
+ * 沒填 Slack ID 的人收不到，這裡回報出去讓 HR 知道要口頭補講 —— 靜默跳過
+ * 的話，HR 會以為通知發出去了。
+ */
+async function notifyHrRegistered(leave: LeaveRow) {
+  const slackId = leave.requester?.slack_user_id
+  if (!slackId) return { dm: 'requester 沒有填 Slack User ID，通知未發送' }
+
+  const lang = normalizeLang(leave.requester?.language)
+  const deadline = leave.ack_deadline
+    ? new Date(leave.ack_deadline).toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW')
+    : ''
+
+  return {
+    dm: await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+      text: t(l, 'hrreg_dm_text'),
+      blocks: [
+        section(t(l, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, l) })),
+        contextLine(t(l, 'hrreg_dm_note', { deadline })),
+      ],
+    })),
+  }
 }
 
 async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
@@ -825,9 +889,13 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
       results.channel = '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
     } else {
       const lang = channelLang()
-      await postToChannel(channel, t(lang, 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
-        section(t(lang, 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
-        contextLine(t(lang, 'today_leave_note')),
+      // 在家工作用另一組文字 —— 他有在工作，只是不在辦公室。沿用「今日臨時
+      // 請假」的字眼會讓同事以為今天找不到他。早上 9:00 的彙整已經把 WFH
+      // 分成獨立一組，這則補發的公告要跟它一致。
+      const wfh = !!leave.leave_type?.is_wfh
+      await postToChannel(channel, t(lang, wfh ? 'today_wfh_text' : 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
+        section(t(lang, wfh ? 'today_wfh_heading' : 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
+        contextLine(t(lang, wfh ? 'today_wfh_note' : 'today_leave_note')),
       ])
       results.channel = 'posted'
     }

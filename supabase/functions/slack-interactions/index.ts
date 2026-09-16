@@ -89,6 +89,11 @@ const T = {
     today_leave_text: '{name} 今天請假',
     today_leave_heading: ':bell: *今日臨時請假*\n{line}',
     today_leave_note: '此假單於今日上午的請假公告發出後才核准，故補發通知。',
+    // 在家工作另外一組字：他有在工作，只是不在辦公室。用「請假」的字眼公告
+    // 會讓同事以為今天找不到他。
+    today_wfh_text: '{name} 今天在家工作',
+    today_wfh_heading: ':house_with_garden: *今日在家工作*\n{line}',
+    today_wfh_note: '此申請於今日上午的公告發出後才核准，故補發通知。仍可照常聯繫。',
 
     no_account_text: '找不到您的系統帳號',
     no_account_heading: ':warning: 找不到對應的系統帳號，請聯繫管理員在「員工帳號管理」補上您的 Slack User ID。',
@@ -115,7 +120,6 @@ const T = {
     err_end_time_before_start: '結束時間必須晚於開始時間',
     err_no_flow: '您尚未被指定審核流程，請聯繫管理員設定。',
     err_submit_failed: '送出失敗：{msg}',
-    quota_exceeded: '{type}額度不足：本次申請 {requested} 小時，但只剩 {remaining} 小時（年度額度 {quota} 小時，已使用或審核中 {used} 小時）。',
 
     leave_submitted_text: '假單已送出',
     leave_submitted_heading: ':white_check_mark: *假單已送出*\n{detail}',
@@ -185,6 +189,9 @@ const T = {
     today_leave_text: '{name} is on leave today',
     today_leave_heading: ':bell: *Same-day leave*\n{line}',
     today_leave_note: 'Approved after this morning’s leave announcement, so this is a follow-up notice.',
+    today_wfh_text: '{name} is working from home today',
+    today_wfh_heading: ':house_with_garden: *Working from home today*\n{line}',
+    today_wfh_note: 'Approved after this morning’s announcement, so this is a follow-up notice. They are still reachable as usual.',
 
     no_account_text: 'We could not find your account',
     no_account_heading: ':warning: We could not match you to an account. Ask an administrator to add your Slack User ID under “Employee Accounts”.',
@@ -211,7 +218,6 @@ const T = {
     err_end_time_before_start: 'End time must be later than start time',
     err_no_flow: 'No approval flow has been assigned to you. Please contact an administrator.',
     err_submit_failed: 'Submission failed: {msg}',
-    quota_exceeded: 'Not enough {type} left: this request is {requested} hours, but only {remaining} hours remain (annual quota {quota} hours; {used} hours already used or pending).',
 
     leave_submitted_text: 'Leave request submitted',
     leave_submitted_heading: ':white_check_mark: *Leave request submitted*\n{detail}',
@@ -378,55 +384,9 @@ function leaveRequestHours(r: { hours: number | null; start_date: string; end_da
   return countWorkdays(r.start_date, r.end_date) * HOURS_PER_DAY
 }
 
-/**
- * 額度檢查，規則與網頁版完全一致：
- * 已使用時數把「審核中」也算進去（否則連送多張各自都卡在額度內的假單就能
- * 超額）；沒有設額度的假別視為無上限；財務的個人設定優先於公司預設。
- * 回傳錯誤訊息字串代表擋下，回傳 null 代表放行。`lang` 是送單人自己的語言。
- */
-async function checkQuota(
-  db: SupabaseClient, userId: string,
-  leaveType: { id: string; name: string; name_en: string | null; annual_quota_hours: number | null; is_annual: boolean | null },
-  requestedHours: number,
-  lang: Lang,
-): Promise<string | null> {
-  // 三個查詢一次發出去，不要一個等一個 —— 這段在「送出表單」的同步路徑上，
-  // 必須在 Slack 的 3 秒限制內跑完。特休的年度天數即使用不到也一起抓，
-  // 多一個查詢的成本遠低於多一輪來回等待。
-  const year = new Date().getFullYear()
-  const [overrideRes, summaryRes, rowsRes] = await Promise.all([
-    db.from('user_leave_entitlements').select('quota_hours')
-      .eq('user_id', userId).eq('leave_type_id', leaveType.id).eq('mode', 'manual').maybeSingle(),
-    db.from('annual_leave_summary').select('entitled_days').eq('user_id', userId).maybeSingle(),
-    db.from('leave_requests').select('hours, start_date, end_date')
-      .eq('requester_id', userId).eq('leave_type_id', leaveType.id)
-      .in('status', ['approved', 'pending'])
-      .gte('start_date', `${year}-01-01`).lte('start_date', `${year}-12-31`),
-  ])
-
-  const override = overrideRes.data
-  let quota: number | null = override?.quota_hours != null ? Number(override.quota_hours) : null
-  if (quota == null) {
-    if (leaveType.is_annual) {
-      const days = summaryRes.data?.entitled_days
-      quota = days != null ? Number(days) * HOURS_PER_DAY : null
-    } else {
-      quota = leaveType.annual_quota_hours ?? null
-    }
-  }
-  if (quota == null) return null
-
-  const used = (rowsRes.data ?? []).reduce((s, r) => s + leaveRequestHours(r), 0)
-  const remaining = quota - used
-  if (requestedHours <= remaining) return null
-
-  const f = (h: number) => (Number.isInteger(h) ? h : h.toFixed(1))
-  const typeName = lang === 'en' && leaveType.name_en ? leaveType.name_en : leaveType.name
-  return t(lang, 'quota_exceeded', {
-    type: typeName, requested: f(requestedHours), remaining: f(Math.max(0, remaining)),
-    quota: f(quota), used: f(used),
-  })
-}
+// 送出假單前的額度檢查（checkQuota）在 2026-09 移除了：需求改成「額度用完
+// 仍然可以請，不擋」，網頁版送出那段也一起拿掉了。這支只服務那條擋下來的
+// 路徑，留著就是沒人呼叫的死碼。原始實作在 git 歷史裡（搜 quota_exceeded）。
 
 // ===== 共用查詢 =====
 
@@ -445,7 +405,7 @@ const LEAVE_SELECT = `
   id, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
-  leave_type:leave_types(name, name_en)
+  leave_type:leave_types(name, name_en, is_wfh)
 `
 
 interface LeaveRow {
@@ -455,7 +415,7 @@ interface LeaveRow {
   flow_id: string | null; current_step: number | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
-  leave_type?: { name: string; name_en?: string | null } | null
+  leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
 }
 
 // ===== 假單的文字呈現（與 _shared/leave.ts 同一套規則）=====
@@ -535,6 +495,50 @@ async function approversForStep(db: SupabaseClient, flowId: string, stepOrder: n
     .select('approver_id, approver:users!approval_flow_steps_approver_id_fkey(slack_user_id, language)')
     .eq('flow_id', flowId).eq('step_order', stepOrder)
   return (data ?? []) as { approver_id: string; approver?: { slack_user_id?: string; language?: string } }[]
+}
+
+/** 管理後台「核准通知對象」裡設定、且仍啟用的人。 */
+async function notificationTargets(db: SupabaseClient) {
+  const { data } = await db
+    .from('notification_targets')
+    .select('user:users(slack_user_id, language)')
+    .eq('is_active', true)
+  return (data ?? []).map(
+    (r: { user?: { slack_user_id?: string | null; language?: string | null } }) => r.user,
+  )
+}
+
+/**
+ * 假單走到最後一關核准之後，私訊「申請人本人 ＋ 管理後台設定的核准通知對象」。
+ *
+ * ⚠️ 這段與 send-slack-notification 的 notifyApproved 是同一件事的兩份實作，
+ * 因為核准有兩個入口：網頁上按核准走那支 function，Slack 訊息上按核准走這支。
+ * 2026-09 之前這裡漏了「通知對象」那一半 —— 而大家平常都是在 Slack 上按的，
+ * 結果就是後台設定了通知對象卻從來沒收到過通知。改這裡的話那支也要跟著改。
+ *
+ * 回傳已經發過的 Slack ID，讓後面的職務代理人通知不會重複發給同一個人
+ * （代理人很可能同時也被設為通知對象）。
+ */
+async function notifyApprovedRecipients(
+  db: SupabaseClient, leave: LeaveRow, { includeRequester = true } = {},
+): Promise<string[]> {
+  const rows: ({ slack_user_id?: string | null; language?: string | null } | undefined)[] = [
+    ...(includeRequester && leave.requester?.slack_user_id
+      ? [{ slack_user_id: leave.requester.slack_user_id, language: leave.requester.language }]
+      : []),
+    ...await notificationTargets(db),
+  ]
+
+  const sent = new Set<string>()
+  for (const row of rows) {
+    if (!row?.slack_user_id || sent.has(row.slack_user_id)) continue
+    sent.add(row.slack_user_id)
+    const lang = normalizeLang(row.language)
+    await dm(row.slack_user_id, t(lang, 'approved_dm_text'), [
+      section(t(lang, 'approved_dm_heading', { detail: leaveDetailLines(leave, lang) })),
+    ])
+  }
+  return [...sent]
 }
 
 /** 待審核通知（含核准／駁回按鈕）—— 送給某一關的所有簽核人，各自用自己的語言。 */
@@ -831,7 +835,8 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>, 
       lines.push(t(lang, 'balance_no_limit', { type: typeName }))
       continue
     }
-    const remaining = Math.max(0, quota - (usedByType.get(row.id) ?? 0))
+    // 不夾成 0 —— 超過額度時就讓它顯示負數，這樣看得出來超了多少。
+    const remaining = quota - (usedByType.get(row.id) ?? 0)
     // 特休大家習慣用「天」在講，所以額外換算一份；其他假別只寫時數
     const days = row.is_annual ? asDays(remaining) : null
     lines.push(t(lang, 'balance_line', { type: typeName, n: f(remaining), days: days ?? '' }))
@@ -939,12 +944,9 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
   const { data: leaveType } = await db
     .from('leave_types').select('id, name, name_en, annual_quota_hours, is_annual').eq('id', leaveTypeId).single()
 
-  const requestedHours = isMultiDay ? countWorkdays(startDate, endDate) * HOURS_PER_DAY : (hours ?? 0)
-  const quotaError = leaveType ? await checkQuota(db, me.id, leaveType, requestedHours, lang) : null
-  if (quotaError) {
-    // 顯示在假別欄位下方，使用者一眼看得到是哪個假別的額度問題
-    return json({ response_action: 'errors', errors: { leave_type: quotaError } })
-  }
+  // 這裡原本會擋下超過年度額度的申請（網頁版送出時也有同一道）。
+  // 2026-09 依需求兩邊一起移除：額度用完仍然可以請，超額怎麼處理交給人資
+  // 判斷，不是系統該擋的。查餘額時餘額會顯示成負數，使用者看得出來超了多少。
 
   const { data: created, error } = await db.from('leave_requests').insert({
     requester_id: me.id,
@@ -978,7 +980,10 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
       // 這條路徑一樣要走完「核准後」該做的事 —— 之前這裡直接改狀態就結束，
       // 導致這種員工當天臨時請假時頻道上沒有任何人知道。
       await db.from('leave_requests').update({ status: 'approved' }).eq('id', created.id)
-      await notifyProxy(db, row)
+      // 申請人自己不重複發：他等一下就會收到下面那則「假單已送出／此流程不需
+      // 簽核，已自動核准」，再多一則「假單已核准」只是同一件事講兩次。
+      const notified = await notifyApprovedRecipients(db, row, { includeRequester: false })
+      await notifyProxy(db, row, notified)
       await notifyChannelIfToday(db, row)
     } else {
       await notifyApprovers(db, row)
@@ -1037,12 +1042,8 @@ function handleApprove(db: SupabaseClient, me: any, lang: Lang, requestId: strin
     ])
 
     if (isFinal) {
-      if (leave.requester?.slack_user_id) {
-        const requesterLang = normalizeLang(leave.requester.language)
-        await dm(leave.requester.slack_user_id, t(requesterLang, 'approved_dm_text'),
-          [section(t(requesterLang, 'approved_dm_heading', { detail: leaveDetailLines(leave, requesterLang) }))])
-      }
-      await notifyProxy(db, leave)
+      const notified = await notifyApprovedRecipients(db, leave)
+      await notifyProxy(db, leave, notified)
       await notifyChannelIfToday(db, leave)
     } else {
       await notifyApprovers(db, { ...leave, current_step: (leave.current_step ?? 1) + 1 })
@@ -1120,8 +1121,11 @@ async function guardApproval(db: SupabaseClient, me: any, leave: LeaveRow | null
  *
  * 刻意等到核准後才發 —— 假單還沒過就先通知，萬一被駁回，代理人已經以為
  * 要代班了。代理人的 Slack ID 沒填就安靜略過（跟其他通知一致）。
+ *
+ * `alreadyNotified`：剛剛在核准通知那輪已經發過的 Slack ID。代理人常常同時
+ * 也被設為「核准通知對象」，不濾掉的話他會為了同一張假單收到兩則訊息。
  */
-async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
+async function notifyProxy(db: SupabaseClient, leave: LeaveRow, alreadyNotified: string[] = []) {
   const { data } = await db
     .from('leave_requests')
     .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id, language)')
@@ -1129,6 +1133,7 @@ async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
 
   const proxy = (data as { proxy?: { slack_user_id?: string; language?: string } } | null)?.proxy
   if (!proxy?.slack_user_id) return
+  if (alreadyNotified.includes(proxy.slack_user_id)) return
   const lang = normalizeLang(proxy.language)
   await dm(proxy.slack_user_id, t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
     section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
@@ -1136,7 +1141,13 @@ async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
   ])
 }
 
-/** 當天臨時請假：核准當下若假期已涵蓋今天且過了每日公告時間，補一則頻道公告。 */
+/**
+ * 當天臨時請假：核准當下若假期已涵蓋今天且過了每日公告時間，補一則頻道公告。
+ *
+ * 在家工作用另一組文字 —— 他有在工作，只是不在辦公室。沿用「今日臨時請假」
+ * 的字眼會讓同事以為今天找不到他。早上 9:00 的彙整已經把 WFH 分成獨立一組，
+ * 這則補發的公告要跟它一致。
+ */
 async function notifyChannelIfToday(db: SupabaseClient, leave: LeaveRow) {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
   const today = now.toISOString().slice(0, 10)
@@ -1146,12 +1157,13 @@ async function notifyChannelIfToday(db: SupabaseClient, leave: LeaveRow) {
   const channel = Deno.env.get('SLACK_LEAVE_CHANNEL')
   if (!channel) return
   const lang = channelLang()
+  const wfh = !!leave.leave_type?.is_wfh
   await callSlack('chat.postMessage', {
     channel,
-    text: t(lang, 'today_leave_text', { name: leave.requester?.full_name ?? '' }),
+    text: t(lang, wfh ? 'today_wfh_text' : 'today_leave_text', { name: leave.requester?.full_name ?? '' }),
     blocks: [
-      section(t(lang, 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
-      contextLine(t(lang, 'today_leave_note')),
+      section(t(lang, wfh ? 'today_wfh_heading' : 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
+      contextLine(t(lang, wfh ? 'today_wfh_note' : 'today_leave_note')),
     ],
   })
 }

@@ -56,6 +56,7 @@ Deno.serve(async (req) => {
       case 'new_request': return json(await notifyApprovers(db, leave))
       case 'approved':    return json(await notifyApproved(db, leave))
       case 'rejected':    return json(await notifyRejected(db, leave))
+      case 'hr_registered': return json(await notifyHrRegistered(leave))
       default:            return json({ error: `未知的通知類型：${type}` }, 400)
     }
   } catch (e) {
@@ -87,6 +88,36 @@ async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveR
       contextLine(t(lang, 'review_on_web_hint')),
     ],
   }))
+}
+
+/**
+ * HR 代登記請假後，私訊當事人請他確認。
+ *
+ * 通知裡一定要明寫「期限前未提出異議視同確認」—— 這是整個機制成立的關鍵：
+ * 同仁沒按確認的情況一定會發生（本來就是因為大家會忘記才做這個功能），
+ * 所以規則必須在通知的當下就講清楚，事後才不會有爭議。
+ *
+ * 沒填 Slack ID 的人收不到，這裡回報出去讓 HR 知道要口頭補講 —— 靜默跳過
+ * 的話，HR 會以為通知發出去了。
+ */
+async function notifyHrRegistered(leave: LeaveRow) {
+  const slackId = leave.requester?.slack_user_id
+  if (!slackId) return { dm: 'requester 沒有填 Slack User ID，通知未發送' }
+
+  const lang = normalizeLang(leave.requester?.language)
+  const deadline = leave.ack_deadline
+    ? new Date(leave.ack_deadline).toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW')
+    : ''
+
+  return {
+    dm: await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+      text: t(l, 'hrreg_dm_text'),
+      blocks: [
+        section(t(l, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, l) })),
+        contextLine(t(l, 'hrreg_dm_note', { deadline })),
+      ],
+    })),
+  }
 }
 
 async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
@@ -124,9 +155,13 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
       results.channel = '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
     } else {
       const lang = channelLang()
-      await postToChannel(channel, t(lang, 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
-        section(t(lang, 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
-        contextLine(t(lang, 'today_leave_note')),
+      // 在家工作用另一組文字 —— 他有在工作，只是不在辦公室。沿用「今日臨時
+      // 請假」的字眼會讓同事以為今天找不到他。早上 9:00 的彙整已經把 WFH
+      // 分成獨立一組，這則補發的公告要跟它一致。
+      const wfh = !!leave.leave_type?.is_wfh
+      await postToChannel(channel, t(lang, wfh ? 'today_wfh_text' : 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
+        section(t(lang, wfh ? 'today_wfh_heading' : 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
+        contextLine(t(lang, wfh ? 'today_wfh_note' : 'today_leave_note')),
       ])
       results.channel = 'posted'
     }

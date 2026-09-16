@@ -79,7 +79,15 @@ Deno.serve(async req => {
 
     const leaves = (data ?? []) as LeaveRow[]
 
-    if (leaves.length === 0) {
+    // 分成全天／上午／下午三組 —— 大家真正想知道的是「這個人現在找不找得到」，
+    // 全部擠成一串會看不出誰是整天不在、誰只是半天。在家工作再獨立成第四組。
+    const { fullDay, morning, afternoon, wfh } = groupBySlot(leaves)
+
+    // 「有幾個人請假」不能把在家工作的人算進去 —— 他們有在上班。這個數字會
+    // 出現在手機通知列那一行，算錯會讓人以為今天很多人不在。
+    const leaveCount = leaves.length - wfh.length
+
+    if (leaveCount === 0 && wfh.length === 0) {
       const emptyKey: MsgKey = scope === 'today'
         ? 'digest_empty'
         : (tomorrow ? 'preview_empty_tomorrow' : 'preview_empty_nextday')
@@ -91,18 +99,23 @@ Deno.serve(async req => {
       return json({ scope, date: target, count: 0, posted: true })
     }
 
-    // 分成全天／上午／下午三組 —— 大家真正想知道的是「這個人現在找不找得到」，
-    // 全部擠成一串會看不出誰是整天不在、誰只是半天。
-    const { fullDay, morning, afternoon } = groupBySlot(leaves)
-
-    const headingKey: MsgKey = scope === 'today'
-      ? 'digest_heading'
-      : (tomorrow ? 'preview_heading_tomorrow' : 'preview_heading_nextday')
+    // 只有在家工作、沒有人請假時，標題改用「今天沒有人請假」那句 ——
+    // 底下只掛著一段「在家工作」，標題卻寫「請假名單」會前後矛盾。
+    const headingKey: MsgKey = leaveCount === 0
+      ? (scope === 'today'
+          ? 'digest_empty'
+          : (tomorrow ? 'preview_empty_tomorrow' : 'preview_empty_nextday'))
+      : (scope === 'today'
+          ? 'digest_heading'
+          : (tomorrow ? 'preview_heading_tomorrow' : 'preview_heading_nextday'))
 
     const groups: [string, LeaveRow[]][] = [
       [t(lang, 'digest_group_fullday'), fullDay],
       [t(lang, 'digest_group_morning'), morning],
       [t(lang, 'digest_group_afternoon'), afternoon],
+      // 在家工作放最後，而且獨立成一段 —— 這些人有在工作，只是不在辦公室，
+      // 跟上面三組「找不到人」的性質不同，混在一起會讓同事誤判。
+      [t(lang, 'digest_group_wfh'), wfh],
     ]
     const blocks: unknown[] = [section(t(lang, headingKey, params))]
     for (const [label, rows] of groups) {
@@ -116,13 +129,19 @@ Deno.serve(async req => {
       ? 'digest_summary_text'
       : (tomorrow ? 'preview_summary_text' : 'preview_summary_text_nextday')
 
+    // 只有在家工作、沒有人請假時，手機通知列那行也要跟著改口 ——
+    // 寫「今日請假名單（共 0 筆）」既矛盾又沒資訊。
+    const summaryText = leaveCount === 0
+      ? t(lang, headingKey, params)
+      : t(lang, summaryKey, { n: leaveCount })
+
     await postToChannel(
       requireEnv('SLACK_LEAVE_CHANNEL'),
-      t(lang, summaryKey, { n: leaves.length }),
+      summaryText,
       blocks,
     )
 
-    return json({ scope, date: target, count: leaves.length, posted: true })
+    return json({ scope, date: target, count: leaveCount, wfh: wfh.length, posted: true })
   } catch (e) {
     return json({ error: (e as Error).message }, 500)
   }
