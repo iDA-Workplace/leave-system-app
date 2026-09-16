@@ -516,12 +516,13 @@ async function notificationTargets(db: SupabaseClient) {
  * 2026-09 之前這裡漏了「通知對象」那一半 —— 而大家平常都是在 Slack 上按的，
  * 結果就是後台設定了通知對象卻從來沒收到過通知。改這裡的話那支也要跟著改。
  *
- * 回傳已經發過的 Slack ID，讓後面的職務代理人通知不會重複發給同一個人
- * （代理人很可能同時也被設為通知對象）。
+ * 代理人如果同時也被設為通知對象，會收到兩則（「假單已核准」與「你是代理
+ * 人」）。這是刻意的：兩則講的是不同的事，一則是知會、一則有交辦動作，
+ * 使用者要求兩則都保留（2026-09 確認）。
  */
 async function notifyApprovedRecipients(
   db: SupabaseClient, leave: LeaveRow, { includeRequester = true } = {},
-): Promise<string[]> {
+): Promise<void> {
   const rows: ({ slack_user_id?: string | null; language?: string | null } | undefined)[] = [
     ...(includeRequester && leave.requester?.slack_user_id
       ? [{ slack_user_id: leave.requester.slack_user_id, language: leave.requester.language }]
@@ -538,7 +539,6 @@ async function notifyApprovedRecipients(
       section(t(lang, 'approved_dm_heading', { detail: leaveDetailLines(leave, lang) })),
     ])
   }
-  return [...sent]
 }
 
 /** 待審核通知（含核准／駁回按鈕）—— 送給某一關的所有簽核人，各自用自己的語言。 */
@@ -982,8 +982,8 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
       await db.from('leave_requests').update({ status: 'approved' }).eq('id', created.id)
       // 申請人自己不重複發：他等一下就會收到下面那則「假單已送出／此流程不需
       // 簽核，已自動核准」，再多一則「假單已核准」只是同一件事講兩次。
-      const notified = await notifyApprovedRecipients(db, row, { includeRequester: false })
-      await notifyProxy(db, row, notified)
+      await notifyApprovedRecipients(db, row, { includeRequester: false })
+      await notifyProxy(db, row)
       await notifyChannelIfToday(db, row)
     } else {
       await notifyApprovers(db, row)
@@ -1042,8 +1042,8 @@ function handleApprove(db: SupabaseClient, me: any, lang: Lang, requestId: strin
     ])
 
     if (isFinal) {
-      const notified = await notifyApprovedRecipients(db, leave)
-      await notifyProxy(db, leave, notified)
+      await notifyApprovedRecipients(db, leave)
+      await notifyProxy(db, leave)
       await notifyChannelIfToday(db, leave)
     } else {
       await notifyApprovers(db, { ...leave, current_step: (leave.current_step ?? 1) + 1 })
@@ -1122,10 +1122,11 @@ async function guardApproval(db: SupabaseClient, me: any, leave: LeaveRow | null
  * 刻意等到核准後才發 —— 假單還沒過就先通知，萬一被駁回，代理人已經以為
  * 要代班了。代理人的 Slack ID 沒填就安靜略過（跟其他通知一致）。
  *
- * `alreadyNotified`：剛剛在核准通知那輪已經發過的 Slack ID。代理人常常同時
- * 也被設為「核准通知對象」，不濾掉的話他會為了同一張假單收到兩則訊息。
+ * 代理人同時也是「核准通知對象」時會另外收到一則「假單已核准」，這裡不做
+ * 去重 —— 兩則講的是不同的事（一則知會、一則有交辦動作），使用者要求兩則
+ * 都留（2026-09 確認）。
  */
-async function notifyProxy(db: SupabaseClient, leave: LeaveRow, alreadyNotified: string[] = []) {
+async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
   const { data } = await db
     .from('leave_requests')
     .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id, language)')
@@ -1133,7 +1134,6 @@ async function notifyProxy(db: SupabaseClient, leave: LeaveRow, alreadyNotified:
 
   const proxy = (data as { proxy?: { slack_user_id?: string; language?: string } } | null)?.proxy
   if (!proxy?.slack_user_id) return
-  if (alreadyNotified.includes(proxy.slack_user_id)) return
   const lang = normalizeLang(proxy.language)
   await dm(proxy.slack_user_id, t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
     section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),

@@ -54,7 +54,7 @@ function ExportReport() {
       .from('leave_requests')
       .select(`
         *,
-        requester:users!leave_requests_requester_id_fkey(full_name, email),
+        requester:users!leave_requests_requester_id_fkey(full_name),
         leave_type:leave_types(*),
         proxy:users!leave_requests_proxy_user_id_fkey(full_name),
         approvals:leave_approvals(
@@ -77,7 +77,6 @@ function ExportReport() {
     const locale = lang === 'en' ? 'en-US' : 'zh-TW'
     const rows = data.map(lr => ({
       [t('xls_col_requester')]: lr.requester?.full_name || '',
-      [t('xls_col_email')]: lr.requester?.email || '',
       [t('xls_col_leave_type')]: leaveTypeName(lr.leave_type, lang),
       [t('xls_col_start_date')]: lr.start_date || '',
       [t('xls_col_end_date')]: lr.end_date || '',
@@ -93,12 +92,24 @@ function ExportReport() {
       [t('xls_col_comments')]: lr.approvals?.map(a => a.comment).filter(Boolean).join(', ') || '',
     }))
 
+    // 每個數字對應上面 rows 的一個欄位，順序必須一致 —— 所以這裡逐欄註明是
+    // 哪一欄。之前是一串沒有標示的數字，增減欄位時很容易忘了跟著調整，
+    // 結果是欄寬整排錯開，而且不會有任何錯誤訊息。
     const COL_WIDTHS = [
-      { wch: 12 }, { wch: 25 }, { wch: 10 },
-      { wch: 12 }, { wch: 12 }, { wch: 10 },
-      { wch: 10 }, { wch: 8 }, { wch: 10 },
-      { wch: 12 }, { wch: 20 }, { wch: 20 },
-      { wch: 15 }, { wch: 10 }, { wch: 20 },
+      { wch: 12 },  // 申請人
+      { wch: 10 },  // 假別
+      { wch: 12 },  // 開始日期
+      { wch: 12 },  // 結束日期
+      { wch: 10 },  // 開始時間
+      { wch: 10 },  // 結束時間
+      { wch: 8 },   // 時數
+      { wch: 10 },  // 狀態
+      { wch: 12 },  // 職務代理人
+      { wch: 20 },  // 事由
+      { wch: 20 },  // 申請時間
+      { wch: 15 },  // 簽核人
+      { wch: 10 },  // 簽核結果
+      { wch: 20 },  // 簽核意見
     ]
 
     const wb = XLSX.utils.book_new()
