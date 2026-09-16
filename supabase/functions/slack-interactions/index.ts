@@ -146,6 +146,29 @@ const T = {
     proxy_heading: ':handshake: *您被指定為職務代理人*\n{detail}',
     proxy_note: '這張假單已核准，該時段請協助代理其職務。',
 
+    // 代登記假單的確認／異議
+    btn_ack_confirm: '確認',
+    btn_ack_dispute: '提出修改異議',
+    ack_done_text: '已確認',
+    ack_done_heading: ':white_check_mark: *你已確認這筆請假紀錄*\n{detail}',
+    ack_done_stamp: '確認時間：{stamp}',
+    modal_dispute_title: '提出修改異議',
+    modal_dispute_submit: '送出異議',
+    field_dispute_reason: '哪裡有誤？請說明',
+    field_dispute_hint: '例如：日期不對、假別不對、這天我沒有請假。HR 會收到通知。',
+    err_dispute_reason_required: '請說明哪裡有誤',
+    dispute_done_text: '已送出異議',
+    dispute_done_heading: ':triangular_flag_on_post: *已送出修改異議*\n{detail}',
+    dispute_done_stamp: '已通知 HR，在處理完成前這筆不會自動視同確認。',
+    dispute_hr_text: '{name} 對你登記的請假提出異議',
+    dispute_hr_heading: ':triangular_flag_on_post: *有人對代登記的請假提出異議*\n{detail}',
+    dispute_hr_reason: '*異議內容:* {reason}',
+    dispute_hr_note: '這筆維持已核准、時數照算，系統不會自動更動。請確認後到請假系統修改或刪除。在處理完成前，它不會自動視同確認。',
+    ack_guard_not_registered: '這筆不是 HR 代為登記的請假，不需要確認。',
+    ack_guard_not_yours: '這筆不是登記給您的，無法代為確認。',
+    ack_guard_already_acked: '這筆已經確認過了，不需要再按一次。',
+    ack_guard_already_disputed: '您已經對這筆提出過異議，HR 正在處理中。',
+
     guard_not_found: '找不到這張假單，可能已被刪除。',
     guard_already_handled: '這張假單{status}，已由其他方式處理完畢，不需要再動作。',
     guard_no_flow: '這張假單沒有設定審核流程，請到系統處理。',
@@ -243,6 +266,28 @@ const T = {
     proxy_text: 'You have been assigned as {name}’s proxy',
     proxy_heading: ':handshake: *You’ve been assigned as a proxy*\n{detail}',
     proxy_note: 'This leave request has been approved — please cover their responsibilities during that time.',
+
+    btn_ack_confirm: 'Confirm',
+    btn_ack_dispute: 'Raise an objection',
+    ack_done_text: 'Confirmed',
+    ack_done_heading: ':white_check_mark: *You confirmed this leave record*\n{detail}',
+    ack_done_stamp: 'Confirmed at {stamp}',
+    modal_dispute_title: 'Raise an objection',
+    modal_dispute_submit: 'Submit objection',
+    field_dispute_reason: 'What is wrong? Please explain',
+    field_dispute_hint: 'For example: wrong date, wrong leave type, I was not on leave that day. HR will be notified.',
+    err_dispute_reason_required: 'Please explain what is wrong',
+    dispute_done_text: 'Objection submitted',
+    dispute_done_heading: ':triangular_flag_on_post: *Objection submitted*\n{detail}',
+    dispute_done_stamp: 'HR has been notified. This record will not auto-confirm while it is being sorted out.',
+    dispute_hr_text: '{name} raised an objection to a leave record you filed',
+    dispute_hr_heading: ':triangular_flag_on_post: *Objection to an HR-filed leave record*\n{detail}',
+    dispute_hr_reason: '*Objection:* {reason}',
+    dispute_hr_note: 'The record stays approved and still counts toward their balance — nothing changes automatically. Please review it in the leave system and edit or delete it. It will not auto-confirm until this is resolved.',
+    ack_guard_not_registered: 'This leave request was not filed by HR, so there is nothing to confirm.',
+    ack_guard_not_yours: 'This record was not filed for you, so you cannot confirm it.',
+    ack_guard_already_acked: 'This record has already been confirmed — no need to do it again.',
+    ack_guard_already_disputed: 'You already raised an objection to this record. HR is looking into it.',
 
     guard_not_found: 'This leave request could not be found — it may have been deleted.',
     guard_already_handled: 'This leave request is {status} and has already been handled elsewhere — no action needed.',
@@ -403,6 +448,7 @@ async function resolveUser(db: SupabaseClient, slackUserId: string) {
 
 const LEAVE_SELECT = `
   id, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  registered_by, acknowledged_at, disputed_at,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
@@ -413,6 +459,11 @@ interface LeaveRow {
   start_time: string | null; end_time: string | null
   hours: number | null; reason: string | null; status: string
   flow_id: string | null; current_step: number | null
+  // HR 代登記的假單才有值，見 migration 20260915_hr_registered_leave 與
+  // 20260916_hr_registered_leave_dispute
+  registered_by?: string | null
+  acknowledged_at?: string | null
+  disputed_at?: string | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
@@ -872,6 +923,30 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
     if (action.action_id === 'approve_leave') {
       return await handleApprove(db, me, lang, action.value, p.response_url)
     }
+    if (action.action_id === 'ack_registered_leave') {
+      return handleAcknowledge(db, me, lang, action.value, p.response_url)
+    }
+    if (action.action_id === 'dispute_registered_leave') {
+      // 異議一定要填理由（跟駁回一樣），所以再開一個視窗收。response_url 只有
+      // 現在這個 payload 有，view_submission 收不到，先塞進 private_metadata。
+      await callSlack('views.open', {
+        trigger_id: p.trigger_id,
+        view: {
+          type: 'modal', callback_id: 'submit_dispute',
+          private_metadata: JSON.stringify({ request_id: action.value, response_url: p.response_url }),
+          title: { type: 'plain_text', text: t(lang, 'modal_dispute_title'), emoji: true },
+          submit: { type: 'plain_text', text: t(lang, 'modal_dispute_submit'), emoji: true },
+          close: { type: 'plain_text', text: t(lang, 'modal_cancel'), emoji: true },
+          blocks: [{
+            type: 'input', block_id: 'reason',
+            label: { type: 'plain_text', text: t(lang, 'field_dispute_reason'), emoji: true },
+            hint: { type: 'plain_text', text: t(lang, 'field_dispute_hint'), emoji: true },
+            element: { type: 'plain_text_input', action_id: 'v', multiline: true },
+          }],
+        },
+      })
+      return new Response('')
+    }
     if (action.action_id === 'reject_leave') {
       // 駁回一定要填理由（與網頁版一致），所以再開一個視窗收理由。
       // response_url 只有現在這個 payload 有，view_submission 收不到，
@@ -906,6 +981,7 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
     const lang = normalizeLang(me.language)
     if (p.view.callback_id === 'submit_leave') return await handleLeaveSubmit(db, me, lang, p)
     if (p.view.callback_id === 'submit_reject') return await handleRejectSubmit(db, me, lang, p)
+    if (p.view.callback_id === 'submit_dispute') return await handleDisputeSubmit(db, me, lang, p)
   }
 
   return new Response('')
@@ -1091,6 +1167,118 @@ async function handleRejectSubmit(db: SupabaseClient, me: any, lang: Lang, p: Re
   })())
 
   return json({ response_action: 'clear' })
+}
+
+// ---- 代登記假單：確認 / 提出修改異議 ----
+
+/**
+ * 按下確認或異議之前的把關。回傳字串代表擋下並說明原因，null 代表可以動作。
+ *
+ * 跟核准那邊一樣，一律用資料庫「當下」的狀態判斷，不信任按鈕帶的東西 ——
+ * 那則私訊可能是三天前發的，這筆早就在網頁上按過確認，或者已經自動確認了。
+ */
+function guardAck(me: any, leave: LeaveRow | null, lang: Lang): string | null {
+  if (!leave) return t(lang, 'guard_not_found')
+  if (!leave.registered_by) return t(lang, 'ack_guard_not_registered')
+  // 按鈕的 value 是假單 id，理論上只有收到那則私訊的人看得到按鈕；但 Slack
+  // 的互動請求是「任何人都能偽造 payload 打進來」的路徑，所以還是要驗一次
+  // 這筆是不是登記給他的 —— 不然別人可以幫你按確認。
+  if (leave.requester?.id !== me.id) return t(lang, 'ack_guard_not_yours')
+  if (leave.acknowledged_at) return t(lang, 'ack_guard_already_acked')
+  if (leave.disputed_at) return t(lang, 'ack_guard_already_disputed')
+  return null
+}
+
+/** 台北時間的「9月16日 10:59」。 */
+function taipeiStamp(): string {
+  const now = new Date(Date.now() + 8 * 3600 * 1000)
+  return `${now.getUTCMonth() + 1}月${now.getUTCDate()}日 ${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`
+}
+
+function handleAcknowledge(db: SupabaseClient, me: any, lang: Lang, requestId: string, responseUrl: string) {
+  // 按鈕點擊有 3 秒回應限制，處理走背景（同 handleApprove）。
+  background((async () => {
+    const { data } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', requestId).single()
+    const leave = data as unknown as LeaveRow
+
+    const guard = guardAck(me, leave, lang)
+    if (guard) {
+      await replaceMessage(responseUrl, guard, [section(`:information_source: ${guard}`)])
+      return
+    }
+
+    await db.from('leave_requests')
+      .update({ acknowledged_at: new Date().toISOString(), auto_acknowledged: false })
+      .eq('id', leave.id)
+
+    // 按鈕換成結果文字，避免重複點或看不出自己按過了
+    await replaceMessage(responseUrl, t(lang, 'ack_done_text'), [
+      section(t(lang, 'ack_done_heading', { detail: leaveDetailLines(leave, lang) })),
+      contextLine(t(lang, 'ack_done_stamp', { stamp: taipeiStamp() })),
+    ])
+  })())
+
+  return new Response('')
+}
+
+/**
+ * 送出修改異議。
+ *
+ * 刻意「不」改動假單狀態 —— 維持已核准、時數照算（2026-09 與使用者確認）。
+ * 系統不自動判斷誰對誰錯，只負責把話傳到並留下紀錄，改不改由 HR 判斷。
+ *
+ * 但 disputed_at 一填上去，逾期自動確認那支排程就會跳過這一筆：同仁已經明確
+ * 表示過不同意，再套用「未提出異議視同確認」在勞資爭議上站不住腳 —— 那句話
+ * 的前提就是「沒有提出異議」。
+ */
+async function handleDisputeSubmit(db: SupabaseClient, me: any, lang: Lang, p: Record<string, any>) {
+  const meta = JSON.parse(p.view.private_metadata || '{}')
+  const reason = (p.view.state.values.reason?.v?.value ?? '').trim()
+  if (!reason) return json({ response_action: 'errors', errors: { reason: t(lang, 'err_dispute_reason_required') } })
+
+  const { data } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', meta.request_id).single()
+  const leave = data as unknown as LeaveRow
+
+  const guard = guardAck(me, leave, lang)
+  if (guard) return json({ response_action: 'errors', errors: { reason: guard } })
+
+  const { data: updated, error } = await db.from('leave_requests')
+    .update({ disputed_at: new Date().toISOString(), dispute_reason: reason })
+    .eq('id', leave.id).select()
+  if (error || !updated?.length) {
+    return json({ response_action: 'errors', errors: { reason: t(lang, 'err_submit_failed', { msg: error?.message ?? '0 rows' }) } })
+  }
+
+  // 異議已經寫進資料庫，通知丟背景讓表單立刻關閉（避免 3 秒逾時）。
+  background((async () => {
+    if (meta.response_url) {
+      await replaceMessage(meta.response_url, t(lang, 'dispute_done_text'), [
+        section(t(lang, 'dispute_done_heading', { detail: leaveDetailLines(leave, lang) })),
+        contextLine(t(lang, 'dispute_done_stamp')),
+      ])
+    }
+    await notifyDisputeToHr(db, leave, reason)
+  })())
+
+  return json({ response_action: 'clear' })
+}
+
+/**
+ * 通知「登記那筆的 HR 本人」（registered_by），不是全體 HR ——
+ * 誰登的誰處理，責任最清楚（2026-09 與使用者確認）。
+ */
+async function notifyDisputeToHr(db: SupabaseClient, leave: LeaveRow, reason: string) {
+  if (!leave.registered_by) return
+  const { data: hr } = await db
+    .from('users').select('slack_user_id, language').eq('id', leave.registered_by).maybeSingle()
+  if (!hr?.slack_user_id) return
+
+  const lang = normalizeLang(hr.language)
+  const detail = leaveDetailLines(leave, lang, [t(lang, 'dispute_hr_reason', { reason })])
+  await dm(hr.slack_user_id, t(lang, 'dispute_hr_text', { name: leave.requester?.full_name ?? '' }), [
+    section(t(lang, 'dispute_hr_heading', { detail })),
+    contextLine(t(lang, 'dispute_hr_note')),
+  ])
 }
 
 /**

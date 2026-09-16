@@ -60,7 +60,7 @@ export function adminClient(): SupabaseClient {
 // language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 export const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
-  registered_by, ack_deadline, acknowledged_at, auto_acknowledged,
+  registered_by, ack_deadline, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
@@ -86,6 +86,8 @@ export interface LeaveRow {
   ack_deadline?: string | null
   acknowledged_at?: string | null
   auto_acknowledged?: boolean | null
+  disputed_at?: string | null
+  dispute_reason?: string | null
 }
 
 /** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */

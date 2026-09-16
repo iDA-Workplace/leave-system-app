@@ -57,6 +57,7 @@ Deno.serve(async (req) => {
       case 'approved':    return json(await notifyApproved(db, leave))
       case 'rejected':    return json(await notifyRejected(db, leave))
       case 'hr_registered': return json(await notifyHrRegistered(leave))
+      case 'leave_disputed': return json(await notifyDisputeToHr(db, leave))
       default:            return json({ error: `未知的通知類型：${type}` }, 400)
     }
   } catch (e) {
@@ -128,9 +129,57 @@ async function notifyHrRegistered(leave: LeaveRow) {
     blocks: [
       section(t(l, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, l) })),
       contextLine(t(l, 'hrreg_dm_note', { deadline })),
+      // 兩顆按鈕由 slack-interactions 那支處理（Slack 會把所有互動事件送到
+      // App 設定的同一個 Interactivity Request URL），這裡只負責畫出來。
+      //
+      // 一定要給「有異議」一條路：只放「確認」的話，內容有錯的人無處可按，
+      // 而「N 天內未提出異議視同確認」那句話的前提就是他「按得到」異議。
+      {
+        type: 'actions',
+        elements: [
+          { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(l, 'btn_ack_confirm'), emoji: true },
+            action_id: 'ack_registered_leave', value: leave.id },
+          { type: 'button', text: { type: 'plain_text', text: t(l, 'btn_ack_dispute'), emoji: true },
+            action_id: 'dispute_registered_leave', value: leave.id },
+        ],
+      },
     ],
   }))
   return results
+}
+
+/**
+ * 同仁對 HR 代登記的假單提出修改異議 → 通知「登記那筆的 HR 本人」。
+ *
+ * 只通知登記者（registered_by），不是全體 HR —— 誰登的誰處理，責任最清楚
+ * （2026-09 與使用者確認）。
+ *
+ * ⚠️ 這段與 slack-interactions 的 notifyDisputeToHr 是同一件事的兩份實作，
+ * 因為提出異議有兩個入口：網頁上按走這支，Slack 訊息上按走那支。改這裡的話
+ * 那支也要跟著改。
+ *
+ * 異議理由讀資料庫而不是從請求帶進來：呼叫端傳什麼都不能信，而且那一欄
+ * 剛剛才寫進去，資料庫裡的才是真正被記錄下來的版本。
+ */
+async function notifyDisputeToHr(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
+  if (!leave.registered_by) return { skipped: '這不是 HR 代登記的假單' }
+  if (!leave.dispute_reason) return { skipped: '這筆沒有異議內容' }
+
+  const { data: hr } = await db
+    .from('users').select('slack_user_id, language').eq('id', leave.registered_by).maybeSingle()
+  if (!hr?.slack_user_id) return { skipped: '登記者沒有設定 Slack ID，通知未發送' }
+
+  return {
+    dm: await dmManyLocalized([{ slackUserId: hr.slack_user_id, language: normalizeLang(hr.language) }], (l) => ({
+      text: t(l, 'dispute_hr_text', { name: leave.requester?.full_name ?? '' }),
+      blocks: [
+        section(t(l, 'dispute_hr_heading', {
+          detail: leaveDetailLines(leave, l, [t(l, 'dispute_hr_reason', { reason: leave.dispute_reason })]),
+        })),
+        contextLine(t(l, 'dispute_hr_note')),
+      ],
+    })),
+  }
 }
 
 async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
