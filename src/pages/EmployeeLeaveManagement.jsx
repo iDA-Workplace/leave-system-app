@@ -445,13 +445,13 @@ function EmployeeLeaveManagement({ userProfile }) {
                         那裡才有完整的模式切換。 */}
                     <td>
                       {(() => {
+                        // 只顯示天數，不標示這個數字是人工指定還是依年資算的
+                        // （使用者決定，2026-09）。要看來源請點「編輯」，那裡
+                        // 有完整的模式切換；右邊的「個別調整」欄也會顯示這個人
+                        // 總共有幾項手動調整。
                         const override = annualOverrideDays(user.id)
-                        if (override != null) {
-                          return <>{override} <Chip tone="info">{t('finleave_manual_chip')}</Chip></>
-                        }
-                        if (statutory != null) {
-                          return <>{statutory} <Chip tone="neutral">{t('finleave_by_seniority_chip')}</Chip></>
-                        }
+                        if (override != null) return override
+                        if (statutory != null) return statutory
                         return <span className="review-missing-manager">{t('finleave_not_filled')}</span>
                       })()}
                     </td>
