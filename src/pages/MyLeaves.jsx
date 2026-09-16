@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs } from '../components/ui'
+import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import {
   buildBalanceRows, fetchEntitlementOverrides,
@@ -34,6 +34,11 @@ function MyLeaves({ userProfile }) {
   const [leavesLoading, setLeavesLoading] = useState(true)
   const [withdrawTarget, setWithdrawTarget] = useState(null)
   const [withdrawing, setWithdrawing] = useState(false)
+
+  // 對 HR 代登記的假單提出修改異議
+  const [disputeTarget, setDisputeTarget] = useState(null)
+  const [disputeReason, setDisputeReason] = useState('')
+  const [disputing, setDisputing] = useState(false)
 
   // 假期明細
   const [leaveTypes, setLeaveTypes] = useState([])
@@ -234,6 +239,47 @@ function MyLeaves({ userProfile }) {
     fetchMyLeaves()
   }
 
+  /**
+   * 對 HR 代登記的假單提出修改異議。
+   *
+   * 刻意不改假單狀態 —— 維持已核准、時數照算。系統不判斷誰對誰錯，只負責把
+   * 話傳到並留下紀錄，改不改由 HR 判斷。但 disputed_at 一填上去，逾期自動
+   * 確認那支排程就會跳過這一筆。
+   *
+   * 跟 Slack 上按「提出修改異議」是同一套行為與同一組欄位，兩個入口不會做出
+   * 不同的結果。
+   */
+  async function handleDispute() {
+    const reason = disputeReason.trim()
+    if (!reason) { showToast(t('hrreg_dispute_reason_required'), { tone: 'error' }); return }
+
+    setDisputing(true)
+    const { data, error } = await supabase
+      .from('leave_requests')
+      .update({ disputed_at: new Date().toISOString(), dispute_reason: reason })
+      .eq('id', disputeTarget.id)
+      .select()
+
+    // RLS 擋下 UPDATE 時 Postgres 不會報錯，只會回 0 列 —— 0 列也算失敗，
+    // 否則會出現「顯示已送出、實際上什麼都沒寫進去」。
+    if (error || !data?.length) {
+      showToast(t('hrreg_dispute_err', { msg: error?.message || t('admin_no_write_permission') }), { tone: 'error' })
+      setDisputing(false)
+      return
+    }
+
+    // 通知失敗不該讓異議本身失敗 —— 紀錄已經留下了，那才是重點。
+    await supabase.functions.invoke('send-slack-notification', {
+      body: { type: 'leave_disputed', request_id: disputeTarget.id },
+    })
+
+    setDisputing(false)
+    setDisputeTarget(null)
+    setDisputeReason('')
+    showToast(t('hrreg_dispute_toast'))
+    fetchMyLeaves()
+  }
+
   const pendingOwnCount = leaves.filter(l => l.status === 'pending').length
 
   const balanceRows = buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides: entitlementOverrides })
@@ -353,8 +399,13 @@ function MyLeaves({ userProfile }) {
                                 {leave.auto_acknowledged ? t('hrreg_ack_auto') : t('hrreg_ack_done')}
                               </Chip></>
                             )}
-                            {leave.registered_by && !leave.acknowledged_at && (
+                            {leave.registered_by && !leave.acknowledged_at && !leave.disputed_at && (
                               <> <Chip tone="warning">{t('hrreg_ack_pending')}</Chip></>
+                            )}
+                            {/* 有異議的要跟「還沒確認」分開：還沒確認是沒表態，
+                                有異議是明確說過不同意，而且它不會自動確認。 */}
+                            {leave.disputed_at && !leave.acknowledged_at && (
+                              <> <Chip tone="error">{t('hrreg_disputed')}</Chip></>
                             )}
                           </td>
                           <td>
@@ -364,8 +415,11 @@ function MyLeaves({ userProfile }) {
                             {(leave.status === 'returned' || leave.status === 'withdrawn') && (
                               <Button size="sm" onClick={() => handleResubmit(leave)}>{t('myleaves_resubmit')}</Button>
                             )}
-                            {leave.registered_by && !leave.acknowledged_at && (
-                              <Button size="sm" onClick={() => handleAcknowledge(leave)}>{t('hrreg_ack_confirm')}</Button>
+                            {leave.registered_by && !leave.acknowledged_at && !leave.disputed_at && (
+                              <>
+                                <Button size="sm" onClick={() => handleAcknowledge(leave)}>{t('hrreg_ack_confirm')}</Button>
+                                <Button size="sm" variant="outlined" onClick={() => setDisputeTarget(leave)}>{t('hrreg_dispute')}</Button>
+                              </>
                             )}
                           </td>
                         </tr>
@@ -433,6 +487,29 @@ function MyLeaves({ userProfile }) {
           loading={withdrawing}
           onConfirm={confirmWithdraw}
           onCancel={() => setWithdrawTarget(null)}
+        />
+      )}
+
+      {disputeTarget && (
+        <ConfirmDialog
+          title={t('hrreg_dispute_title')}
+          description={(
+            <>
+              <p className="admin-form-card__hint">{t('hrreg_dispute_desc')}</p>
+              <Textarea
+                label={t('hrreg_dispute_reason')}
+                required
+                rows={3}
+                value={disputeReason}
+                onChange={e => setDisputeReason(e.target.value)}
+                placeholder={t('hrreg_dispute_placeholder')}
+              />
+            </>
+          )}
+          confirmLabel={t('hrreg_dispute_submit')}
+          loading={disputing}
+          onConfirm={handleDispute}
+          onCancel={() => { setDisputeTarget(null); setDisputeReason('') }}
         />
       )}
     </div>

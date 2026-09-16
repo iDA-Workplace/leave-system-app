@@ -127,6 +127,10 @@ async function autoAcknowledgeExpired(db: ReturnType<typeof adminClient>): Promi
     .select(LEAVE_SELECT)
     .not('registered_by', 'is', null)
     .is('acknowledged_at', null)
+    // 已經提出異議的絕對不能自動確認：同仁明確表示過不同意，再套用「未提出
+    // 異議視同確認」在勞資爭議上站不住腳 —— 那句話的前提就是「沒有提出異議」。
+    // 這些會一直留著等 HR 處理。
+    .is('disputed_at', null)
     .lt('ack_deadline', new Date().toISOString())
   if (error) throw new Error(`讀取待確認假單失敗：${error.message}`)
 

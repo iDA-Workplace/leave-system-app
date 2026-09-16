@@ -72,7 +72,7 @@ function adminClient(): SupabaseClient {
 // language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
-  registered_by, ack_deadline, acknowledged_at, auto_acknowledged,
+  registered_by, ack_deadline, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
@@ -98,6 +98,8 @@ interface LeaveRow {
   ack_deadline?: string | null
   acknowledged_at?: string | null
   auto_acknowledged?: boolean | null
+  disputed_at?: string | null
+  dispute_reason?: string | null
 }
 
 /** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
@@ -458,7 +460,13 @@ const T = {
     digest_group_wfh: '在家工作',
     hrreg_dm_text: 'HR 幫你登記了一筆請假，請確認',
     hrreg_dm_heading: ':memo: *HR 幫你登記了一筆請假*\n{detail}',
-    hrreg_dm_note: '⚠️ 如果內容有誤，請盡快聯繫 HR。*{deadline} 前未提出異議，視同確認。*',
+    hrreg_dm_note: '⚠️ 內容正確請按「確認」；有誤請按「提出修改異議」並說明。*{deadline} 前未提出異議，視同確認。*',
+    btn_ack_confirm: '確認',
+    btn_ack_dispute: '提出修改異議',
+    dispute_hr_text: '{name} 對你登記的請假提出異議',
+    dispute_hr_heading: ':triangular_flag_on_post: *有人對代登記的請假提出異議*\n{detail}',
+    dispute_hr_reason: '*異議內容:* {reason}',
+    dispute_hr_note: '這筆維持已核准、時數照算，系統不會自動更動。請確認後到請假系統修改或刪除。在處理完成前，它不會自動視同確認。',
     hrreg_auto_text: '你的代登記請假已視同確認',
     hrreg_auto_heading: ':white_check_mark: *已視同確認*\n{detail}',
     hrreg_auto_note: '這筆由 HR 代為登記的請假，已超過確認期限且未收到異議，依規定視同確認。如有問題請聯繫 HR。',
@@ -613,7 +621,13 @@ const T = {
     digest_group_wfh: 'Working from home',
     hrreg_dm_text: 'HR filed a leave record for you — please confirm',
     hrreg_dm_heading: ':memo: *HR filed a leave record for you*\n{detail}',
-    hrreg_dm_note: '⚠️ If anything is wrong, contact HR as soon as possible. *If you raise no objection before {deadline}, this counts as confirmed.*',
+    hrreg_dm_note: '⚠️ If this is correct, click “Confirm”. If not, click “Raise an objection” and explain. *If you raise no objection before {deadline}, this counts as confirmed.*',
+    btn_ack_confirm: 'Confirm',
+    btn_ack_dispute: 'Raise an objection',
+    dispute_hr_text: '{name} raised an objection to a leave record you filed',
+    dispute_hr_heading: ':triangular_flag_on_post: *Objection to an HR-filed leave record*\n{detail}',
+    dispute_hr_reason: '*Objection:* {reason}',
+    dispute_hr_note: 'The record stays approved and still counts toward their balance — nothing changes automatically. Please review it in the leave system and edit or delete it. It will not auto-confirm until this is resolved.',
     hrreg_auto_text: 'Your HR-filed leave record now counts as confirmed',
     hrreg_auto_heading: ':white_check_mark: *Counted as confirmed*\n{detail}',
     hrreg_auto_note: 'This leave record was filed by HR. The confirmation deadline has passed with no objection, so it now counts as confirmed. Contact HR if there is a problem.',
@@ -791,6 +805,7 @@ Deno.serve(async (req) => {
       case 'approved':    return json(await notifyApproved(db, leave))
       case 'rejected':    return json(await notifyRejected(db, leave))
       case 'hr_registered': return json(await notifyHrRegistered(leave))
+      case 'leave_disputed': return json(await notifyDisputeToHr(db, leave))
       default:            return json({ error: `未知的通知類型：${type}` }, 400)
     }
   } catch (e) {
@@ -862,9 +877,57 @@ async function notifyHrRegistered(leave: LeaveRow) {
     blocks: [
       section(t(l, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, l) })),
       contextLine(t(l, 'hrreg_dm_note', { deadline })),
+      // 兩顆按鈕由 slack-interactions 那支處理（Slack 會把所有互動事件送到
+      // App 設定的同一個 Interactivity Request URL），這裡只負責畫出來。
+      //
+      // 一定要給「有異議」一條路：只放「確認」的話，內容有錯的人無處可按，
+      // 而「N 天內未提出異議視同確認」那句話的前提就是他「按得到」異議。
+      {
+        type: 'actions',
+        elements: [
+          { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(l, 'btn_ack_confirm'), emoji: true },
+            action_id: 'ack_registered_leave', value: leave.id },
+          { type: 'button', text: { type: 'plain_text', text: t(l, 'btn_ack_dispute'), emoji: true },
+            action_id: 'dispute_registered_leave', value: leave.id },
+        ],
+      },
     ],
   }))
   return results
+}
+
+/**
+ * 同仁對 HR 代登記的假單提出修改異議 → 通知「登記那筆的 HR 本人」。
+ *
+ * 只通知登記者（registered_by），不是全體 HR —— 誰登的誰處理，責任最清楚
+ * （2026-09 與使用者確認）。
+ *
+ * ⚠️ 這段與 slack-interactions 的 notifyDisputeToHr 是同一件事的兩份實作，
+ * 因為提出異議有兩個入口：網頁上按走這支，Slack 訊息上按走那支。改這裡的話
+ * 那支也要跟著改。
+ *
+ * 異議理由讀資料庫而不是從請求帶進來：呼叫端傳什麼都不能信，而且那一欄
+ * 剛剛才寫進去，資料庫裡的才是真正被記錄下來的版本。
+ */
+async function notifyDisputeToHr(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
+  if (!leave.registered_by) return { skipped: '這不是 HR 代登記的假單' }
+  if (!leave.dispute_reason) return { skipped: '這筆沒有異議內容' }
+
+  const { data: hr } = await db
+    .from('users').select('slack_user_id, language').eq('id', leave.registered_by).maybeSingle()
+  if (!hr?.slack_user_id) return { skipped: '登記者沒有設定 Slack ID，通知未發送' }
+
+  return {
+    dm: await dmManyLocalized([{ slackUserId: hr.slack_user_id, language: normalizeLang(hr.language) }], (l) => ({
+      text: t(l, 'dispute_hr_text', { name: leave.requester?.full_name ?? '' }),
+      blocks: [
+        section(t(l, 'dispute_hr_heading', {
+          detail: leaveDetailLines(leave, l, [t(l, 'dispute_hr_reason', { reason: leave.dispute_reason })]),
+        })),
+        contextLine(t(l, 'dispute_hr_note')),
+      ],
+    })),
+  }
 }
 
 async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
