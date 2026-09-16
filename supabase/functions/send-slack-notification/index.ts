@@ -99,25 +99,38 @@ async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveR
  *
  * 沒填 Slack ID 的人收不到，這裡回報出去讓 HR 知道要口頭補講 —— 靜默跳過
  * 的話，HR 會以為通知發出去了。
+ *
+ * 除了私訊當事人，如果這張假涵蓋今天，也要發那則「今日臨時請假」頻道公告：
+ * 代登記處理的正是「人今天真的沒來、大家卻不知道」這種情況，那則公告的存在
+ * 意義就是讓同事知道今天找不到誰。代登記的假單一建立就是 approved、不走
+ * 簽核，所以不會經過 notifyApproved 那條路徑，得在這裡自己叫一次。
  */
 async function notifyHrRegistered(leave: LeaveRow) {
+  const results: Record<string, unknown> = {}
+
+  // 公告與私訊互相獨立：當事人沒填 Slack ID 不該讓公告也跟著不發 ——
+  // 同事還是需要知道今天誰不在。
+  results.channel = await announceIfToday(leave)
+
   const slackId = leave.requester?.slack_user_id
-  if (!slackId) return { dm: 'requester 沒有填 Slack User ID，通知未發送' }
+  if (!slackId) {
+    results.dm = 'requester 沒有填 Slack User ID，通知未發送'
+    return results
+  }
 
   const lang = normalizeLang(leave.requester?.language)
   const deadline = leave.ack_deadline
     ? new Date(leave.ack_deadline).toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW')
     : ''
 
-  return {
-    dm: await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
-      text: t(l, 'hrreg_dm_text'),
-      blocks: [
-        section(t(l, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, l) })),
-        contextLine(t(l, 'hrreg_dm_note', { deadline })),
-      ],
-    })),
-  }
+  results.dm = await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+    text: t(l, 'hrreg_dm_text'),
+    blocks: [
+      section(t(l, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, l) })),
+      contextLine(t(l, 'hrreg_dm_note', { deadline })),
+    ],
+  }))
+  return results
 }
 
 async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
@@ -142,36 +155,44 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
   // 不同的事（一則知會、一則有交辦動作），使用者要求兩則都留（2026-09 確認）。
   results.proxy = await notifyProxy(db, leave)
 
-  // 2) 當天臨時請假的補發公告。
-  //
-  //    每天 09:00 的彙整只看得到「當下已核准」的假單，所以下午才核准、
-  //    而且假期就涵蓋今天的那種臨時假，早上那則公告一定漏掉 —— 這裡補一則。
-  //    只在過了彙整時間之後才補發，否則 09:00 前核准的假會被公告兩次。
-  const today = taipeiToday()
-  const coversToday = leave.start_date <= today && leave.end_date >= today
-  const afterDigest = taipeiNow().getUTCHours() >= DIGEST_HOUR
-
-  if (coversToday && afterDigest) {
-    const channel = Deno.env.get('SLACK_LEAVE_CHANNEL')
-    if (!channel) {
-      results.channel = '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
-    } else {
-      const lang = channelLang()
-      // 在家工作用另一組文字 —— 他有在工作，只是不在辦公室。沿用「今日臨時
-      // 請假」的字眼會讓同事以為今天找不到他。早上 9:00 的彙整已經把 WFH
-      // 分成獨立一組，這則補發的公告要跟它一致。
-      const wfh = !!leave.leave_type?.is_wfh
-      await postToChannel(channel, t(lang, wfh ? 'today_wfh_text' : 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
-        section(t(lang, wfh ? 'today_wfh_heading' : 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
-        contextLine(t(lang, wfh ? 'today_wfh_note' : 'today_leave_note')),
-      ])
-      results.channel = 'posted'
-    }
-  } else {
-    results.channel = coversToday ? '尚未到彙整時間，將由每日公告一併發出' : '假期不含今天，不需公告'
-  }
+  // 2) 當天臨時請假的補發公告
+  results.channel = await announceIfToday(leave)
 
   return results
+}
+
+/**
+ * 當天臨時請假的補發頻道公告。
+ *
+ * 每天 09:00 的彙整只看得到「當下已核准」的假單，所以下午才核准、而且假期
+ * 就涵蓋今天的那種臨時假，早上那則公告一定漏掉 —— 這裡補一則。只在過了彙整
+ * 時間之後才補發，否則 09:00 前核准的假會被公告兩次。
+ *
+ * 兩種情況會走到這裡，兩種都是「同事今天真的找不到這個人」：
+ *   · 假單最後一關核准（notifyApproved）
+ *   · HR 代同仁登記（notifyHrRegistered）—— 代登記一建立就是 approved，
+ *     不走簽核，所以不會經過上面那條路徑，得自己叫一次
+ *
+ * 回傳一句說明字串，讓呼叫端的 JSON 回應看得出來到底公告了沒、為什麼沒有。
+ */
+async function announceIfToday(leave: LeaveRow): Promise<string> {
+  const today = taipeiToday()
+  if (!(leave.start_date <= today && leave.end_date >= today)) return '假期不含今天，不需公告'
+  if (taipeiNow().getUTCHours() < DIGEST_HOUR) return '尚未到彙整時間，將由每日公告一併發出'
+
+  const channel = Deno.env.get('SLACK_LEAVE_CHANNEL')
+  if (!channel) return '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
+
+  // 在家工作用另一組文字 —— 他有在工作，只是不在辦公室。沿用「今日臨時
+  // 請假」的字眼會讓同事以為今天找不到他。早上 9:00 的彙整已經把 WFH
+  // 分成獨立一組，這則補發的公告要跟它一致。
+  const lang = channelLang()
+  const wfh = !!leave.leave_type?.is_wfh
+  await postToChannel(channel, t(lang, wfh ? 'today_wfh_text' : 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
+    section(t(lang, wfh ? 'today_wfh_heading' : 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
+    contextLine(t(lang, wfh ? 'today_wfh_note' : 'today_leave_note')),
+  ])
+  return 'posted'
 }
 
 async function notifyRejected(db: ReturnType<typeof adminClient>, leave: LeaveRow) {

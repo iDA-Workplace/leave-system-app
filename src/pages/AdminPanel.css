@@ -26,6 +26,18 @@
   margin-bottom: var(--space-150);
 }
 
+/* 一組相關欄位（例如同一個假別的中文名與英文名）。上面一條細線把每一組
+   隔開，不然一長串輸入框連在一起會看不出哪兩個是一對的。 */
+.admin-form-card__group {
+  padding-top: var(--space-150);
+  border-top: 1px solid var(--sys-color-outline-variant);
+}
+
+.admin-form-card__group:first-of-type {
+  padding-top: 0;
+  border-top: none;
+}
+
 .admin-form-grid--single {
   grid-template-columns: 1fr;
 }

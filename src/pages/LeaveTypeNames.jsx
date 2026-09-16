@@ -6,17 +6,21 @@ import { useLanguage } from '../context/LanguageContext'
 import './AdminPanel.css'
 
 /**
- * 假別英文名稱（leave_types.name_en）
+ * 假別名稱（leave_types.name 與 name_en）
  *
  * 假別名稱是資料庫裡的資料，不是介面文字，所以沒辦法寫進前端的 i18n 字典 ——
- * 只能在這裡逐一維護。留白＝切成英文時沿用中文名，不會變空白。
+ * 只能在這裡逐一維護。英文名留白＝切成英文時沿用中文名，不會變空白。
+ *
+ * 中文名原本沒有任何介面可以改，要改只能請人下 SQL。但系統辨識假別看的是
+ * is_annual / is_wfh 旗標、不是名字，本來就是為了讓名稱可以自由改 ——
+ * 既然改名是安全的，就不該只有會寫 SQL 的人才改得動（2026-09 補上）。
  *
  * 刻意做成獨立元件：管理員（負責用字是否正確）跟財務（負責額度）都要用得到，
  * 兩邊共用同一份，不會出現兩套行為不一樣的輸入框。
  */
 function LeaveTypeNames() {
   const [leaveTypes, setLeaveTypes] = useState([])
-  const [namesEn, setNamesEn] = useState({})
+  const [names, setNames] = useState({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const { showToast } = useToast()
@@ -32,18 +36,36 @@ function LeaveTypeNames() {
       return
     }
     setLeaveTypes(data || [])
-    setNamesEn(Object.fromEntries((data || []).map(lt => [lt.id, lt.name_en || ''])))
+    setNames(Object.fromEntries((data || []).map(lt => [lt.id, {
+      zh: lt.name || '',
+      en: lt.name_en || '',
+    }])))
     setLoading(false)
   }
 
+  function setField(id, field, value) {
+    setNames(p => ({ ...p, [id]: { ...p[id], [field]: value } }))
+  }
+
   async function handleSave() {
+    // 先把整批檢查完再開始寫入 —— 邊檢查邊寫的話，第三個假別出錯時前兩個
+    // 已經寫進去了，使用者看到一則錯誤訊息，卻不知道有一半已經生效。
+    for (const lt of leaveTypes) {
+      if (!(names[lt.id]?.zh || '').trim()) {
+        showToast(t('ltnames_err_zh_required', { name: lt.name }), { tone: 'error' })
+        return
+      }
+    }
+
     setSaving(true)
     // 迴圈變數刻意不叫 t —— 那會遮蔽翻譯用的 t()
     for (const lt of leaveTypes) {
-      const value = (namesEn[lt.id] || '').trim() || null
-      if ((lt.name_en ?? null) === value) continue
+      const zh = names[lt.id].zh.trim()
+      const en = names[lt.id].en.trim() || null
+      if (lt.name === zh && (lt.name_en ?? null) === en) continue
+
       const { data: updated, error } = await supabase.from('leave_types')
-        .update({ name_en: value }).eq('id', lt.id).select()
+        .update({ name: zh, name_en: en }).eq('id', lt.id).select()
       // RLS 擋下 UPDATE 時 Postgres 不會報錯，只會回 0 列 —— 所以 0 列也算失敗，
       // 否則會出現「顯示已儲存、實際上什麼都沒寫進去」。
       if (error || !updated?.length) {
@@ -63,17 +85,27 @@ function LeaveTypeNames() {
       <p className="admin-form-card__hint">{t('ltnames_hint')}</p>
       {loading ? <Skeleton height="120px" /> : (
         <>
-          <div className="admin-form-grid">
-            {leaveTypes.map(lt => (
-              <TextField
-                key={lt.id}
-                label={lt.name}
-                value={namesEn[lt.id] ?? ''}
-                onChange={e => setNamesEn(p => ({ ...p, [lt.id]: e.target.value }))}
-                placeholder={t('ltnames_placeholder')}
-              />
-            ))}
-          </div>
+          {leaveTypes.map(lt => (
+            // 標題用資料庫裡「目前」的名稱，不是輸入框裡的值 —— 改名改到一半
+            // 時，標題要還是指得出「我正在改的是哪一個」。
+            <div key={lt.id} className="admin-form-card__group">
+              <div className="admin-row__meta">{lt.name}</div>
+              <div className="admin-form-grid">
+                <TextField
+                  label={t('ltnames_zh_label')}
+                  required
+                  value={names[lt.id]?.zh ?? ''}
+                  onChange={e => setField(lt.id, 'zh', e.target.value)}
+                />
+                <TextField
+                  label={t('ltnames_en_label')}
+                  value={names[lt.id]?.en ?? ''}
+                  onChange={e => setField(lt.id, 'en', e.target.value)}
+                  placeholder={t('ltnames_placeholder')}
+                />
+              </div>
+            </div>
+          ))}
           <div className="admin-form-actions">
             <Button loading={saving} onClick={handleSave}>{t('ltnames_save')}</Button>
           </div>

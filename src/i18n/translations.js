@@ -396,13 +396,16 @@ export const translations = {
     adminnotify_remove: '移除',
 
     // ===== 假別英文名稱 =====
-    ltnames_title: '假別英文名稱',
-    ltnames_hint: '同仁把介面語言切成 English 時顯示的假別名稱。留白的話會直接顯示中文名，不會變空白。',
+    ltnames_title: '假別名稱',
+    ltnames_hint: '改名是安全的：系統辨識假別看的是內部標記不是名字，所以改名不會讓特休額度歸零，已經送出的假單也會直接顯示新名稱。英文名留白的話會顯示中文名，不會變空白。',
+    ltnames_zh_label: '中文名稱',
+    ltnames_en_label: '英文名稱',
     ltnames_placeholder: '留白＝顯示中文名',
-    ltnames_save: '儲存英文名稱',
-    ltnames_saved: '已更新假別英文名稱',
+    ltnames_save: '儲存名稱',
+    ltnames_saved: '已更新假別名稱',
     ltnames_err_fetch: '讀取假別失敗：{msg}',
-    ltnames_err_save: '「{name}」的英文名儲存失敗：{msg}',
+    ltnames_err_save: '「{name}」的名稱儲存失敗：{msg}',
+    ltnames_err_zh_required: '「{name}」的中文名稱不能留白',
 
     // ===== 員工假期管理 =====
     finleave_title: '員工假期管理',
@@ -1127,13 +1130,16 @@ export const translations = {
     adminnotify_remove: 'Remove',
 
     // ===== Leave type English names =====
-    ltnames_title: 'Leave Type English Names',
-    ltnames_hint: 'The leave type names shown when someone switches the interface to English. Leave a field blank and the Chinese name is shown instead — it never renders empty.',
+    ltnames_title: 'Leave Type Names',
+    ltnames_hint: 'Renaming is safe: leave types are identified internally by a flag, not by their name, so renaming will not zero out annual leave quotas, and existing requests simply show the new name. Leave the English name blank and the Chinese name is shown instead — it never renders empty.',
+    ltnames_zh_label: 'Chinese name',
+    ltnames_en_label: 'English name',
     ltnames_placeholder: 'Blank = show the Chinese name',
-    ltnames_save: 'Save English names',
-    ltnames_saved: 'English names updated',
+    ltnames_save: 'Save names',
+    ltnames_saved: 'Leave type names updated',
     ltnames_err_fetch: 'Could not load leave types: {msg}',
-    ltnames_err_save: 'Could not save the English name for “{name}”: {msg}',
+    ltnames_err_save: 'Could not save the name for “{name}”: {msg}',
+    ltnames_err_zh_required: 'The Chinese name for “{name}” cannot be blank',
 
     // ===== Employee leave quotas =====
     finleave_title: 'Employee Leave Quotas',
