@@ -136,9 +136,11 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
   }))
 
   // 職務代理人的通知刻意等到「核准後」才發 —— 假單還沒過就先通知，萬一被
-  // 駁回，代理人已經以為要代班了。代理人可能同時是申請人自己選的通知對象，
-  // 所以先確認不是重複的人再發。
-  results.proxy = await notifyProxy(db, leave, recipients.map(r => r.slackUserId))
+  // 駁回，代理人已經以為要代班了。
+  //
+  // 代理人同時也是「核准通知對象」時會收到兩則，這裡不做去重：兩則講的是
+  // 不同的事（一則知會、一則有交辦動作），使用者要求兩則都留（2026-09 確認）。
+  results.proxy = await notifyProxy(db, leave)
 
   // 2) 當天臨時請假的補發公告。
   //
@@ -192,9 +194,7 @@ async function notifyRejected(db: ReturnType<typeof adminClient>, leave: LeaveRo
 }
 
 /** 核准後通知職務代理人。回傳說明字串方便從呼叫端的回應看出結果。 */
-async function notifyProxy(
-  db: ReturnType<typeof adminClient>, leave: LeaveRow, alreadyNotified: string[],
-) {
+async function notifyProxy(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
   const { data } = await db
     .from('leave_requests')
     .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id, language)')
@@ -202,7 +202,6 @@ async function notifyProxy(
 
   const proxy = (data as { proxy?: { slack_user_id?: string; language?: string } } | null)?.proxy
   if (!proxy?.slack_user_id) return '沒有職務代理人或代理人未設定 Slack ID'
-  if (alreadyNotified.includes(proxy.slack_user_id)) return '代理人已在其他通知對象中，不重複發送'
 
   const lang = normalizeLang(proxy.language)
   await dmMany([proxy.slack_user_id], t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
