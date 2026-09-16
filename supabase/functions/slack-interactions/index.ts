@@ -146,6 +146,22 @@ const T = {
     proxy_heading: ':handshake: *您被指定為職務代理人*\n{detail}',
     proxy_note: '這張假單已核准，該時段請協助代理其職務。',
 
+    // HR 代同仁登記請假
+    ask_leave_prompt_heading_hr: ':memo: 要請假嗎？點下面的按鈕填寫假單。需要幫同仁補登記的話，按「代同仁登記」。',
+    btn_hr_register: '代同仁登記',
+    modal_hrreg_title: '代同仁登記請假',
+    modal_hrreg_submit: '登記並通知',
+    modal_hrreg_hint: '用於同仁口頭請假、事後沒有補假單的情況。登記後系統會私訊該同仁請他確認，{days} 天內未提出異議視同確認。',
+    field_hrreg_for_whom: '幫誰登記',
+    field_hrreg_select_person: '請選擇同仁',
+    err_hrreg_not_allowed: '您沒有代同仁登記請假的權限。這個功能只開放給人資／財務角色。',
+    hrreg_filed_text: '已完成代登記',
+    hrreg_filed_heading: ':white_check_mark: *已完成代登記*\n{detail}',
+    hrreg_filed_note: '已私訊 {name} 請他確認，並註明 {days} 天內未提出異議視同確認。若他提出異議，通知會回到這裡。',
+    hrreg_dm_text: 'HR 幫你登記了一筆請假，請確認',
+    hrreg_dm_heading: ':memo: *HR 幫你登記了一筆請假*\n{detail}',
+    hrreg_dm_note: '⚠️ 內容正確請按「確認」；有誤請按「提出修改異議」並說明。*{deadline} 前未提出異議，視同確認。*',
+
     // 收回假單
     btn_withdraw: '收回假單',
     btn_refill: '重新填寫',
@@ -280,6 +296,21 @@ const T = {
     proxy_text: 'You have been assigned as {name}’s proxy',
     proxy_heading: ':handshake: *You’ve been assigned as a proxy*\n{detail}',
     proxy_note: 'This leave request has been approved — please cover their responsibilities during that time.',
+
+    ask_leave_prompt_heading_hr: ':memo: Want to request leave? Use the button below. To file a record on a colleague’s behalf, use “File for a colleague”.',
+    btn_hr_register: 'File for a colleague',
+    modal_hrreg_title: 'File leave for a colleague',
+    modal_hrreg_submit: 'File and notify',
+    modal_hrreg_hint: 'For when someone told you about their leave verbally and never filed a request. They will be notified to confirm — if they raise no objection within {days} days, it counts as confirmed.',
+    field_hrreg_for_whom: 'File for',
+    field_hrreg_select_person: 'Select a colleague',
+    err_hrreg_not_allowed: 'You do not have permission to file leave for colleagues. This is limited to HR / finance roles.',
+    hrreg_filed_text: 'Leave record filed',
+    hrreg_filed_heading: ':white_check_mark: *Leave record filed*\n{detail}',
+    hrreg_filed_note: '{name} has been asked to confirm, and told that raising no objection within {days} days counts as confirmed. If they object, you will be notified here.',
+    hrreg_dm_text: 'HR filed a leave record for you — please confirm',
+    hrreg_dm_heading: ':memo: *HR filed a leave record for you*\n{detail}',
+    hrreg_dm_note: '⚠️ If this is correct, click “Confirm”. If not, click “Raise an objection” and explain. *If you raise no objection before {deadline}, this counts as confirmed.*',
 
     btn_withdraw: 'Withdraw request',
     btn_refill: 'Submit a new one',
@@ -466,7 +497,7 @@ function leaveRequestHours(r: { hours: number | null; start_date: string; end_da
 async function resolveUser(db: SupabaseClient, slackUserId: string) {
   const { data } = await db
     .from('users')
-    .select('id, full_name, slack_user_id, default_flow_id, is_active, language')
+    .select('id, full_name, slack_user_id, default_flow_id, is_active, language, is_finance')
     .eq('slack_user_id', slackUserId)
     .maybeSingle()
   if (!data || data.is_active === false) return null
@@ -753,6 +784,192 @@ async function buildLeaveModal(db: SupabaseClient, requester: { id: string }, la
   }
 }
 
+// ===== HR 代同仁登記請假 =====
+//
+// 跟一般假單有三個關鍵差別（見 migration 20260915_hr_registered_leave）：
+//   1. 直接 approved，不走簽核 —— 這種假已經請完了，再送主管核准是倒因為果
+//   2. 記下 registered_by（誰登的）與 ack_deadline（確認期限）
+//   3. 送出後私訊當事人請他確認，通知裡明寫「N 天內未確認視同確認」
+//
+// 表單刻意跟一般請假長得很像，只多一個「幫誰登記」、少一個職務代理人 ——
+// 跟網頁版的 HrRegisterLeaveDialog 一致，HR 不用重新學。
+
+/** 同仁要在幾天內確認。跟網頁版 HrRegisterLeaveDialog 的 ACK_DAYS 是同一個數字，改的話兩邊都要改。 */
+const ACK_DAYS = 3
+
+async function buildHrRegisterModal(db: SupabaseClient, lang: Lang) {
+  const [typesRes, peopleRes] = await Promise.all([
+    db.from('leave_types').select('id, name, name_en').eq('is_active', true).order('name'),
+    // Slack 下拉選單上限 100 個選項。以這個系統的規模不會碰到，但真的超過時
+    // 寧可截斷也不要整個表單開不起來。
+    db.from('users').select('id, full_name').eq('is_active', true).order('full_name').limit(100),
+  ])
+
+  const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)
+  const typeLabel = (row: { name: string; name_en: string | null }) =>
+    lang === 'en' && row.name_en ? row.name_en : row.name
+
+  return {
+    type: 'modal',
+    callback_id: 'submit_hr_register',
+    title: { type: 'plain_text', text: t(lang, 'modal_hrreg_title'), emoji: true },
+    submit: { type: 'plain_text', text: t(lang, 'modal_hrreg_submit'), emoji: true },
+    close: { type: 'plain_text', text: t(lang, 'modal_cancel'), emoji: true },
+    blocks: [
+      contextLine(t(lang, 'modal_hrreg_hint', { days: ACK_DAYS })),
+      {
+        type: 'input', block_id: 'requester',
+        label: { type: 'plain_text', text: t(lang, 'field_hrreg_for_whom'), emoji: true },
+        element: {
+          type: 'static_select', action_id: 'v',
+          placeholder: { type: 'plain_text', text: t(lang, 'field_hrreg_select_person'), emoji: true },
+          options: (peopleRes.data ?? []).map(u => opt(u.full_name, u.id)),
+        },
+      },
+      {
+        type: 'input', block_id: 'leave_type',
+        label: { type: 'plain_text', text: t(lang, 'field_leave_type'), emoji: true },
+        element: {
+          type: 'static_select', action_id: 'v',
+          placeholder: { type: 'plain_text', text: t(lang, 'field_leave_type_placeholder'), emoji: true },
+          options: (typesRes.data ?? []).map(row => opt(typeLabel(row), row.id)),
+        },
+      },
+      {
+        type: 'input', block_id: 'start_date',
+        label: { type: 'plain_text', text: t(lang, 'field_start_date'), emoji: true },
+        element: { type: 'datepicker', action_id: 'v', initial_date: today },
+      },
+      {
+        type: 'input', block_id: 'end_date',
+        label: { type: 'plain_text', text: t(lang, 'field_end_date'), emoji: true },
+        element: { type: 'datepicker', action_id: 'v', initial_date: today },
+      },
+      {
+        type: 'input', block_id: 'start_time',
+        label: { type: 'plain_text', text: t(lang, 'field_start_time'), emoji: true },
+        hint: { type: 'plain_text', text: t(lang, 'field_multiday_hint'), emoji: true },
+        element: { type: 'static_select', action_id: 'v', initial_option: opt('09:00', '09:00'),
+          options: TIME_OPTIONS.map(time => opt(time, time)) },
+      },
+      {
+        type: 'input', block_id: 'end_time',
+        label: { type: 'plain_text', text: t(lang, 'field_end_time'), emoji: true },
+        element: { type: 'static_select', action_id: 'v', initial_option: opt('18:00', '18:00'),
+          options: TIME_OPTIONS.map(time => opt(time, time)) },
+      },
+      {
+        type: 'input', block_id: 'reason',
+        label: { type: 'plain_text', text: t(lang, 'field_reason'), emoji: true },
+        element: { type: 'plain_text_input', action_id: 'v', multiline: true },
+      },
+    ],
+  }
+}
+
+async function handleHrRegisterSubmit(db: SupabaseClient, me: any, lang: Lang, p: Record<string, any>) {
+  // 按鈕看不到不等於防得住 —— Slack 的互動請求是外部可以偽造 payload 的路徑，
+  // 所以這裡重新確認身分，不信任「他看得到那顆按鈕」這件事。
+  if (!me.is_finance) {
+    return json({ response_action: 'errors', errors: { reason: t(lang, 'err_hrreg_not_allowed') } })
+  }
+
+  const v = p.view.state.values
+  const pick = (block: string) => v[block]?.v?.selected_option?.value ?? null
+  const requesterId = pick('requester')
+  const leaveTypeId = pick('leave_type')
+  const startDate = v.start_date?.v?.selected_date
+  const endDate = v.end_date?.v?.selected_date
+  const startTime = pick('start_time') ?? '09:00'
+  const endTime = pick('end_time') ?? '18:00'
+  const reason = (v.reason?.v?.value ?? '').trim()
+
+  if (endDate < startDate) {
+    return json({ response_action: 'errors', errors: { end_date: t(lang, 'err_end_before_start') } })
+  }
+  const multiDay = endDate > startDate
+  const hours = multiDay ? null : calcHours(startTime, endTime)
+  if (!multiDay && (hours ?? 0) <= 0) {
+    return json({ response_action: 'errors', errors: { end_time: t(lang, 'err_end_time_before_start') } })
+  }
+
+  const deadline = new Date()
+  deadline.setDate(deadline.getDate() + ACK_DAYS)
+
+  const { data: created, error } = await db.from('leave_requests').insert({
+    requester_id: requesterId,
+    leave_type_id: leaveTypeId,
+    // flow_id 與 current_step 留空 —— 這張不走簽核
+    start_date: startDate,
+    end_date: endDate,
+    start_time: multiDay ? '09:00' : startTime,
+    end_time: multiDay ? '18:00' : endTime,
+    hours,
+    reason,
+    status: 'approved',
+    registered_by: me.id,
+    ack_deadline: deadline.toISOString(),
+  }).select('id').single()
+
+  if (error) {
+    return json({ response_action: 'errors', errors: { reason: t(lang, 'err_submit_failed', { msg: error.message }) } })
+  }
+
+  // 假單已經建立，通知丟背景讓表單立刻關閉（避免 Slack 的 3 秒逾時）。
+  // 通知失敗也不該讓登記失敗 —— 假單有沒有建立才是結算的依據。
+  background((async () => {
+    const { data: row } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', created.id).single()
+    const leave = row as unknown as LeaveRow
+
+    await notifyHrRegistered(db, leave, deadline)
+    // 這種假通常是「人今天真的沒來、大家卻不知道」，所以涵蓋今天的話要公告
+    await notifyChannelIfToday(db, leave)
+
+    if (me.slack_user_id) {
+      await dm(me.slack_user_id, t(lang, 'hrreg_filed_text'), [
+        section(t(lang, 'hrreg_filed_heading', { detail: leaveDetailLines(leave, lang) })),
+        contextLine(t(lang, 'hrreg_filed_note', {
+          name: leave.requester?.full_name ?? '', days: ACK_DAYS,
+        })),
+      ])
+    }
+  })())
+
+  return json({ response_action: 'clear' })
+}
+
+/**
+ * 私訊當事人請他確認，附「確認」與「提出修改異議」兩顆按鈕。
+ *
+ * ⚠️ 這段與 send-slack-notification 的 notifyHrRegistered 是同一件事的兩份
+ * 實作，因為代登記有兩個入口：網頁上登記走那支，Slack 上登記走這支。改這裡
+ * 的話那支也要跟著改。（這支 function 刻意不拆共用檔，見檔頭說明。）
+ *
+ * 一定要給「有異議」一條路：只放「確認」的話，內容有錯的人無處可按，而
+ * 「N 天內未提出異議視同確認」那句話的前提就是他「按得到」異議。
+ */
+async function notifyHrRegistered(db: SupabaseClient, leave: LeaveRow, deadline: Date) {
+  const slackId = leave.requester?.slack_user_id
+  if (!slackId) return
+
+  const lang = normalizeLang(leave.requester?.language)
+  const deadlineText = deadline.toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW')
+
+  await dm(slackId, t(lang, 'hrreg_dm_text'), [
+    section(t(lang, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, lang) })),
+    contextLine(t(lang, 'hrreg_dm_note', { deadline: deadlineText })),
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(lang, 'btn_ack_confirm'), emoji: true },
+          action_id: 'ack_registered_leave', value: leave.id },
+        { type: 'button', text: { type: 'plain_text', text: t(lang, 'btn_ack_dispute'), emoji: true },
+          action_id: 'dispute_registered_leave', value: leave.id },
+      ],
+    },
+  ])
+}
+
 // ===== 進入點 =====
 
 Deno.serve(async (req) => {
@@ -816,9 +1033,9 @@ function handleEvent(db: SupabaseClient, body: Record<string, any>) {
     } else if (lower.includes('balance') || lower.includes('quota')) {
       background(replyWithBalance(db, event, 'en'))
     } else if (text.includes('請假')) {
-      background(promptLeaveForm(event, 'zh'))
+      background(promptLeaveForm(db, event, 'zh'))
     } else if (lower.includes('leave')) {
-      background(promptLeaveForm(event, 'en'))
+      background(promptLeaveForm(db, event, 'en'))
     }
   }
   return new Response('ok')
@@ -830,20 +1047,35 @@ function handleEvent(db: SupabaseClient, body: Record<string, any>) {
  * 頂多這一則提示文字語言不對，後面真正開表單時（block_actions 已經知道
  * 是誰）一律照 me.language 為準。
  */
-function promptLeaveForm(event: Record<string, any>, lang: Lang) {
+async function promptLeaveForm(db: SupabaseClient, event: Record<string, any>, fallbackLang: Lang) {
+  // 這裡查一次是誰，有兩個目的：用他自己的語言回覆（不再靠關鍵字猜），
+  // 以及決定要不要多給 HR 那顆「代同仁登記」。對不到帳號的人照樣給一顆
+  // 「填寫假單」—— 真正的拒絕在按下按鈕之後（那裡會再查一次）。
+  const me = await resolveUser(db, event.user)
+  const lang = me ? normalizeLang(me.language) : fallbackLang
+
+  const buttons: unknown[] = [{
+    type: 'button', style: 'primary',
+    text: { type: 'plain_text', text: t(lang, 'btn_fill_leave_form'), emoji: true },
+    action_id: 'open_leave_form', value: 'open',
+  }]
+
+  // 一般同仁看不到這顆。但看不到不等於防得住 —— 真正的把關在
+  // handleHrRegisterSubmit，那裡會重新確認身分。
+  if (me?.is_finance) {
+    buttons.push({
+      type: 'button',
+      text: { type: 'plain_text', text: t(lang, 'btn_hr_register'), emoji: true },
+      action_id: 'open_hr_register_form', value: 'open',
+    })
+  }
+
   return callSlack('chat.postMessage', {
     channel: event.channel,
     text: t(lang, 'ask_leave_prompt_text'),
     blocks: [
-      section(t(lang, 'ask_leave_prompt_heading')),
-      {
-        type: 'actions',
-        elements: [{
-          type: 'button', style: 'primary',
-          text: { type: 'plain_text', text: t(lang, 'btn_fill_leave_form'), emoji: true },
-          action_id: 'open_leave_form', value: 'open',
-        }],
-      },
+      section(t(lang, me?.is_finance ? 'ask_leave_prompt_heading_hr' : 'ask_leave_prompt_heading')),
+      { type: 'actions', elements: buttons },
     ],
   })
 }
@@ -965,6 +1197,16 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
       await callSlack('views.open', { trigger_id: p.trigger_id, view: await buildLeaveModal(db, me, lang) })
       return new Response('')
     }
+    if (action.action_id === 'open_hr_register_form') {
+      // 這顆只會出現在 HR 的訊息裡，但按鈕看不到不等於防得住 —— 先擋一次，
+      // 真正的把關在 handleHrRegisterSubmit（那裡會再確認一次身分）。
+      if (!me.is_finance) {
+        await dm(slackUserId, t(lang, 'err_hrreg_not_allowed'), [section(`:warning: ${t(lang, 'err_hrreg_not_allowed')}`)])
+        return new Response('')
+      }
+      await callSlack('views.open', { trigger_id: p.trigger_id, view: await buildHrRegisterModal(db, lang) })
+      return new Response('')
+    }
     if (action.action_id === 'approve_leave') {
       return await handleApprove(db, me, lang, action.value, p.response_url)
     }
@@ -1030,6 +1272,7 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
     if (p.view.callback_id === 'submit_leave') return await handleLeaveSubmit(db, me, lang, p)
     if (p.view.callback_id === 'submit_reject') return await handleRejectSubmit(db, me, lang, p)
     if (p.view.callback_id === 'submit_dispute') return await handleDisputeSubmit(db, me, lang, p)
+    if (p.view.callback_id === 'submit_hr_register') return await handleHrRegisterSubmit(db, me, lang, p)
   }
 
   return new Response('')
