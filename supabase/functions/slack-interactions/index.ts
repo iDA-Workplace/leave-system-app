@@ -489,6 +489,50 @@ async function approversForStep(db: SupabaseClient, flowId: string, stepOrder: n
   return (data ?? []) as { approver_id: string; approver?: { slack_user_id?: string; language?: string } }[]
 }
 
+/** 管理後台「核准通知對象」裡設定、且仍啟用的人。 */
+async function notificationTargets(db: SupabaseClient) {
+  const { data } = await db
+    .from('notification_targets')
+    .select('user:users(slack_user_id, language)')
+    .eq('is_active', true)
+  return (data ?? []).map(
+    (r: { user?: { slack_user_id?: string | null; language?: string | null } }) => r.user,
+  )
+}
+
+/**
+ * 假單走到最後一關核准之後，私訊「申請人本人 ＋ 管理後台設定的核准通知對象」。
+ *
+ * ⚠️ 這段與 send-slack-notification 的 notifyApproved 是同一件事的兩份實作，
+ * 因為核准有兩個入口：網頁上按核准走那支 function，Slack 訊息上按核准走這支。
+ * 2026-09 之前這裡漏了「通知對象」那一半 —— 而大家平常都是在 Slack 上按的，
+ * 結果就是後台設定了通知對象卻從來沒收到過通知。改這裡的話那支也要跟著改。
+ *
+ * 回傳已經發過的 Slack ID，讓後面的職務代理人通知不會重複發給同一個人
+ * （代理人很可能同時也被設為通知對象）。
+ */
+async function notifyApprovedRecipients(
+  db: SupabaseClient, leave: LeaveRow, { includeRequester = true } = {},
+): Promise<string[]> {
+  const rows: ({ slack_user_id?: string | null; language?: string | null } | undefined)[] = [
+    ...(includeRequester && leave.requester?.slack_user_id
+      ? [{ slack_user_id: leave.requester.slack_user_id, language: leave.requester.language }]
+      : []),
+    ...await notificationTargets(db),
+  ]
+
+  const sent = new Set<string>()
+  for (const row of rows) {
+    if (!row?.slack_user_id || sent.has(row.slack_user_id)) continue
+    sent.add(row.slack_user_id)
+    const lang = normalizeLang(row.language)
+    await dm(row.slack_user_id, t(lang, 'approved_dm_text'), [
+      section(t(lang, 'approved_dm_heading', { detail: leaveDetailLines(leave, lang) })),
+    ])
+  }
+  return [...sent]
+}
+
 /** 待審核通知（含核准／駁回按鈕）—— 送給某一關的所有簽核人，各自用自己的語言。 */
 async function notifyApprovers(db: SupabaseClient, leave: LeaveRow) {
   if (!leave.flow_id || !leave.current_step) return
@@ -928,7 +972,10 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
       // 這條路徑一樣要走完「核准後」該做的事 —— 之前這裡直接改狀態就結束，
       // 導致這種員工當天臨時請假時頻道上沒有任何人知道。
       await db.from('leave_requests').update({ status: 'approved' }).eq('id', created.id)
-      await notifyProxy(db, row)
+      // 申請人自己不重複發：他等一下就會收到下面那則「假單已送出／此流程不需
+      // 簽核，已自動核准」，再多一則「假單已核准」只是同一件事講兩次。
+      const notified = await notifyApprovedRecipients(db, row, { includeRequester: false })
+      await notifyProxy(db, row, notified)
       await notifyChannelIfToday(db, row)
     } else {
       await notifyApprovers(db, row)
@@ -987,12 +1034,8 @@ function handleApprove(db: SupabaseClient, me: any, lang: Lang, requestId: strin
     ])
 
     if (isFinal) {
-      if (leave.requester?.slack_user_id) {
-        const requesterLang = normalizeLang(leave.requester.language)
-        await dm(leave.requester.slack_user_id, t(requesterLang, 'approved_dm_text'),
-          [section(t(requesterLang, 'approved_dm_heading', { detail: leaveDetailLines(leave, requesterLang) }))])
-      }
-      await notifyProxy(db, leave)
+      const notified = await notifyApprovedRecipients(db, leave)
+      await notifyProxy(db, leave, notified)
       await notifyChannelIfToday(db, leave)
     } else {
       await notifyApprovers(db, { ...leave, current_step: (leave.current_step ?? 1) + 1 })
@@ -1070,8 +1113,11 @@ async function guardApproval(db: SupabaseClient, me: any, leave: LeaveRow | null
  *
  * 刻意等到核准後才發 —— 假單還沒過就先通知，萬一被駁回，代理人已經以為
  * 要代班了。代理人的 Slack ID 沒填就安靜略過（跟其他通知一致）。
+ *
+ * `alreadyNotified`：剛剛在核准通知那輪已經發過的 Slack ID。代理人常常同時
+ * 也被設為「核准通知對象」，不濾掉的話他會為了同一張假單收到兩則訊息。
  */
-async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
+async function notifyProxy(db: SupabaseClient, leave: LeaveRow, alreadyNotified: string[] = []) {
   const { data } = await db
     .from('leave_requests')
     .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id, language)')
@@ -1079,6 +1125,7 @@ async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
 
   const proxy = (data as { proxy?: { slack_user_id?: string; language?: string } } | null)?.proxy
   if (!proxy?.slack_user_id) return
+  if (alreadyNotified.includes(proxy.slack_user_id)) return
   const lang = normalizeLang(proxy.language)
   await dm(proxy.slack_user_id, t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
     section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
