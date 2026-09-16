@@ -89,6 +89,11 @@ const T = {
     today_leave_text: '{name} 今天請假',
     today_leave_heading: ':bell: *今日臨時請假*\n{line}',
     today_leave_note: '此假單於今日上午的請假公告發出後才核准，故補發通知。',
+    // 在家工作另外一組字：他有在工作，只是不在辦公室。用「請假」的字眼公告
+    // 會讓同事以為今天找不到他。
+    today_wfh_text: '{name} 今天在家工作',
+    today_wfh_heading: ':house_with_garden: *今日在家工作*\n{line}',
+    today_wfh_note: '此申請於今日上午的公告發出後才核准，故補發通知。仍可照常聯繫。',
 
     no_account_text: '找不到您的系統帳號',
     no_account_heading: ':warning: 找不到對應的系統帳號，請聯繫管理員在「員工帳號管理」補上您的 Slack User ID。',
@@ -184,6 +189,9 @@ const T = {
     today_leave_text: '{name} is on leave today',
     today_leave_heading: ':bell: *Same-day leave*\n{line}',
     today_leave_note: 'Approved after this morning’s leave announcement, so this is a follow-up notice.',
+    today_wfh_text: '{name} is working from home today',
+    today_wfh_heading: ':house_with_garden: *Working from home today*\n{line}',
+    today_wfh_note: 'Approved after this morning’s announcement, so this is a follow-up notice. They are still reachable as usual.',
 
     no_account_text: 'We could not find your account',
     no_account_heading: ':warning: We could not match you to an account. Ask an administrator to add your Slack User ID under “Employee Accounts”.',
@@ -397,7 +405,7 @@ const LEAVE_SELECT = `
   id, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
-  leave_type:leave_types(name, name_en)
+  leave_type:leave_types(name, name_en, is_wfh)
 `
 
 interface LeaveRow {
@@ -407,7 +415,7 @@ interface LeaveRow {
   flow_id: string | null; current_step: number | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
-  leave_type?: { name: string; name_en?: string | null } | null
+  leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
 }
 
 // ===== 假單的文字呈現（與 _shared/leave.ts 同一套規則）=====
@@ -1133,7 +1141,13 @@ async function notifyProxy(db: SupabaseClient, leave: LeaveRow, alreadyNotified:
   ])
 }
 
-/** 當天臨時請假：核准當下若假期已涵蓋今天且過了每日公告時間，補一則頻道公告。 */
+/**
+ * 當天臨時請假：核准當下若假期已涵蓋今天且過了每日公告時間，補一則頻道公告。
+ *
+ * 在家工作用另一組文字 —— 他有在工作，只是不在辦公室。沿用「今日臨時請假」
+ * 的字眼會讓同事以為今天找不到他。早上 9:00 的彙整已經把 WFH 分成獨立一組，
+ * 這則補發的公告要跟它一致。
+ */
 async function notifyChannelIfToday(db: SupabaseClient, leave: LeaveRow) {
   const now = new Date(Date.now() + 8 * 3600 * 1000)
   const today = now.toISOString().slice(0, 10)
@@ -1143,12 +1157,13 @@ async function notifyChannelIfToday(db: SupabaseClient, leave: LeaveRow) {
   const channel = Deno.env.get('SLACK_LEAVE_CHANNEL')
   if (!channel) return
   const lang = channelLang()
+  const wfh = !!leave.leave_type?.is_wfh
   await callSlack('chat.postMessage', {
     channel,
-    text: t(lang, 'today_leave_text', { name: leave.requester?.full_name ?? '' }),
+    text: t(lang, wfh ? 'today_wfh_text' : 'today_leave_text', { name: leave.requester?.full_name ?? '' }),
     blocks: [
-      section(t(lang, 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
-      contextLine(t(lang, 'today_leave_note')),
+      section(t(lang, wfh ? 'today_wfh_heading' : 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
+      contextLine(t(lang, wfh ? 'today_wfh_note' : 'today_leave_note')),
     ],
   })
 }

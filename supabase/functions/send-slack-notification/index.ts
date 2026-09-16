@@ -155,9 +155,13 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
       results.channel = '未設定 SLACK_LEAVE_CHANNEL，略過頻道公告'
     } else {
       const lang = channelLang()
-      await postToChannel(channel, t(lang, 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
-        section(t(lang, 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
-        contextLine(t(lang, 'today_leave_note')),
+      // 在家工作用另一組文字 —— 他有在工作，只是不在辦公室。沿用「今日臨時
+      // 請假」的字眼會讓同事以為今天找不到他。早上 9:00 的彙整已經把 WFH
+      // 分成獨立一組，這則補發的公告要跟它一致。
+      const wfh = !!leave.leave_type?.is_wfh
+      await postToChannel(channel, t(lang, wfh ? 'today_wfh_text' : 'today_leave_text', { name: leave.requester?.full_name ?? '' }), [
+        section(t(lang, wfh ? 'today_wfh_heading' : 'today_leave_heading', { line: digestLine(leave, lang, { markFullDay: true }) })),
+        contextLine(t(lang, wfh ? 'today_wfh_note' : 'today_leave_note')),
       ])
       results.channel = 'posted'
     }

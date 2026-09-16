@@ -57,6 +57,11 @@ const T = {
     today_leave_text: '{name} 今天請假',
     today_leave_heading: ':bell: *今日臨時請假*\n{line}',
     today_leave_note: '此假單於今日上午的請假公告發出後才核准，故補發通知。',
+    // 在家工作另外一組字：他有在工作，只是不在辦公室。用「請假」的字眼公告
+    // 會讓同事以為今天找不到他。
+    today_wfh_text: '{name} 今天在家工作',
+    today_wfh_heading: ':house_with_garden: *今日在家工作*\n{line}',
+    today_wfh_note: '此申請於今日上午的公告發出後才核准，故補發通知。仍可照常聯繫。',
     channel_posted: 'posted',
     channel_pending_digest: '尚未到彙整時間，將由每日公告一併發出',
     channel_not_today: '假期不含今天，不需公告',
@@ -209,6 +214,9 @@ const T = {
     today_leave_text: '{name} is on leave today',
     today_leave_heading: ':bell: *Same-day leave*\n{line}',
     today_leave_note: 'Approved after this morning’s leave announcement, so this is a follow-up notice.',
+    today_wfh_text: '{name} is working from home today',
+    today_wfh_heading: ':house_with_garden: *Working from home today*\n{line}',
+    today_wfh_note: 'Approved after this morning’s announcement, so this is a follow-up notice. They are still reachable as usual.',
     channel_posted: 'posted',
     channel_pending_digest: 'Not yet time for the daily digest — will be included in it',
     channel_not_today: 'The leave period does not cover today, no announcement needed',
