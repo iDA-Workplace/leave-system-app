@@ -113,6 +113,7 @@ const T = {
     field_multiday_hint: '跨日請假時會忽略時間，整天計算',
     field_proxy: '職務代理人',
     field_proxy_placeholder: '（可不填）',
+    wfh_no_proxy_note: ':information_source: 在家工作不需要指定職務代理人 —— 人有在上班，只是不在辦公室。',
     field_reason: '事由',
     modal_attachment_hint: '附件請到請假系統網頁補上（Slack 表單不支援上傳檔案）。',
 
@@ -264,6 +265,7 @@ const T = {
     field_multiday_hint: 'Time is ignored for multi-day leave — it is counted as full days',
     field_proxy: 'Proxy',
     field_proxy_placeholder: '(optional)',
+    wfh_no_proxy_note: ':information_source: Working from home needs no proxy — you are still working, just not in the office.',
     field_reason: 'Reason',
     modal_attachment_hint: 'Attach files from the leave system website — the Slack form does not support uploads.',
 
@@ -707,18 +709,57 @@ for (let h = 8; h <= 18; h++) {
 
 const opt = (text: string, value: string) => ({ text: { type: 'plain_text', text, emoji: true }, value })
 
-async function buildLeaveModal(db: SupabaseClient, requester: { id: string }, lang: Lang) {
+/** 表單上目前已經填了什麼。改假別要重畫表單時，靠它把填過的內容帶回去。 */
+interface LeaveModalState {
+  leaveTypeId?: string | null
+  startDate?: string | null
+  endDate?: string | null
+  startTime?: string | null
+  endTime?: string | null
+  proxyId?: string | null
+  reason?: string | null
+}
+
+/** 從 Slack 送來的 view payload 讀出使用者目前填了什麼。 */
+function readLeaveModalState(view: Record<string, any>): LeaveModalState {
+  const v = view?.state?.values ?? {}
+  const pick = (block: string) => v[block]?.v?.selected_option?.value ?? null
+  return {
+    leaveTypeId: pick('leave_type'),
+    startDate: v.start_date?.v?.selected_date ?? null,
+    endDate: v.end_date?.v?.selected_date ?? null,
+    startTime: pick('start_time'),
+    endTime: pick('end_time'),
+    // 職務代理人那一格被藏起來時這裡會讀不到，自然就是 null
+    proxyId: pick('proxy'),
+    reason: v.reason?.v?.value ?? null,
+  }
+}
+
+async function buildLeaveModal(
+  db: SupabaseClient, requester: { id: string }, lang: Lang, current: LeaveModalState = {},
+) {
   const [typesRes, colleaguesRes] = await Promise.all([
-    db.from('leave_types').select('id, name, name_en, is_annual').eq('is_active', true).order('name'),
+    db.from('leave_types').select('id, name, name_en, is_annual, is_wfh').eq('is_active', true).order('name'),
     // Slack 的下拉選單上限 100 個選項，超過就得改成需要另一個端點的動態搜尋。
     // 以這個系統的規模不會碰到，但真的超過時寧可截斷也不要整個表單開不起來。
     db.from('users').select('id, full_name').eq('is_active', true).neq('id', requester.id)
       .order('full_name').limit(100),
   ])
 
+  const types = typesRes.data ?? []
+  const colleagues = colleaguesRes.data ?? []
   const today = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)
   const typeLabel = (row: { name: string; name_en: string | null }) =>
     lang === 'en' && row.name_en ? row.name_en : row.name
+
+  // 在家工作不需要職務代理人 —— 人有在上班，只是不在辦公室，沒有職務要交接。
+  // 整個欄位藏起來，比留著讓人猶豫要不要填好（跟網頁版 LeaveForm.jsx 一致）。
+  const selectedType = types.find(row => row.id === current.leaveTypeId)
+  const isWfh = !!selectedType?.is_wfh
+  const selectedProxy = colleagues.find(u => u.id === current.proxyId)
+  const startTime = current.startTime ?? '09:00'
+  const endTime = current.endTime ?? '18:00'
 
   return {
     type: 'modal',
@@ -728,23 +769,26 @@ async function buildLeaveModal(db: SupabaseClient, requester: { id: string }, la
     close: { type: 'plain_text', text: t(lang, 'modal_cancel'), emoji: true },
     blocks: [
       {
-        type: 'input', block_id: 'leave_type',
+        // dispatch_action：選了假別就通知我們一次，才有辦法依假別重畫表單。
+        // 沒有這一行的話 Slack 不會在 input 區塊被改動時送出任何事件。
+        type: 'input', block_id: 'leave_type', dispatch_action: true,
         label: { type: 'plain_text', text: t(lang, 'field_leave_type'), emoji: true },
         element: {
           type: 'static_select', action_id: 'v',
           placeholder: { type: 'plain_text', text: t(lang, 'field_leave_type_placeholder'), emoji: true },
-          options: (typesRes.data ?? []).map(row => opt(typeLabel(row), row.id)),
+          ...(selectedType ? { initial_option: opt(typeLabel(selectedType), selectedType.id) } : {}),
+          options: types.map(row => opt(typeLabel(row), row.id)),
         },
       },
       {
         type: 'input', block_id: 'start_date',
         label: { type: 'plain_text', text: t(lang, 'field_start_date'), emoji: true },
-        element: { type: 'datepicker', action_id: 'v', initial_date: today },
+        element: { type: 'datepicker', action_id: 'v', initial_date: current.startDate ?? today },
       },
       {
         type: 'input', block_id: 'end_date',
         label: { type: 'plain_text', text: t(lang, 'field_end_date'), emoji: true },
-        element: { type: 'datepicker', action_id: 'v', initial_date: today },
+        element: { type: 'datepicker', action_id: 'v', initial_date: current.endDate ?? today },
       },
       {
         type: 'input', block_id: 'start_time',
@@ -752,7 +796,7 @@ async function buildLeaveModal(db: SupabaseClient, requester: { id: string }, la
         hint: { type: 'plain_text', text: t(lang, 'field_multiday_hint'), emoji: true },
         element: {
           type: 'static_select', action_id: 'v',
-          initial_option: opt('09:00', '09:00'),
+          initial_option: opt(startTime, startTime),
           options: TIME_OPTIONS.map(time => opt(time, time)),
         },
       },
@@ -761,27 +805,47 @@ async function buildLeaveModal(db: SupabaseClient, requester: { id: string }, la
         label: { type: 'plain_text', text: t(lang, 'field_end_time'), emoji: true },
         element: {
           type: 'static_select', action_id: 'v',
-          initial_option: opt('18:00', '18:00'),
+          initial_option: opt(endTime, endTime),
           options: TIME_OPTIONS.map(time => opt(time, time)),
         },
       },
-      {
+      // 選了 WFH 就整格拿掉，並補一句說明 —— 欄位無聲消失看起來像壞掉。
+      ...(isWfh ? [contextLine(t(lang, 'wfh_no_proxy_note'))] : [{
         type: 'input', block_id: 'proxy', optional: true,
         label: { type: 'plain_text', text: t(lang, 'field_proxy'), emoji: true },
         element: {
           type: 'static_select', action_id: 'v',
           placeholder: { type: 'plain_text', text: t(lang, 'field_proxy_placeholder'), emoji: true },
-          options: (colleaguesRes.data ?? []).map(u => opt(u.full_name, u.id)),
+          ...(selectedProxy ? { initial_option: opt(selectedProxy.full_name, selectedProxy.id) } : {}),
+          options: colleagues.map(u => opt(u.full_name, u.id)),
         },
-      },
+      }]),
       {
         type: 'input', block_id: 'reason',
         label: { type: 'plain_text', text: t(lang, 'field_reason'), emoji: true },
-        element: { type: 'plain_text_input', action_id: 'v', multiline: true },
+        element: {
+          type: 'plain_text_input', action_id: 'v', multiline: true,
+          ...(current.reason ? { initial_value: current.reason } : {}),
+        },
       },
       contextLine(t(lang, 'modal_attachment_hint')),
     ],
   }
+}
+
+/**
+ * 使用者在表單裡換了假別 → 重畫整張表單。
+ *
+ * Slack 沒有「只改一個區塊」的做法，views.update 一定是整張換掉，所以要先把
+ * 已經填過的內容讀回來（readLeaveModalState）再重建，否則使用者選好的日期、
+ * 打好的事由會在換假別的瞬間全部不見。
+ *
+ * 刻意不帶 hash：hash 是用來擋併發衝突的，但這裡一次只會有一個更新，帶了反而
+ * 多一種會失敗的情況（hash 稍微過期就整個更新不了）。
+ */
+async function refreshLeaveModal(db: SupabaseClient, me: any, lang: Lang, p: Record<string, any>) {
+  const view = await buildLeaveModal(db, me, lang, readLeaveModalState(p.view))
+  await callSlack('views.update', { view_id: p.view.id, view })
 }
 
 // ===== HR 代同仁登記請假 =====
@@ -1193,6 +1257,14 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
     }
     const lang = normalizeLang(me.language)
 
+    // 表單裡換了假別 → 重畫表單（WFH 要把職務代理人那格藏起來）。
+    // 這些 input 元件的 action_id 全都是 'v'，所以要看 block_id 才分得出來。
+    if (p.view?.callback_id === 'submit_leave' && action?.block_id === 'leave_type') {
+      // 走背景：Slack 要 3 秒內收到回應，而 views.update 是一次 API 往返。
+      background(refreshLeaveModal(db, me, lang, p))
+      return new Response('')
+    }
+
     if (action.action_id === 'open_leave_form') {
       await callSlack('views.open', { trigger_id: p.trigger_id, view: await buildLeaveModal(db, me, lang) })
       return new Response('')
@@ -1308,12 +1380,14 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
     return json({ response_action: 'errors', errors: { reason: t(lang, 'err_no_flow') } })
   }
 
-  const { data: leaveType } = await db
-    .from('leave_types').select('id, name, name_en, annual_quota_hours, is_annual').eq('id', leaveTypeId).single()
-
   // 這裡原本會擋下超過年度額度的申請（網頁版送出時也有同一道）。
   // 2026-09 依需求兩邊一起移除：額度用完仍然可以請，超額怎麼處理交給人資
   // 判斷，不是系統該擋的。查餘額時餘額會顯示成負數，使用者看得出來超了多少。
+
+  // 只查 is_wfh：選了 WFH 時那一格會被藏起來，但「先選了代理人才改成 WFH」
+  // 的殘留值還是可能被送上來，所以這裡再清一次（跟網頁版同一道保險）。
+  const { data: leaveType } = await db
+    .from('leave_types').select('is_wfh').eq('id', leaveTypeId).maybeSingle()
 
   const { data: created, error } = await db.from('leave_requests').insert({
     requester_id: me.id,
@@ -1324,7 +1398,7 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
     start_time: isMultiDay ? '09:00' : startTime,
     end_time: isMultiDay ? '18:00' : endTime,
     hours,
-    proxy_user_id: proxyId,
+    proxy_user_id: leaveType?.is_wfh ? null : proxyId,
     reason,
     status: 'pending',
     current_step: 1,
