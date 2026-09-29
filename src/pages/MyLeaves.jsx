@@ -9,6 +9,7 @@ import {
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import HrRegisterLeaveDialog from '../components/HrRegisterLeaveDialog'
+import HrLeaveAdmin from '../components/HrLeaveAdmin'
 import './MyLeaves.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
@@ -346,15 +347,19 @@ function MyLeaves({ userProfile }) {
       </Card>
 
       <Card className="leave-mgmt-section">
-        {isApprover ? (
+        {/* 分頁只在「不只有自己的假單」時才出現。主管多一個已審核、
+            HR 多一個全部假單；兩者都不是的人看到的還是單純的標題。 */}
+        {(isApprover || isHr) ? (
           <Tabs tabs={[
             { key: 'mine', label: t('myleaves_tab_mine'), active: historyTab === 'mine', onClick: () => setHistoryTab('mine') },
-            { key: 'approved', label: t('myleaves_tab_approved'), active: historyTab === 'approved', onClick: () => setHistoryTab('approved') },
+            ...(isApprover ? [{ key: 'approved', label: t('myleaves_tab_approved'), active: historyTab === 'approved', onClick: () => setHistoryTab('approved') }] : []),
+            ...(isHr ? [{ key: 'all', label: t('myleaves_tab_all'), active: historyTab === 'all', onClick: () => setHistoryTab('all') }] : []),
           ]} />
         ) : (
           <PageHeader title={t('myleaves_tab_mine')} />
         )}
 
+        {historyTab !== 'all' && (
         <div className="leave-mgmt-filters">
           <Select label={t('common_year')} value={filterYear} onChange={e => setFilterYear(Number(e.target.value))}>
             {[currentYear, currentYear - 1, currentYear - 2].map(y => <option key={y} value={y}>{t('common_year_option', { y })}</option>)}
@@ -364,8 +369,11 @@ function MyLeaves({ userProfile }) {
             {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>{t(`month_${m}`)}</option>)}
           </Select>
         </div>
+        )}
 
-        {(!isApprover || historyTab === 'mine') && (() => {
+        {historyTab === 'all' && isHr && <HrLeaveAdmin hrUser={userProfile} />}
+
+        {historyTab === 'mine' && (() => {
           const filtered = filterByYearMonth(leaves, filterYear, filterMonth, l => l.start_date)
           const totalPages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
           const pageRows = paginate(filtered, historyPage, PAGE_SIZE)
