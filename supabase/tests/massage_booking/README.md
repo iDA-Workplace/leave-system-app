@@ -1,7 +1,7 @@
 # 按摩預約 — 資料庫測試
 
 驗證 `migrations/20261019_massage_booking.sql` 的所有規則（報名、請假衝突、
-兩組抽籤、公平性、遞補、鎖定、權限、出席），共 73 項。
+兩組抽籤、公平性、遞補、鎖定、權限、出席），共 75 項。
 
 **不要在 Supabase 上跑。** 這是給本機 Postgres 16 用的：`00_stub.sql` 會建立
 Supabase 的替身（`auth.uid()`、`anon` / `authenticated` / `service_role` 角色、

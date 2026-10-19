@@ -302,10 +302,15 @@ select t.as_user(t.uidrank('52000000-0000-0000-0000-00000000000b', 1));
 select t.ok('遞補：期限前取消 → 不算遲、邀請第 1 位候補（名次 10）',
   (select (r->>'late')::bool = false and (r->>'offered_signup_id')::uuid = t.byrank('52000000-0000-0000-0000-00000000000b', 10)
      from (select public.massage_release(t.byrank('52000000-0000-0000-0000-00000000000b', 1)) r) x));
-select t.ok('遞補：邀請 5 分鐘後到期',
-  (select offer_status = 'pending' and offer_slot_no = 1
-          and offer_expires_at between now() + interval '4 minutes' and now() + interval '6 minutes'
+select t.ok('遞補：提早取消的邀請不設時限（等候補第一位回覆）',
+  (select offer_status = 'pending' and offer_slot_no = 1 and offer_expires_at is null
      from public.massage_signups where id = t.byrank('52000000-0000-0000-0000-00000000000b', 10)));
+reset role;
+select t.ok('遞補：不設時限的邀請，排程不會把它收走',
+  public.massage_expire_offers() = 0
+  and (select offer_status = 'pending' from public.massage_signups
+        where id = t.byrank('52000000-0000-0000-0000-00000000000b', 10)));
+set role authenticated;
 select t.as_user(t.uidrank('52000000-0000-0000-0000-00000000000b', 10));
 select t.ok('遞補：候補按「我要」→ 拿到時段 1',
   (public.massage_accept_offer(t.byrank('52000000-0000-0000-0000-00000000000b', 10))->>'slot_no')::int = 1);
@@ -316,7 +321,7 @@ select public.massage_release(t.byrank('52000000-0000-0000-0000-00000000000b', 2
 reset role;
 update public.massage_signups set offer_expires_at = now() - interval '1 minute'
  where id = t.byrank('52000000-0000-0000-0000-00000000000b', 11);
-select t.ok('遞補：時間到沒回 → 排程把它標成過期', public.massage_expire_offers() = 1);
+select t.ok('遞補（有時限的邀請）：時間到沒回 → 排程把它標成過期', public.massage_expire_offers() = 1);
 select t.ok('遞補：過期後改邀下一位（名次 12）',
   (select offer_status = 'pending' and offer_slot_no = 2 from public.massage_signups
     where id = t.byrank('52000000-0000-0000-0000-00000000000b', 12)));
@@ -399,6 +404,14 @@ select t.ok('出席：HR 可以標未到', (public.massage_set_attendance(t.sid(
 create temp table clr as select public.massage_set_attendance(t.sid('59000000-0000-0000-0000-000000000001', t.e(382)), null) r;
 select t.ok('出席：HR 可以清除標記', (select (r->>'ok')::bool from clr)
   and (select attendance is null from public.massage_signups where id = t.sid('59000000-0000-0000-0000-000000000001', t.e(382))));
+reset role;
+insert into public.massage_signups (session_id, user_id, result, draw_rank, offer_slot_no, offered_at, offer_status)
+values ('59000000-0000-0000-0000-000000000001', t.e(390), 'waitlist', 4, 1, now() - interval '1 day', 'pending');
+set role authenticated;
+select t.as_user(t.e(390));
+select t.ok('遞補：時段已經結束才按「我要」→ 拒絕',
+  public.massage_accept_offer(t.sid('59000000-0000-0000-0000-000000000001', t.e(390)))->>'code' = 'slot_over');
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000002');
 select t.ok('出席：不接受亂填的狀態', public.massage_set_attendance(t.sid('59000000-0000-0000-0000-000000000001', t.e(382)), 'maybe')->>'code' = 'invalid_status');
 reset role;
 

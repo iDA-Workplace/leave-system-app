@@ -80,7 +80,8 @@ create table if not exists public.massage_sessions (
   slot_count int not null default 9 check (slot_count between 1 and 50),
   signup_deadline timestamptz not null,
   cancel_deadline timestamptz not null,
-  -- 候補被邀請後，要在幾分鐘內按「我要」
+  -- 候補被邀請後要在幾分鐘內按「我要」—— 只用在「當天現場遞補」。
+  -- 提早取消的遞補不設時限：使用者確認以候補第一位的回覆為優先。
   offer_window_minutes int not null default 5 check (offer_window_minutes between 1 and 1440),
   -- 只用來顯示「預計幾點抽籤」，實際抽籤由管理者按按鈕
   draw_scheduled_at timestamptz,
@@ -469,8 +470,10 @@ grant execute on function public.massage_run_draw(uuid) to authenticated;
  *
  * 候補順序 = 抽籤名次。跳過的人：已經有時段的、已經取消的、手上已經有一個
  * 還沒回覆的邀請的、以及「這個時段剛剛已經問過他、他沒回」的。
+ *
+ * p_window_minutes = null → 不設時限，等候補回覆（提早取消時用）。
  */
-create or replace function public.massage_offer_next(p_session_id uuid, p_slot_no int)
+create or replace function public.massage_offer_next(p_session_id uuid, p_slot_no int, p_window_minutes int)
 returns uuid
 language plpgsql
 security definer
@@ -518,7 +521,8 @@ begin
   update public.massage_signups
      set offer_slot_no = p_slot_no,
          offered_at = now(),
-         offer_expires_at = now() + make_interval(mins => s.offer_window_minutes),
+         offer_expires_at = case when p_window_minutes is null then null
+                                 else now() + make_interval(mins => p_window_minutes) end,
          offer_status = 'pending'
    where id = v_id;
 
@@ -547,16 +551,18 @@ begin
      for update skip locked
   loop
     update public.massage_signups set offer_status = 'expired' where id = r.id;
-    perform public.massage_offer_next(r.session_id, r.offer_slot_no);
+    perform public.massage_offer_next(
+      r.session_id, r.offer_slot_no,
+      (select offer_window_minutes from public.massage_sessions where id = r.session_id));
     n := n + 1;
   end loop;
   return n;
 end;
 $$;
 
-revoke all on function public.massage_offer_next(uuid, int) from public;
+revoke all on function public.massage_offer_next(uuid, int, int) from public;
 revoke all on function public.massage_expire_offers() from public;
-grant execute on function public.massage_offer_next(uuid, int) to service_role;
+grant execute on function public.massage_offer_next(uuid, int, int) to service_role;
 grant execute on function public.massage_expire_offers() to service_role;
 
 
@@ -610,7 +616,8 @@ begin
    where id = g.id;
 
   if v_free_slot is not null then
-    v_offered := public.massage_offer_next(s.id, v_free_slot);
+    -- 提早取消：不設時限，等候補第一位回覆
+    v_offered := public.massage_offer_next(s.id, v_free_slot, null);
   end if;
 
   return jsonb_build_object(
@@ -658,10 +665,18 @@ begin
     return jsonb_build_object('ok', false, 'code', 'no_pending_offer');
   end if;
 
-  -- 過期了：照規則讓給下一位
-  if now() > g.offer_expires_at then
+  -- 時段已經結束：按了也沒意義
+  if now() >= public.massage_slot_end(g.session_id, g.offer_slot_no) then
     update public.massage_signups set offer_status = 'expired' where id = g.id;
-    perform public.massage_offer_next(g.session_id, g.offer_slot_no);
+    return jsonb_build_object('ok', false, 'code', 'slot_over');
+  end if;
+
+  -- 有時限的邀請過期了：照規則讓給下一位（沒有時限的邀請 offer_expires_at 是 null，不會進來）
+  if g.offer_expires_at is not null and now() > g.offer_expires_at then
+    update public.massage_signups set offer_status = 'expired' where id = g.id;
+    perform public.massage_offer_next(
+      g.session_id, g.offer_slot_no,
+      (select offer_window_minutes from public.massage_sessions where id = g.session_id));
     return jsonb_build_object('ok', false, 'code', 'offer_expired');
   end if;
 
