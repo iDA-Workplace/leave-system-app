@@ -1,31 +1,42 @@
 -- 按摩預約（員工福利模組的第一個功能）
 --
 -- 規則來源：原本的「盲人按摩報名」試算表「報名規則」分頁，加上 2026-10 與
--- 使用者逐條確認過的公平性調整。下面每一條規則都標了實作的位置。
+-- 使用者逐條確認過的調整。下面每一條規則都標了實作的位置。
 --
 --   報名                                                       massage_sign_up_as
 --     · 一期限報一次，用登入帳號報名，不能替別人報
 --     · 報名截止前才能報
---     · 按摩當天整天請假，或請假時間跟按摩時段有重疊 → 直接擋住
---       （審核中的假單也擋、WFH 也算，見 massage_leave_conflict）
+--     · 請假（含審核中、含 WFH）讓「每一個時段都不能按」→ 直接擋住
+--     · 只有部分時段請假（例如 15:00–16:00）→ 可以報，排時段時自動避開
 --
 --   抽籤（只有管理員 / HR 能按，抽一次就鎖定，不能重抽）     massage_run_draw
---     · 報名人數 ≤ 名額：不抽籤，照報名先後排時段
---     · 報名人數 > 名額：分兩組 ——「上期沒按過」整組排在「上期按過」前面，
---       組內隨機。名次 1..名額 為正取、照名次排時段（第 1 名 = 第 1 個時段），
---       其餘依名次為候補
---     · 「上期按過」＝上一期「實際有按到」的人（出席標記為 attended）
+--     · 報名人數 ≤ 名額：不抽籤，照報名先後
+--     · 報名人數 > 名額：全部一起隨機抽，名次 1..名額 為正取，其餘依名次為候補
+--     · 上一期實際有按到、這期又抽中的人，系統會問他要不要把名額讓給候補，
+--       由本人決定（不強制）                                    massage_answer_yield_as
+--
+--   排時段                                                  massage_assign_slots
+--     · 照名次排，第 1 名 = 第 1 個時段
+--     · 有部分請假的人，排在「離他原本順位最近、又不撞到請假」的時段，
+--       其他人依名次往前或往後挪
+--     · 真的排不開時照樣給一個時段，但標示「與請假衝突」，請他自己找人換
 --
 --   取消與遞補                       massage_release_as / massage_offer_next
 --     · 取消期限（預設按摩當天 12:00）前取消 → 正常遞補
 --     · 期限後才取消 → 一樣遞補，但這個人記為「未到」
---     · 空出的時段依候補順序邀請，限時內按「我要」才算數
+--     · 本人取消（按摩開始前）空出的名額：依候補順序邀請，不設時限，
+--       以候補第一位的回覆為優先
+--     · 候補在空出的那個時段有請假 → 跳過他，問下一位（下一個空出的時段會再問他）
+--
+--   現場沒到                                              massage_mark_no_show
+--     · 由管理者在現場按「沒到」→ 系統通知候補第一位
 --
 --   時段交換                                              massage_move_slot
 --     · 同仁私下講好之後告訴管理者，由管理者在系統裡改
 --
 --   出席                     massage_mark_done_as / massage_set_attendance
 --     · 本人可以按「已完成」，管理員 / HR 也可以標記
+--     · 「上期按過」只看實際有按到（attended）
 --
 --
 -- 寫入一律走函式，不開放直接寫資料表
@@ -80,9 +91,9 @@ create table if not exists public.massage_sessions (
   slot_count int not null default 9 check (slot_count between 1 and 50),
   signup_deadline timestamptz not null,
   cancel_deadline timestamptz not null,
-  -- 候補被邀請後要在幾分鐘內按「我要」—— 只用在「當天現場遞補」。
-  -- 提早取消的遞補不設時限：使用者確認以候補第一位的回覆為優先。
-  offer_window_minutes int not null default 5 check (offer_window_minutes between 1 and 1440),
+  -- 現場有人沒到、改邀候補時，候補要在幾分鐘內回覆。null = 不設時限。
+  -- （使用者尚未決定；本人提早取消的遞補一律不設時限，不看這個欄位）
+  onsite_offer_window_minutes int check (onsite_offer_window_minutes between 1 and 60),
   -- 只用來顯示「預計幾點抽籤」，實際抽籤由管理者按按鈕
   draw_scheduled_at timestamptz,
   drawn_at timestamptz,
@@ -103,12 +114,18 @@ create table if not exists public.massage_signups (
   signed_up_at timestamptz not null default now(),
 
   -- 抽籤時寫入，之後不再變動
-  priority_group smallint,                 -- 1 = 上期沒按過，2 = 上期按過
   draw_rank int,                           -- 1..n 的最終名次
   result text check (result in ('selected', 'waitlist')),
+  went_last_time boolean,                  -- 抽籤當下：上一期是否實際有按到
+
+  -- 「要不要讓給候補」：上期按過、這期又抽中、而且有人在候補時才會問
+  yield_asked boolean not null default false,
+  yield_answer text check (yield_answer in ('yielded', 'kept')),
+  yield_answered_at timestamptz,
 
   -- 目前占用的時段（正取一開始就有；候補遞補成功後才有）
   slot_no int,
+  slot_conflict boolean not null default false,  -- 排不開，時段跟請假撞到
 
   -- 取消（抽籤前 = 取消報名；抽籤後 = 釋出名額）
   released_at timestamptz,
@@ -117,7 +134,7 @@ create table if not exists public.massage_signups (
   -- 遞補邀請（只有候補會用到）
   offer_slot_no int,
   offered_at timestamptz,
-  offer_expires_at timestamptz,
+  offer_expires_at timestamptz,            -- null = 不設時限
   offer_status text check (offer_status in ('pending', 'accepted', 'expired', 'declined')),
   promoted_at timestamptz,
 
@@ -132,7 +149,9 @@ create table if not exists public.massage_signups (
 comment on column public.massage_signups.released_late is
   '超過取消期限才釋出名額。名額一樣會遞補出去，但這個人會被記為未到（attendance = no_show）。';
 comment on column public.massage_signups.attendance is
-  'attended = 實際有按到（本人按「已完成」或管理者標記）。下一期抽籤判斷「上期按過」只看這個值。';
+  'attended = 實際有按到（本人按「已完成」或管理者標記）。下一期判斷「上期按過」只看這個值。';
+comment on column public.massage_signups.slot_conflict is
+  '排時段時找不到跟他請假不衝突的空時段，只好照樣給一個。畫面上要提醒他自己找人換。';
 
 -- 同一期同一個時段，同時間只能有一個人（已釋出的不算）
 create unique index if not exists massage_signups_active_slot
@@ -146,7 +165,24 @@ create index if not exists massage_signups_user on public.massage_signups (user_
 -- 時間計算
 -- ---------------------------------------------------------------------------
 
--- 第 n 個時段的開始時間（Asia/Taipei → timestamptz）
+-- 第 n 個時段的開始／結束時間（當天的時刻）
+create or replace function public.massage_slot_from(p_start time, p_slot int, p_len int, p_break int)
+returns time
+language sql
+immutable
+as $$
+  select p_start + make_interval(mins => (p_slot - 1) * (p_len + p_break));
+$$;
+
+create or replace function public.massage_slot_to(p_start time, p_slot int, p_len int, p_break int)
+returns time
+language sql
+immutable
+as $$
+  select public.massage_slot_from(p_start, p_slot, p_len, p_break) + make_interval(mins => p_len);
+$$;
+
+-- 第 n 個時段的開始／結束（Asia/Taipei → timestamptz），給「時段開始了沒」這類判斷用
 create or replace function public.massage_slot_start(p_session_id uuid, p_slot_no int)
 returns timestamptz
 language sql
@@ -154,8 +190,8 @@ stable
 security definer
 set search_path = public
 as $$
-  select ((s.session_date + s.start_time
-           + make_interval(mins => (p_slot_no - 1) * (s.slot_minutes + s.break_minutes)))
+  select ((s.session_date
+           + public.massage_slot_from(s.start_time, p_slot_no, s.slot_minutes, s.break_minutes))
           at time zone 'Asia/Taipei')
     from public.massage_sessions s where s.id = p_session_id;
 $$;
@@ -172,45 +208,59 @@ as $$
 $$;
 
 /**
- * 一張假單會不會跟這一期的按摩時段撞到。
- *
- * 按摩時段 = 開始時間 到 開始時間 + 名額 × (每人分鐘 + 休息分鐘)。
- * 預設 13:00 + 9 × 20 分 = 16:00，跟試算表寫的「13:00–16:00」一致。
+ * 一張假單有沒有碰到某一天的 [p_from, p_to) 這段時間。
  *
  * 跨天的假單一律當成整天（請假單本身也是這樣算時數的：跨天時忽略時間、
- * 整天計算）。單日的假單才比對時間，只要有任何重疊就算撞到。
+ * 整天計算）。單日的假單才比對時間，只要有任何重疊就算。
  * 時間是空值的舊資料也當成整天，寧可多擋，不要漏擋。
  */
-create or replace function public.massage_leave_overlaps(
-  p_session_id uuid,
-  p_start_date date, p_end_date date,
-  p_start_time time, p_end_time time
+create or replace function public.massage_leave_touches(
+  p_day date, p_from time, p_to time,
+  p_start_date date, p_end_date date, p_start_time time, p_end_time time
 )
 returns boolean
+language sql
+immutable
+as $$
+  select p_day between p_start_date and p_end_date
+     and (
+       p_start_date <> p_end_date
+       or (coalesce(p_start_time, '00:00') < p_to and coalesce(p_end_time, '23:59') > p_from)
+     );
+$$;
+
+/**
+ * 這個人在這一期「沒有請假衝突」的時段編號。
+ * 審核中（pending）與已核准（approved）的假單都算；WFH 在系統裡就是一種假別，
+ * 所以自然會被算進來。
+ */
+create or replace function public.massage_ok_slots(p_session_id uuid, p_user_id uuid)
+returns int[]
 language sql
 stable
 security definer
 set search_path = public
 as $$
-  select coalesce((
-    select s.session_date between p_start_date and p_end_date
-       and (
-         p_start_date <> p_end_date
-         or (
-           coalesce(p_start_time, '00:00') <
-             s.start_time + make_interval(mins => s.slot_count * (s.slot_minutes + s.break_minutes))
-           and coalesce(p_end_time, '23:59') > s.start_time
-         )
-       )
-      from public.massage_sessions s where s.id = p_session_id
-  ), false);
+  select coalesce(array_agg(n order by n), '{}')
+    from public.massage_sessions s
+    cross join lateral generate_series(1, s.slot_count) n
+   where s.id = p_session_id
+     and not exists (
+       select 1 from public.leave_requests lr
+        where lr.requester_id = p_user_id
+          and lr.status in ('pending', 'approved')
+          and public.massage_leave_touches(
+                s.session_date,
+                public.massage_slot_from(s.start_time, n, s.slot_minutes, s.break_minutes),
+                public.massage_slot_to(s.start_time, n, s.slot_minutes, s.break_minutes),
+                lr.start_date::date, lr.end_date::date, lr.start_time::time, lr.end_time::time)
+     );
 $$;
 
 /**
- * 回傳第一張跟這一期撞到的假單（給「不能報名」的訊息用），沒有就回 null。
- *
- * 審核中（pending）跟已核准（approved）都算 —— 使用者確認審核中也要擋。
- * WFH 在系統裡就是一種假別，所以自然會被算進來，不需要特別處理。
+ * 第一張碰到這一期按摩時段（第一段開始 ～ 最後一段的休息結束）的假單，
+ * 給畫面上的說明文字用。沒有就回 null。
+ * 預設 13:00 + 9 × 20 分 = 16:00，跟試算表寫的「13:00–16:00」一致。
  */
 create or replace function public.massage_leave_conflict(p_session_id uuid, p_user_id uuid)
 returns jsonb
@@ -229,39 +279,59 @@ as $$
            'leave_type', lt.name,
            'leave_type_en', lt.name_en
          )
-    from public.leave_requests lr
+    from public.massage_sessions s
+    join public.leave_requests lr on lr.requester_id = p_user_id
     left join public.leave_types lt on lt.id = lr.leave_type_id
-   where lr.requester_id = p_user_id
+   where s.id = p_session_id
      and lr.status in ('pending', 'approved')
-     and public.massage_leave_overlaps(
-           p_session_id, lr.start_date::date, lr.end_date::date,
-           lr.start_time::time, lr.end_time::time)
-   order by lr.start_date
+     and public.massage_leave_touches(
+           s.session_date,
+           s.start_time,
+           s.start_time + make_interval(mins => s.slot_count * (s.slot_minutes + s.break_minutes)),
+           lr.start_date::date, lr.end_date::date, lr.start_time::time, lr.end_time::time)
+   order by lr.start_date, lr.start_time
    limit 1;
 $$;
 
--- 網頁用：報名按鈕旁邊先顯示「為什麼不能預約」，不用等按下去才知道
-create or replace function public.massage_my_leave_conflict(p_session_id uuid)
+/**
+ * 網頁用：報名按鈕旁邊先顯示狀態，不用等按下去才知道。
+ *   { state: 'none' }                    沒有請假
+ *   { state: 'partial', leave: {...} }   部分時段請假：可以報，排時段時會避開
+ *   { state: 'blocked', leave: {...} }   每個時段都撞到請假：不能報
+ */
+create or replace function public.massage_my_leave_status(p_session_id uuid)
 returns jsonb
 language sql
 stable
 security definer
 set search_path = public
 as $$
-  select public.massage_leave_conflict(p_session_id, auth.uid());
+  select case
+    when v.leave is null then jsonb_build_object('state', 'none')
+    when cardinality(v.ok) = 0 then jsonb_build_object('state', 'blocked', 'leave', v.leave)
+    else jsonb_build_object('state', 'partial', 'leave', v.leave)
+  end
+  from (
+    select public.massage_leave_conflict(p_session_id, auth.uid()) as leave,
+           public.massage_ok_slots(p_session_id, auth.uid()) as ok
+  ) v;
 $$;
 
-revoke all on function public.massage_my_leave_conflict(uuid) from public;
-grant execute on function public.massage_my_leave_conflict(uuid) to authenticated;
-
+revoke all on function public.massage_slot_from(time, int, int, int) from public;
+revoke all on function public.massage_slot_to(time, int, int, int) from public;
 revoke all on function public.massage_slot_start(uuid, int) from public;
 revoke all on function public.massage_slot_end(uuid, int) from public;
-revoke all on function public.massage_leave_overlaps(uuid, date, date, time, time) from public;
+revoke all on function public.massage_leave_touches(date, time, time, date, date, time, time) from public;
+revoke all on function public.massage_ok_slots(uuid, uuid) from public;
 revoke all on function public.massage_leave_conflict(uuid, uuid) from public;
+revoke all on function public.massage_my_leave_status(uuid) from public;
+grant execute on function public.massage_slot_from(time, int, int, int) to authenticated, service_role;
+grant execute on function public.massage_slot_to(time, int, int, int) to authenticated, service_role;
 grant execute on function public.massage_slot_start(uuid, int) to authenticated, service_role;
 grant execute on function public.massage_slot_end(uuid, int) to authenticated, service_role;
-grant execute on function public.massage_leave_overlaps(uuid, date, date, time, time) to service_role;
+grant execute on function public.massage_ok_slots(uuid, uuid) to service_role;
 grant execute on function public.massage_leave_conflict(uuid, uuid) to service_role;
+grant execute on function public.massage_my_leave_status(uuid) to authenticated;
 
 
 -- ---------------------------------------------------------------------------
@@ -269,7 +339,7 @@ grant execute on function public.massage_leave_conflict(uuid, uuid) to service_r
 -- ---------------------------------------------------------------------------
 
 /**
- * 回傳 jsonb：{ ok: true, signup_id } 或 { ok: false, code, ... }。
+ * 回傳 jsonb：{ ok: true, signup_id, partial_leave } 或 { ok: false, code, ... }。
  * 刻意回傳代碼而不是丟中文錯誤訊息：網頁與 Slack 都要依使用者的語言顯示，
  * 文字交給前端翻譯。
  */
@@ -281,7 +351,7 @@ set search_path = public
 as $$
 declare
   s public.massage_sessions;
-  v_conflict jsonb;
+  v_leave jsonb;
   v_row public.massage_signups;
 begin
   if p_user_id is null then
@@ -304,9 +374,10 @@ begin
     return jsonb_build_object('ok', false, 'code', 'user_inactive');
   end if;
 
-  v_conflict := public.massage_leave_conflict(p_session_id, p_user_id);
-  if v_conflict is not null then
-    return jsonb_build_object('ok', false, 'code', 'leave_conflict', 'leave', v_conflict);
+  v_leave := public.massage_leave_conflict(p_session_id, p_user_id);
+  -- 每一個時段都撞到請假才擋；只撞到部分時段的，排時段時會避開
+  if v_leave is not null and cardinality(public.massage_ok_slots(p_session_id, p_user_id)) = 0 then
+    return jsonb_build_object('ok', false, 'code', 'leave_conflict', 'leave', v_leave);
   end if;
 
   select * into v_row from public.massage_signups
@@ -321,13 +392,13 @@ begin
     update public.massage_signups
        set released_at = null, released_late = false, signed_up_at = now()
      where id = v_row.id;
-    return jsonb_build_object('ok', true, 'signup_id', v_row.id);
+    return jsonb_build_object('ok', true, 'signup_id', v_row.id, 'partial_leave', v_leave);
   end if;
 
   insert into public.massage_signups (session_id, user_id)
   values (p_session_id, p_user_id)
   returning * into v_row;
-  return jsonb_build_object('ok', true, 'signup_id', v_row.id);
+  return jsonb_build_object('ok', true, 'signup_id', v_row.id, 'partial_leave', v_leave);
 
 exception when unique_violation then
   -- 同一個人同時按了兩次（網頁 + Slack）
@@ -351,6 +422,87 @@ grant execute on function public.massage_sign_up(uuid) to authenticated;
 
 
 -- ---------------------------------------------------------------------------
+-- 排時段（抽籤時呼叫）
+-- ---------------------------------------------------------------------------
+
+/**
+ * 正取名單依名次排時段，避開請假。
+ *
+ * 第一輪：有部分請假的人（依名次），排在「離他原本順位最近、又不撞到請假」
+ *         的空時段。原本順位 = 名次（第 3 名原本是第 3 個時段）。
+ * 第二輪：其他人（以及第一輪排不進去的人）依名次，拿最早的空時段。
+ *         排不進去的人會標 slot_conflict。
+ *
+ * 這樣有請假的人不會因為名次靠後就只剩撞到請假的時段可選；代價是其他人
+ * 可能往前或往後挪一兩格。
+ */
+create or replace function public.massage_assign_slots(p_session_id uuid)
+returns int   -- 排不開（slot_conflict）的人數
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  s public.massage_sessions;
+  v_taken boolean[];
+  v_ok int[];
+  v_pick int;
+  v_conflicts int := 0;
+  r record;
+begin
+  select * into s from public.massage_sessions where id = p_session_id;
+  v_taken := array_fill(false, array[s.slot_count]);
+
+  for r in
+    select id, user_id, draw_rank from public.massage_signups
+     where session_id = p_session_id and result = 'selected' and released_at is null
+     order by draw_rank
+  loop
+    v_ok := public.massage_ok_slots(p_session_id, r.user_id);
+    if cardinality(v_ok) = s.slot_count then
+      continue;   -- 沒有請假，第二輪再排
+    end if;
+    select n into v_pick
+      from unnest(v_ok) n
+     where not v_taken[n]
+     order by abs(n - r.draw_rank), n
+     limit 1;
+    if v_pick is not null then
+      update public.massage_signups set slot_no = v_pick, slot_conflict = false where id = r.id;
+      v_taken[v_pick] := true;
+    end if;
+  end loop;
+
+  for r in
+    select id, user_id from public.massage_signups
+     where session_id = p_session_id and result = 'selected'
+       and released_at is null and slot_no is null
+     order by draw_rank
+  loop
+    select n into v_pick
+      from generate_series(1, s.slot_count) n
+     where not v_taken[n]
+     order by n
+     limit 1;
+    v_ok := public.massage_ok_slots(p_session_id, r.user_id);
+    update public.massage_signups
+       set slot_no = v_pick, slot_conflict = not (v_pick = any(v_ok))
+     where id = r.id;
+    if not (v_pick = any(v_ok)) then
+      v_conflicts := v_conflicts + 1;
+    end if;
+    v_taken[v_pick] := true;
+  end loop;
+
+  return v_conflicts;
+end;
+$$;
+
+revoke all on function public.massage_assign_slots(uuid) from public;
+grant execute on function public.massage_assign_slots(uuid) to service_role;
+
+
+-- ---------------------------------------------------------------------------
 -- 抽籤
 -- ---------------------------------------------------------------------------
 create or replace function public.massage_run_draw(p_session_id uuid)
@@ -362,9 +514,10 @@ as $$
 declare
   s public.massage_sessions;
   v_prev uuid;
-  v_unmarked int;
   v_total int;
   v_selected int;
+  v_conflicts int;
+  v_asked int;
 begin
   if not public.is_massage_manager() then
     return jsonb_build_object('ok', false, 'code', 'not_allowed');
@@ -383,6 +536,30 @@ begin
     return jsonb_build_object('ok', false, 'code', 'signup_not_closed');
   end if;
 
+  select count(*) into v_total
+    from public.massage_signups
+   where session_id = p_session_id and released_at is null;
+
+  -- 名次：人數未滿照報名先後；超過就全部一起隨機（每人一個亂數，先算好再排序）
+  update public.massage_signups g
+     set draw_rank = r.rn,
+         result = case when r.rn <= s.slot_count then 'selected' else 'waitlist' end
+    from (
+      select a.id,
+             row_number() over (
+               order by
+                 case when v_total <= s.slot_count then a.signed_up_at end,
+                 a.rnd,
+                 a.id
+             ) as rn
+        from (
+          select id, signed_up_at, random() as rnd
+            from public.massage_signups
+           where session_id = p_session_id and released_at is null
+        ) a
+    ) r
+   where g.id = r.id;
+
   -- 上一期 = 日期在這一期之前、最近一個已經抽過籤的
   select id into v_prev
     from public.massage_sessions
@@ -390,52 +567,18 @@ begin
    order by session_date desc, drawn_at desc
    limit 1;
 
-  -- 上一期還有人沒標記出席，就無法判斷誰「上期按過」—— 先擋住，請管理者
-  -- 補標。不自行假設有按到或沒按到，因為兩種假設都會讓某些人吃虧。
-  if v_prev is not null then
-    select count(*) into v_unmarked
-      from public.massage_signups
-     where session_id = v_prev and slot_no is not null
-       and released_at is null and attendance is null;
-    if v_unmarked > 0 then
-      return jsonb_build_object('ok', false, 'code', 'previous_unmarked',
-                                'previous_session_id', v_prev, 'count', v_unmarked);
-    end if;
-  end if;
+  -- 上期按過（只看實際有按到）；上期按過、這期抽中、而且有人在候補的，系統會問他要不要讓
+  update public.massage_signups g
+     set went_last_time = (v_prev is not null and exists (
+           select 1 from public.massage_signups p
+            where p.session_id = v_prev and p.user_id = g.user_id and p.attendance = 'attended'))
+   where g.session_id = p_session_id and g.released_at is null;
 
-  select count(*) into v_total
-    from public.massage_signups
+  update public.massage_signups
+     set yield_asked = (result = 'selected' and went_last_time and v_total > s.slot_count)
    where session_id = p_session_id and released_at is null;
 
-  update public.massage_signups g
-     set priority_group = r.grp,
-         draw_rank = r.rn,
-         result = case when r.rn <= s.slot_count then 'selected' else 'waitlist' end,
-         slot_no = case when r.rn <= s.slot_count then r.rn::int else null end
-    from (
-      select a.id, a.grp,
-             row_number() over (
-               order by
-                 -- 人數未滿：不分組、不抽籤，照報名先後
-                 case when v_total <= s.slot_count then 0 else a.grp end,
-                 case when v_total <= s.slot_count then a.signed_up_at end,
-                 -- 人數超過：組內照亂數排（每人一個亂數，先算好再排序）
-                 a.rnd,
-                 a.id
-             ) as rn
-        from (
-          select g2.id, g2.signed_up_at, random() as rnd,
-                 case when v_prev is not null and exists (
-                        select 1 from public.massage_signups p
-                         where p.session_id = v_prev
-                           and p.user_id = g2.user_id
-                           and p.attendance = 'attended')
-                      then 2 else 1 end as grp
-            from public.massage_signups g2
-           where g2.session_id = p_session_id and g2.released_at is null
-        ) a
-    ) r
-   where g.id = r.id;
+  v_conflicts := public.massage_assign_slots(p_session_id);
 
   perform set_config('massage.in_draw', 'on', true);
   update public.massage_sessions
@@ -443,16 +586,20 @@ begin
    where id = p_session_id;
   perform set_config('massage.in_draw', 'off', true);
 
-  select count(*) into v_selected
+  select count(*) filter (where result = 'selected'),
+         count(*) filter (where yield_asked)
+    into v_selected, v_asked
     from public.massage_signups
-   where session_id = p_session_id and result = 'selected';
+   where session_id = p_session_id and released_at is null;
 
   return jsonb_build_object(
     'ok', true,
     'total', v_total,
     'selected', v_selected,
     'waitlist', v_total - v_selected,
-    'was_lottery', v_total > s.slot_count
+    'was_lottery', v_total > s.slot_count,
+    'slot_conflicts', v_conflicts,
+    'yield_asked', v_asked
   );
 end;
 $$;
@@ -468,10 +615,13 @@ grant execute on function public.massage_run_draw(uuid) to authenticated;
 /**
  * 把空出來的時段邀請給下一位候補。回傳被邀請的 signup id，沒有人可以邀請就回 null。
  *
- * 候補順序 = 抽籤名次。跳過的人：已經有時段的、已經取消的、手上已經有一個
- * 還沒回覆的邀請的、以及「這個時段剛剛已經問過他、他沒回」的。
+ * 候補順序 = 抽籤名次。跳過的人：
+ *   · 已經有時段的、已經取消的
+ *   · 手上已經有一個還沒回覆的邀請的
+ *   · 「這個時段剛剛已經問過他、他沒回」的
+ *   · 這個時段剛好有請假的（下一個空出的時段還是會再問他）
  *
- * p_window_minutes = null → 不設時限，等候補回覆（提早取消時用）。
+ * p_window_minutes = null → 不設時限，等候補回覆。
  */
 create or replace function public.massage_offer_next(p_session_id uuid, p_slot_no int, p_window_minutes int)
 returns uuid
@@ -480,11 +630,9 @@ security definer
 set search_path = public
 as $$
 declare
-  s public.massage_sessions;
   v_id uuid;
 begin
-  select * into s from public.massage_sessions where id = p_session_id;
-  if not found or p_slot_no is null then
+  if p_slot_no is null or not exists (select 1 from public.massage_sessions where id = p_session_id) then
     return null;
   end if;
   -- 時段已經結束，就沒有遞補的意義了
@@ -510,6 +658,7 @@ begin
      -- 用 = 的話整個條件會變成 NULL，結果是「所有候補都被排除」
      and not (offer_status is not distinct from 'expired'
               and offer_slot_no is not distinct from p_slot_no)
+     and p_slot_no = any(public.massage_ok_slots(p_session_id, user_id))
    order by draw_rank
    limit 1
    for update skip locked;
@@ -531,7 +680,7 @@ end;
 $$;
 
 /**
- * 把已經過期的邀請標成 expired，並把那個時段改邀下一位。
+ * 把已經過期的邀請（只有設了時限的才會過期）標成 expired，並把那個時段改邀下一位。
  * 給排程（每分鐘）呼叫，回傳這次處理了幾筆。
  */
 create or replace function public.massage_expire_offers()
@@ -545,15 +694,14 @@ declare
   n int := 0;
 begin
   for r in
-    select id, session_id, offer_slot_no
-      from public.massage_signups
-     where offer_status = 'pending' and offer_expires_at <= now()
-     for update skip locked
+    select g.id, g.session_id, g.offer_slot_no, s.onsite_offer_window_minutes
+      from public.massage_signups g
+      join public.massage_sessions s on s.id = g.session_id
+     where g.offer_status = 'pending' and g.offer_expires_at <= now()
+     for update of g skip locked
   loop
     update public.massage_signups set offer_status = 'expired' where id = r.id;
-    perform public.massage_offer_next(
-      r.session_id, r.offer_slot_no,
-      (select offer_window_minutes from public.massage_sessions where id = r.session_id));
+    perform public.massage_offer_next(r.session_id, r.offer_slot_no, r.onsite_offer_window_minutes);
     n := n + 1;
   end loop;
   return n;
@@ -569,7 +717,12 @@ grant execute on function public.massage_expire_offers() to service_role;
 -- ---------------------------------------------------------------------------
 -- 取消 / 釋出名額
 -- ---------------------------------------------------------------------------
-create or replace function public.massage_release_as(p_signup_id uuid, p_user_id uuid)
+
+/**
+ * 釋出名額的共用邏輯（本人取消、讓給候補都走這裡）。呼叫前要先鎖住那一列。
+ * p_count_late = false 時，就算過了取消期限也不記未到（讓出名額是好意，不該被記）。
+ */
+create or replace function public.massage_release_row(p_signup_id uuid, p_count_late boolean)
 returns jsonb
 language plpgsql
 security definer
@@ -582,14 +735,7 @@ declare
   v_free_slot int;
   v_offered uuid;
 begin
-  select * into g from public.massage_signups where id = p_signup_id for update;
-  if not found or p_user_id is null or g.user_id <> p_user_id then
-    return jsonb_build_object('ok', false, 'code', 'not_found');
-  end if;
-  if g.released_at is not null then
-    return jsonb_build_object('ok', false, 'code', 'already_released');
-  end if;
-
+  select * into g from public.massage_signups where id = p_signup_id;
   select * into s from public.massage_sessions where id = g.session_id for update;
 
   -- 抽籤前：單純取消報名
@@ -603,30 +749,50 @@ begin
     return jsonb_build_object('ok', false, 'code', 'slot_over');
   end if;
 
-  v_late := now() >= s.cancel_deadline;
+  v_late := p_count_late and g.slot_no is not null and now() >= s.cancel_deadline;
   -- 空出來要遞補的時段：自己占用的，或是手上還沒回覆的那個邀請
   v_free_slot := coalesce(g.slot_no, case when g.offer_status = 'pending' then g.offer_slot_no end);
 
   update public.massage_signups
      set released_at = now(),
-         released_late = v_late and g.slot_no is not null,
+         released_late = v_late,
          offer_status = case when offer_status = 'pending' then 'declined' else offer_status end,
-         attendance = case when v_late and g.slot_no is not null then 'no_show' else attendance end,
-         attendance_marked_at = case when v_late and g.slot_no is not null then now() else attendance_marked_at end
+         attendance = case when v_late then 'no_show' else attendance end,
+         attendance_marked_at = case when v_late then now() else attendance_marked_at end
    where id = g.id;
 
+  -- 本人在按摩開始前釋出：不設時限，等候補第一位回覆
   if v_free_slot is not null then
-    -- 提早取消：不設時限，等候補第一位回覆
     v_offered := public.massage_offer_next(s.id, v_free_slot, null);
   end if;
 
   return jsonb_build_object(
     'ok', true,
     'phase', 'after_draw',
-    'late', v_late and g.slot_no is not null,
+    'late', v_late,
     'freed_slot', v_free_slot,
     'offered_signup_id', v_offered
   );
+end;
+$$;
+
+create or replace function public.massage_release_as(p_signup_id uuid, p_user_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  g public.massage_signups;
+begin
+  select * into g from public.massage_signups where id = p_signup_id for update;
+  if not found or p_user_id is null or g.user_id <> p_user_id then
+    return jsonb_build_object('ok', false, 'code', 'not_found');
+  end if;
+  if g.released_at is not null then
+    return jsonb_build_object('ok', false, 'code', 'already_released');
+  end if;
+  return public.massage_release_row(g.id, true);
 end;
 $$;
 
@@ -639,10 +805,68 @@ as $$
   select public.massage_release_as(p_signup_id, auth.uid());
 $$;
 
+revoke all on function public.massage_release_row(uuid, boolean) from public;
 revoke all on function public.massage_release_as(uuid, uuid) from public;
 revoke all on function public.massage_release(uuid) from public;
 grant execute on function public.massage_release_as(uuid, uuid) to service_role;
 grant execute on function public.massage_release(uuid) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 上期按過又抽中：要不要讓給候補（本人決定，不強制）
+-- ---------------------------------------------------------------------------
+create or replace function public.massage_answer_yield_as(p_signup_id uuid, p_user_id uuid, p_yield boolean)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  g public.massage_signups;
+  v_res jsonb;
+begin
+  select * into g from public.massage_signups where id = p_signup_id for update;
+  if not found or p_user_id is null or g.user_id <> p_user_id then
+    return jsonb_build_object('ok', false, 'code', 'not_found');
+  end if;
+  if not g.yield_asked or g.released_at is not null then
+    return jsonb_build_object('ok', false, 'code', 'not_asked');
+  end if;
+  if g.yield_answer is not null then
+    return jsonb_build_object('ok', false, 'code', 'already_answered', 'answer', g.yield_answer);
+  end if;
+
+  if not p_yield then
+    update public.massage_signups
+       set yield_answer = 'kept', yield_answered_at = now()
+     where id = g.id;
+    return jsonb_build_object('ok', true, 'answer', 'kept');
+  end if;
+
+  v_res := public.massage_release_row(g.id, false);
+  if not (v_res->>'ok')::boolean then
+    return v_res;
+  end if;
+  update public.massage_signups
+     set yield_answer = 'yielded', yield_answered_at = now()
+   where id = g.id;
+  return v_res || jsonb_build_object('answer', 'yielded');
+end;
+$$;
+
+create or replace function public.massage_answer_yield(p_signup_id uuid, p_yield boolean)
+returns jsonb
+language sql
+security definer
+set search_path = public
+as $$
+  select public.massage_answer_yield_as(p_signup_id, auth.uid(), p_yield);
+$$;
+
+revoke all on function public.massage_answer_yield_as(uuid, uuid, boolean) from public;
+revoke all on function public.massage_answer_yield(uuid, boolean) from public;
+grant execute on function public.massage_answer_yield_as(uuid, uuid, boolean) to service_role;
+grant execute on function public.massage_answer_yield(uuid, boolean) to authenticated;
 
 
 -- ---------------------------------------------------------------------------
@@ -671,12 +895,12 @@ begin
     return jsonb_build_object('ok', false, 'code', 'slot_over');
   end if;
 
-  -- 有時限的邀請過期了：照規則讓給下一位（沒有時限的邀請 offer_expires_at 是 null，不會進來）
+  -- 有時限的邀請過期了：照規則讓給下一位（不設時限的邀請 offer_expires_at 是 null，不會進來）
   if g.offer_expires_at is not null and now() > g.offer_expires_at then
     update public.massage_signups set offer_status = 'expired' where id = g.id;
     perform public.massage_offer_next(
       g.session_id, g.offer_slot_no,
-      (select offer_window_minutes from public.massage_sessions where id = g.session_id));
+      (select onsite_offer_window_minutes from public.massage_sessions where id = g.session_id));
     return jsonb_build_object('ok', false, 'code', 'offer_expired');
   end if;
 
@@ -712,6 +936,59 @@ revoke all on function public.massage_accept_offer_as(uuid, uuid) from public;
 revoke all on function public.massage_accept_offer(uuid) from public;
 grant execute on function public.massage_accept_offer_as(uuid, uuid) to service_role;
 grant execute on function public.massage_accept_offer(uuid) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 管理者：現場按「沒到」
+-- ---------------------------------------------------------------------------
+
+/**
+ * 時段已經開始、人還沒來：記為未到、空出時段、通知候補第一位。
+ * 系統沒辦法知道人到了沒有，所以由在現場的管理者判斷後按下（使用者確認）。
+ */
+create or replace function public.massage_mark_no_show(p_signup_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  g public.massage_signups;
+  s public.massage_sessions;
+  v_offered uuid;
+begin
+  if not public.is_massage_manager() then
+    return jsonb_build_object('ok', false, 'code', 'not_allowed');
+  end if;
+
+  select * into g from public.massage_signups where id = p_signup_id for update;
+  if not found or g.released_at is not null or g.slot_no is null then
+    return jsonb_build_object('ok', false, 'code', 'not_found');
+  end if;
+  select * into s from public.massage_sessions where id = g.session_id;
+
+  if now() < public.massage_slot_start(s.id, g.slot_no) then
+    return jsonb_build_object('ok', false, 'code', 'not_started');
+  end if;
+  if now() >= public.massage_slot_end(s.id, g.slot_no) then
+    return jsonb_build_object('ok', false, 'code', 'slot_over');
+  end if;
+
+  update public.massage_signups
+     set attendance = 'no_show',
+         attendance_marked_by = auth.uid(),
+         attendance_marked_at = now(),
+         released_at = now()
+   where id = g.id;
+
+  v_offered := public.massage_offer_next(s.id, g.slot_no, s.onsite_offer_window_minutes);
+
+  return jsonb_build_object('ok', true, 'freed_slot', g.slot_no, 'offered_signup_id', v_offered);
+end;
+$$;
+
+revoke all on function public.massage_mark_no_show(uuid) from public;
+grant execute on function public.massage_mark_no_show(uuid) to authenticated;
 
 
 -- ---------------------------------------------------------------------------
@@ -761,6 +1038,11 @@ begin
   end if;
   update public.massage_signups set slot_no = p_target_slot where id = g.id;
 
+  -- 換過之後重新判斷有沒有撞到請假（只是標示，不擋：是兩人講好的）
+  update public.massage_signups
+     set slot_conflict = not (slot_no = any(public.massage_ok_slots(session_id, user_id)))
+   where id in (g.id, v_other);
+
   return jsonb_build_object('ok', true, 'swapped_with', v_other);
 end;
 $$;
@@ -774,6 +1056,9 @@ grant execute on function public.massage_move_slot(uuid, int) to authenticated;
 -- ---------------------------------------------------------------------------
 
 -- 本人按「已完成」：只能標自己、只能標「有按到」、時段開始之後才能按
+--
+-- 刻意沒有「沒按到」可以讓本人自己選：「上期按過」只看有沒有按到，如果
+-- 本人能自己回答「沒按到」，下一期就不會被問要不要讓出 —— 有說謊的誘因。
 create or replace function public.massage_mark_done_as(p_signup_id uuid, p_user_id uuid)
 returns jsonb
 language plpgsql
@@ -857,7 +1142,10 @@ grant execute on function public.massage_set_attendance(uuid, text) to authentic
 
 /**
  * 給「送出假單後跳提醒＋釋出按鈕」用（網頁、Slack、HR 代登記三個入口共用）。
- * 回傳這張假單的申請人，還沒結束的按摩期數裡、仍然有效、而且時間撞到的報名。
+ *
+ * 已經排好時段的人：只有撞到「自己那個時段」才算。
+ * 還沒有時段的人（抽籤前、候補）：只有請假讓他「每個時段都不能按」才算
+ * —— 只撞到部分時段的話，排時段 / 遞補時本來就會避開。
  *
  * 呼叫權限：申請人本人、管理者（HR 代登記時），或 service_role（Slack）。
  * service_role 沒有登入身分，auth.uid() 是 null；anon 沒有被授權呼叫，
@@ -885,9 +1173,20 @@ as $$
    where lr.id = p_leave_id
      and (lr.requester_id = auth.uid() or public.is_massage_manager() or auth.uid() is null)
      and s.session_date >= (now() at time zone 'Asia/Taipei')::date
-     and public.massage_leave_overlaps(
-           s.id, lr.start_date::date, lr.end_date::date,
-           lr.start_time::time, lr.end_time::time)
+     and case
+           when g.slot_no is not null then
+             public.massage_leave_touches(
+               s.session_date,
+               public.massage_slot_from(s.start_time, g.slot_no, s.slot_minutes, s.break_minutes),
+               public.massage_slot_to(s.start_time, g.slot_no, s.slot_minutes, s.break_minutes),
+               lr.start_date::date, lr.end_date::date, lr.start_time::time, lr.end_time::time)
+           else
+             cardinality(public.massage_ok_slots(s.id, g.user_id)) = 0
+             and public.massage_leave_touches(
+               s.session_date, s.start_time,
+               s.start_time + make_interval(mins => s.slot_count * (s.slot_minutes + s.break_minutes)),
+               lr.start_date::date, lr.end_date::date, lr.start_time::time, lr.end_time::time)
+         end
    order by s.session_date;
 $$;
 
