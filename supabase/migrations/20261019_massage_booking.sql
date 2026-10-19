@@ -320,6 +320,8 @@ $$;
  *   { state: 'none' }                    沒有請假
  *   { state: 'partial', leave: {...} }   部分時段請假：可以報，排時段時會避開
  *   { state: 'blocked', leave: {...} }   每個時段都撞到請假：不能報
+ * 另外都帶 ok_slots（沒撞到請假的時段），已經排好時段的人可以用來即時判斷
+ * 自己的時段是不是被後來的請假撞到了。
  */
 create or replace function public.massage_my_leave_status(p_session_id uuid)
 returns jsonb
@@ -332,12 +334,33 @@ as $$
     when v.leave is null then jsonb_build_object('state', 'none')
     when cardinality(v.ok) = 0 then jsonb_build_object('state', 'blocked', 'leave', v.leave)
     else jsonb_build_object('state', 'partial', 'leave', v.leave)
-  end
+  end || jsonb_build_object('ok_slots', to_jsonb(v.ok))
   from (
     select public.massage_leave_conflict(p_session_id, auth.uid()) as leave,
            public.massage_ok_slots(p_session_id, auth.uid()) as ok
   ) v;
 $$;
+
+/**
+ * 管理頁用：這一期每一位報名者「沒撞到請假」的時段。
+ * 指定遞補時，畫面要標出誰在那個時段有請假。非管理者呼叫會拿到空的結果。
+ */
+create or replace function public.massage_session_ok_slots(p_session_id uuid)
+returns table (signup_id uuid, ok_slots int[])
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select g.id, public.massage_ok_slots(g.session_id, g.user_id)
+    from public.massage_signups g
+   where g.session_id = p_session_id
+     and g.released_at is null
+     and public.is_massage_manager();
+$$;
+
+revoke all on function public.massage_session_ok_slots(uuid) from public;
+grant execute on function public.massage_session_ok_slots(uuid) to authenticated;
 
 revoke all on function public.massage_slot_from(time, int, int, int) from public;
 revoke all on function public.massage_slot_to(time, int, int, int) from public;

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
+import BenefitsSettings from './benefits/BenefitsSettings'
 import { supabase } from '../lib/supabase'
 import { invokeFunction } from '../lib/api'
 import ExportReport from './ExportReport'
@@ -658,6 +659,8 @@ function AdminPanel({ userProfile }) {
   if (isFinance) {
     tabs.push({ key: 'leave-entitlements', path: '/admin/leave-entitlements', label: t('finleave_title') })
   }
+  // 員工福利設定（按摩預約負責人）：管理員與 HR 都是按摩預約的管理者，兩邊都看得到
+  tabs.push({ key: 'benefits', path: '/admin/benefits', label: t('benefits_settings_tab') })
   tabs.push({ key: 'export', path: '/admin/export', label: t('export_tab') })
 
   // Finance-only users have no 員工帳號管理, so the index route can't land there.
@@ -677,6 +680,7 @@ function AdminPanel({ userProfile }) {
         {isAdmin && <Route path="leave-type-names" element={<LeaveTypeNames />} />}
         {isFinance && <Route path="leave-entitlements" element={<EmployeeLeaveManagement userProfile={userProfile} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
+        <Route path="benefits" element={<BenefitsSettings />} />
         <Route path="export" element={<ExportReport />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

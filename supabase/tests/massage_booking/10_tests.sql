@@ -81,6 +81,8 @@ select t.ok('報名：同一人不能報兩次', public.massage_sign_up('5100000
 select t.ok('報名前狀態：沒有請假 → none', public.massage_my_leave_status('51000000-0000-0000-0000-000000000001')->>'state' = 'none');
 select t.as_user(t.e(3));
 select t.ok('報名前狀態：審核中 14:00–18:00 → partial', public.massage_my_leave_status('51000000-0000-0000-0000-000000000001')->>'state' = 'partial');
+select t.ok('報名前狀態：一併回傳可以按的時段（13:00–13:40 → 時段 1–3）',
+  public.massage_my_leave_status('51000000-0000-0000-0000-000000000001')->'ok_slots' = '[1, 2, 3]'::jsonb);
 select t.ok('部分請假：審核中 14:00–18:00 → 可以報', (public.massage_sign_up('51000000-0000-0000-0000-000000000001')->>'ok')::bool);
 select t.as_user(t.e(4));
 select t.ok('請假：只請上午 09:00–12:00 → 可以報', (public.massage_sign_up('51000000-0000-0000-0000-000000000001')->>'ok')::bool);
@@ -669,4 +671,19 @@ do $$ begin
   perform t.ok('負責人：不能繞過檢查直接改資料表', false);
 exception when insufficient_privilege then perform t.ok('負責人：不能繞過檢查直接改資料表', true);
 end $$;
+reset role;
+
+
+-- =========================================================================
+-- 14. 管理頁：每位報名者可以按的時段
+-- =========================================================================
+set role authenticated;
+select t.as_user(t.e(1));
+select t.ok('管理頁時段資訊：一般同仁拿不到',
+  (select count(*) = 0 from public.massage_session_ok_slots('51000000-0000-0000-0000-000000000001')));
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+select t.ok('管理頁時段資訊：管理者拿得到，部分請假的人只列出可以的時段',
+  (select ok_slots = array[3,4,5,6,7,8,9] from public.massage_session_ok_slots('51000000-0000-0000-0000-000000000001')
+    where signup_id = t.sid('51000000-0000-0000-0000-000000000001', t.e(11)))
+  and (select count(*) = 9 from public.massage_session_ok_slots('51000000-0000-0000-0000-000000000001')));
 reset role;

@@ -1,0 +1,256 @@
+/* 按摩預約 —— 一律用設計 token，深色模式才會跟著變 */
+
+.massage-page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-200);
+  margin-top: var(--space-200);
+}
+
+.massage-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-150);
+  flex-wrap: wrap;
+}
+
+.massage-link {
+  color: var(--sys-color-primary);
+  font-size: var(--type-body-medium-size);
+  text-decoration: none;
+  font-weight: 600;
+}
+.massage-link:hover { text-decoration: underline; }
+
+.massage-card-title {
+  margin: 0 0 var(--space-150);
+  font-size: var(--type-title-medium-size);
+  line-height: var(--type-title-medium-line);
+  color: var(--sys-color-on-surface);
+}
+
+.massage-subtitle {
+  margin: var(--space-200) 0 var(--space-100);
+  font-size: var(--type-title-small-size);
+  color: var(--sys-color-on-surface);
+}
+
+.massage-hint,
+.massage-note {
+  margin: var(--space-100) 0;
+  font-size: var(--type-body-small-size);
+  line-height: var(--type-body-small-line);
+  color: var(--sys-color-on-surface-variant);
+}
+
+.massage-warn {
+  margin: var(--space-100) 0;
+  padding: var(--space-100) var(--space-150);
+  border-radius: var(--shape-corner-small);
+  background: var(--sys-color-warning-container);
+  color: var(--sys-color-on-warning-container);
+  font-size: var(--type-body-small-size);
+  line-height: var(--type-body-small-line);
+}
+
+.massage-muted { color: var(--sys-color-on-surface-variant); }
+
+.massage-actions {
+  display: flex;
+  gap: var(--space-100);
+  flex-wrap: wrap;
+  margin-top: var(--space-150);
+}
+.massage-actions--tight { margin-top: 0; }
+
+/* ----- 本期資訊 ----- */
+.massage-session__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: var(--space-150);
+  flex-wrap: wrap;
+}
+.massage-session__title {
+  font-size: var(--type-title-large-size);
+  line-height: var(--type-title-large-line);
+  font-weight: 700;
+  color: var(--sys-color-on-surface);
+}
+.massage-session__meta {
+  font-size: var(--type-body-medium-size);
+  color: var(--sys-color-on-surface-variant);
+  margin-top: var(--space-050);
+}
+.massage-facts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--space-150);
+  margin: var(--space-200) 0 0;
+}
+.massage-facts dt {
+  font-size: var(--type-label-medium-size);
+  color: var(--sys-color-on-surface-variant);
+}
+.massage-facts dd {
+  margin: var(--space-025) 0 0;
+  font-size: var(--type-body-medium-size);
+  color: var(--sys-color-on-surface);
+  font-weight: 600;
+}
+
+/* ----- 我的預約 ----- */
+.massage-status__main {
+  margin: 0 0 var(--space-100);
+  font-size: var(--type-body-large-size);
+  line-height: var(--type-body-large-line);
+  font-weight: 600;
+  color: var(--sys-color-on-surface);
+}
+.massage-callout {
+  margin-top: var(--space-150);
+  padding: var(--space-150) var(--space-200);
+  border-radius: var(--shape-corner-medium);
+  background: var(--sys-color-surface-container);
+}
+.massage-callout p { margin: 0; }
+.massage-callout--strong {
+  background: var(--sys-color-primary-container);
+  color: var(--sys-color-on-primary-container);
+}
+.massage-callout--strong .massage-status__main,
+.massage-callout--strong .massage-note { color: inherit; }
+
+/* ----- 名單 ----- */
+.massage-waitlist {
+  margin: 0;
+  padding-left: var(--space-300);
+  list-style: decimal outside;
+  color: var(--sys-color-on-surface);
+}
+/* 不能設成 flex：li 一旦不是 list-item，編號就消失了（候補順序本身就是資訊） */
+.massage-waitlist li { display: list-item; margin: var(--space-050) 0; }
+.massage-waitlist li .ui-chip { margin-left: var(--space-100); vertical-align: middle; }
+
+/* ----- 規則 ----- */
+.massage-rules__section + .massage-rules__section { margin-top: var(--space-150); }
+.massage-rules__heading {
+  margin: 0 0 var(--space-050);
+  font-size: var(--type-title-small-size);
+  color: var(--sys-color-on-surface);
+}
+.massage-rules__list {
+  margin: 0;
+  padding-left: var(--space-300);
+  font-size: var(--type-body-medium-size);
+  line-height: var(--type-body-medium-line);
+  color: var(--sys-color-on-surface-variant);
+}
+
+/* ----- 管理：表單 ----- */
+.massage-form { display: flex; flex-direction: column; gap: var(--space-100); }
+.massage-form__row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-150);
+}
+
+/* ----- 管理：現場面板 ----- */
+.massage-slots { display: flex; flex-direction: column; gap: var(--space-100); }
+.massage-slot {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: var(--space-150);
+  padding: var(--space-100) var(--space-150);
+  border: 1px solid var(--sys-color-outline-variant);
+  border-radius: var(--shape-corner-small);
+  background: var(--sys-color-surface-container-lowest);
+}
+.massage-slot--empty { background: var(--sys-color-surface-container-low); border-style: dashed; }
+.massage-slot__time { display: flex; align-items: baseline; gap: var(--space-100); color: var(--sys-color-on-surface); }
+.massage-slot__time strong { font-size: var(--type-title-medium-size); }
+.massage-slot__time span { font-size: var(--type-body-small-size); color: var(--sys-color-on-surface-variant); }
+.massage-slot__who { display: flex; align-items: center; gap: var(--space-100); flex-wrap: wrap; min-width: 0; }
+.massage-slot__name { font-weight: 600; color: var(--sys-color-on-surface); }
+.massage-slot__actions { display: flex; align-items: center; gap: var(--space-100); flex-wrap: wrap; justify-content: flex-end; }
+.massage-slot__actions .ui-field { margin: 0; min-width: 150px; }
+
+@media (max-width: 720px) {
+  .massage-slot { grid-template-columns: 1fr; }
+  .massage-slot__actions { justify-content: flex-start; }
+}
+
+/* ----- 公開抽籤畫面（會投影，字要大） ----- */
+.massage-stage {
+  padding: var(--space-400);
+  border-radius: var(--shape-corner-large);
+  background: var(--sys-color-surface-container-low);
+  color: var(--sys-color-on-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-300);
+  min-height: 60vh;
+}
+.massage-stage:fullscreen { border-radius: 0; justify-content: center; padding: var(--space-600); }
+.massage-stage__head { text-align: center; }
+.massage-stage__title { font-size: var(--type-display-large-size); line-height: var(--type-display-large-line); font-weight: 800; }
+.massage-stage__meta { font-size: var(--type-title-large-size); color: var(--sys-color-on-surface-variant); margin-top: var(--space-100); }
+.massage-stage__names,
+.massage-stage__waitlist {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-100) var(--space-200);
+}
+.massage-stage__name {
+  font-size: var(--type-headline-small-size);
+  line-height: var(--type-headline-small-line);
+  padding: var(--space-050) var(--space-150);
+  border-radius: var(--shape-corner-full);
+  background: var(--sys-color-surface-container-high);
+}
+.massage-stage__label { font-size: var(--type-headline-small-size); font-weight: 700; align-self: center; }
+.massage-stage__cta { display: flex; flex-direction: column; align-items: center; gap: var(--space-200); }
+.massage-stage__cta .ui-btn { font-size: var(--type-title-large-size); padding: var(--space-200) var(--space-500); }
+.massage-stage__note {
+  margin: 0;
+  text-align: center;
+  font-size: var(--type-title-medium-size);
+  color: var(--sys-color-on-surface-variant);
+}
+.massage-stage__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--space-200);
+}
+.massage-stage__cell {
+  padding: var(--space-200);
+  border-radius: var(--shape-corner-medium);
+  background: var(--sys-color-primary-container);
+  color: var(--sys-color-on-primary-container);
+  text-align: center;
+}
+.massage-stage__time { font-size: var(--type-title-large-size); font-weight: 700; }
+.massage-stage__who { font-size: var(--type-headline-large-size); line-height: var(--type-headline-large-line); font-weight: 800; margin-top: var(--space-050); }
+
+/* ----- 送出假單後的提醒（請假表單的成功視窗裡） ----- */
+.massage-leave-reminder {
+  margin-top: var(--space-200);
+  padding: var(--space-150) var(--space-200);
+  border-radius: var(--shape-corner-small);
+  background: var(--sys-color-warning-container);
+  color: var(--sys-color-on-warning-container);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-100);
+  font-size: var(--type-body-medium-size);
+}
+.massage-leave-reminder__row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-150);
+  flex-wrap: wrap;
+}

@@ -8,6 +8,7 @@ import {
   leaveTypeName,
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
+import MassageLeaveReminder from '../components/MassageLeaveReminder'
 import './LeaveForm.css'
 
 const TIME_OPTIONS = []
@@ -244,7 +245,7 @@ function LeaveForm({ userProfile }) {
       ? t('common_days', { n: countWorkdays(form.start_date, form.end_date) })
       : t('common_hours', { n: hours })
 
-    setSuccessInfo({ typeLabel, dateLabel, hoursLabel })
+    setSuccessInfo({ typeLabel, dateLabel, hoursLabel, leaveId: data.id })
   }
 
   const balanceRows = buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides: entitlementOverrides })
@@ -462,6 +463,8 @@ function LeaveForm({ userProfile }) {
           <div><strong>{t('leaveform_success_hours')}{t('common_colon')}</strong>{successInfo.hoursLabel}</div>
           <div><strong>{t('leaveform_flow')}{t('common_colon')}</strong>{flowSteps.length > 0 ? flowSteps.map(s => s.approver?.full_name).join(' → ') : t('leaveform_success_no_flow')}</div>
         </div>
+        {/* 這張假單撞到自己的按摩預約時，提醒他釋出名額（沒撞到就不顯示） */}
+        <MassageLeaveReminder leaveId={successInfo.leaveId} />
       </Dialog>
     )}
     </>

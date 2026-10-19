@@ -80,6 +80,15 @@ export const ReviewIcon = (props) => (
   </Icon>
 )
 
+export const BenefitsIcon = (props) => (
+  <Icon {...props}>
+    <rect x="3.5" y="8.5" width="17" height="4" rx="1" />
+    <path d="M5 12.5V19a1.5 1.5 0 0 0 1.5 1.5h11A1.5 1.5 0 0 0 19 19v-6.5" />
+    <path d="M12 8.5v12" />
+    <path d="M12 8.5C10.5 5 7 4.5 7 6.5S10 8.5 12 8.5c2 0 5 0 5-2s-3.5-1.5-5 2Z" />
+  </Icon>
+)
+
 export const SettingsIcon = (props) => (
   <Icon {...props}>
     <circle cx="12" cy="12" r="3" />
