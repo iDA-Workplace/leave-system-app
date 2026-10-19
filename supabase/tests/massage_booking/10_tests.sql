@@ -687,3 +687,116 @@ select t.ok('管理頁時段資訊：管理者拿得到，部分請假的人只�
     where signup_id = t.sid('51000000-0000-0000-0000-000000000001', t.e(11)))
   and (select count(*) = 9 from public.massage_session_ok_slots('51000000-0000-0000-0000-000000000001')));
 reset role;
+
+
+-- =========================================================================
+-- 15. 異動紀錄
+-- =========================================================================
+-- 取消後重新報名：被覆蓋掉的原始報名時間，紀錄裡要查得到
+select t.ok('紀錄：取消後重新報名 → 報名、取消、重新報名三筆依序都在',
+  (select array_agg(event order by id) from public.massage_events
+    where signup_id = t.sid('51000000-0000-0000-0000-000000000001', t.e(6))
+      and event in ('signed_up', 'withdrew'))
+  = array['signed_up', 'withdrew', 'signed_up']);
+select t.ok('紀錄：重新報名那筆附上原本的報名時間',
+  (select (details->>'reactivated')::bool and details->>'previous_signed_up_at' is not null
+     from public.massage_events
+    where signup_id = t.sid('51000000-0000-0000-0000-000000000001', t.e(6)) and event = 'signed_up'
+    order by id desc limit 1));
+
+-- 抽籤：整期一筆 + 每人一筆（抽籤當下排到的時段，之後換時段也查得回來）
+select t.ok('紀錄：抽籤 → 整期一筆，並記下是誰按的',
+  (select count(*) = 1 and bool_and(actor_id = 'aaaaaaaa-0000-0000-0000-000000000001')
+     from public.massage_events where session_id = '51000000-0000-0000-0000-000000000001' and event = 'drawn'));
+select t.ok('紀錄：抽籤 → 每人一筆結果（9 人）',
+  (select count(*) = 9 from public.massage_events
+    where session_id = '51000000-0000-0000-0000-000000000001' and event = 'draw_result'));
+select t.ok('紀錄：部分請假被避開的人，抽籤結果有標出來',
+  (select (details->>'avoided_leave')::bool from public.massage_events
+    where signup_id = t.sid('51000000-0000-0000-0000-000000000001', t.e(11)) and event = 'draw_result'));
+select t.ok('紀錄：換過時段的人，抽籤當下原本的時段還查得到（名次 5 原本在時段 5）',
+  (select slot_no = 5 from public.massage_events
+    where signup_id = t.byrank('52000000-0000-0000-0000-00000000000b', 5) and event = 'draw_result')
+  and (select slot_no = 6 from public.massage_signups where id = t.byrank('52000000-0000-0000-0000-00000000000b', 5)));
+
+-- 取消 → 系統邀請 → 按「我要」，順序要對
+select t.ok('紀錄：名次 1 取消、系統邀請名次 11、名次 11 按我要，依序記錄',
+  (select array_agg(event order by id) from public.massage_events
+    where session_id = '52000000-0000-0000-0000-00000000000b'
+      and ((signup_id = t.byrank('52000000-0000-0000-0000-00000000000b', 1) and event = 'released')
+        or (signup_id = t.byrank('52000000-0000-0000-0000-00000000000b', 11) and event in ('offered', 'accepted') and slot_no = 1)))
+  = array['released', 'offered', 'accepted']);
+select t.ok('紀錄：系統發的邀請，操作者是「系統」（空白）',
+  (select bool_and(actor_id is null) from public.massage_events
+    where session_id = '52000000-0000-0000-0000-00000000000b' and event = 'offered'));
+select t.ok('紀錄：取消期限後才取消 → 有標記逾期',
+  (select (details->>'late')::bool from public.massage_events
+    where signup_id = t.byrank('52000000-0000-0000-0000-00000000000b', 4) and event = 'released'));
+select t.ok('紀錄：邀請過期有記錄',
+  (select count(*) >= 1 from public.massage_events
+    where signup_id = t.byrank('52000000-0000-0000-0000-00000000000b', 12) and event = 'offer_expired'));
+select t.ok('紀錄：對調時段 → 兩個人各一筆，記下從哪換到哪',
+  (select count(*) = 2 from public.massage_events
+    where session_id = '52000000-0000-0000-0000-00000000000b' and event = 'moved'
+      and ((details->>'from')::int, (details->>'to')::int) in ((5, 6), (6, 5))));
+
+-- 讓出
+select t.ok('紀錄：選擇保留名額 → yield_answered（kept）',
+  (select count(*) = 1 from public.massage_events
+    where signup_id = (select id from yq where k = 2) and event = 'yield_answered' and details->>'answer' = 'kept'));
+select t.ok('紀錄：選擇讓出 → released（reason = yield）',
+  (select count(*) = 1 from public.massage_events
+    where signup_id = (select id from yq where k = 1) and event = 'released' and details->>'reason' = 'yield'));
+
+-- 管理者直接指定：分得出「自己按我要」還是「管理者指定」
+select t.ok('紀錄：管理者直接指定遞補 → assigned，操作者是管理者',
+  (select actor_id = 'aaaaaaaa-0000-0000-0000-000000000001' and slot_no = 1 from public.massage_events
+    where signup_id = t.byrank('5d000000-0000-0000-0000-000000000001', 6) and event = 'assigned'));
+select t.ok('紀錄：被蓋過的系統邀請 → offer_superseded',
+  (select count(*) = 1 from public.massage_events
+    where signup_id = t.byrank('5d000000-0000-0000-0000-000000000001', 4) and event = 'offer_superseded'));
+
+-- 現場沒到、出席
+select t.ok('紀錄：現場按沒到 → no_show，接著系統邀請候補',
+  (select array_agg(event order by id) from public.massage_events
+    where session_id = '5c000000-0000-0000-0000-000000000001' and event in ('no_show', 'offered'))
+  = array['no_show', 'offered']);
+select t.ok('紀錄：本人按已完成 → attendance（by self）',
+  (select details->>'by' = 'self' and details->>'status' = 'attended' from public.massage_events
+    where signup_id = t.sid('59000000-0000-0000-0000-000000000001', t.e(381)) and event = 'attendance'));
+select t.ok('紀錄：管理者標未到再清除 → 兩筆都留著（清除那筆附上原本的值）',
+  (select array_agg(coalesce(details->>'status', '清除') || '/' || coalesce(details->>'previous', '-') order by id)
+     from public.massage_events
+    where signup_id = t.sid('59000000-0000-0000-0000-000000000001', t.e(382)) and event = 'attendance')
+  = array['no_show/-', '清除/no_show']);
+select t.ok('紀錄：更換負責人有記錄',
+  (select count(*) = 1 from public.massage_events where event = 'owner_changed'
+      and details->>'to' = 'aaaaaaaa-0000-0000-0000-000000000001'));
+
+-- 權限
+set role authenticated;
+select t.as_user(t.e(1));
+select t.ok('紀錄：一般同仁看不到', (select count(*) = 0 from public.massage_events));
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000002');
+select t.ok('紀錄：HR 看得到', (select count(*) > 0 from public.massage_events));
+do $$ begin
+  update public.massage_events set event = 'x';
+  perform t.ok('紀錄：管理者也不能修改', false);
+exception when insufficient_privilege then perform t.ok('紀錄：管理者也不能修改', true);
+end $$;
+do $$ begin
+  insert into public.massage_events (event) values ('fake');
+  perform t.ok('紀錄：不能直接新增假紀錄', false);
+exception when insufficient_privilege then perform t.ok('紀錄：不能直接新增假紀錄', true);
+end $$;
+do $$ begin
+  delete from public.massage_events;
+  perform t.ok('紀錄：不能刪除', false);
+exception when insufficient_privilege then perform t.ok('紀錄：不能刪除', true);
+end $$;
+reset role;
+do $$ begin
+  update public.massage_events set event = 'x' where id = (select min(id) from public.massage_events);
+  perform t.ok('紀錄：就算是資料庫擁有者直接改，也會被擋', false);
+exception when raise_exception then perform t.ok('紀錄：就算是資料庫擁有者直接改，也會被擋', true);
+end $$;

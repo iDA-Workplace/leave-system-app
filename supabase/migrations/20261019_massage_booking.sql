@@ -40,6 +40,12 @@
 --     · 全公司一位「按摩預約負責人」，所有給管理者的通知只發給他
 --     · 操作權限仍是管理員與 HR 都可以
 --
+--   異動紀錄                                                   massage_events
+--     · 上面每一個動作都記一筆（誰、什麼時候、做了什麼），只能新增、不能修改
+--     · 只有管理員與 HR 看得到（使用者確認）
+--     · 報名資料表上的欄位只存「現在的狀態」，會被後來的動作覆蓋（例如取消後
+--       重新報名、換時段、遞補邀請重發）；完整經過只能從這裡查
+--
 --   時段交換                                              massage_move_slot
 --     · 同仁私下講好之後告訴管理者，由管理者在系統裡改
 --
@@ -181,6 +187,79 @@ insert into public.massage_settings (id) values (true) on conflict (id) do nothi
 
 comment on column public.massage_settings.owner_id is
   '按摩預約負責人。遞補通知、隔天補標出席的提醒等「給管理者的通知」只發給這個人。';
+
+-- 異動紀錄：只能新增。寫入一律透過下面的函式（massage_log），不開放直接寫。
+create table if not exists public.massage_events (
+  id bigint generated always as identity primary key,
+  session_id uuid references public.massage_sessions(id) on delete cascade,
+  signup_id uuid references public.massage_signups(id) on delete cascade,
+  user_id uuid references public.users(id),      -- 當事人
+  actor_id uuid references public.users(id),     -- 誰做的；null = 系統自動
+  event text not null,
+  slot_no int,
+  details jsonb not null default '{}'::jsonb,
+  -- clock_timestamp 而不是 now()：同一個交易裡的多筆紀錄（例如取消 → 系統邀請
+  -- 下一位）時間才會有先後
+  created_at timestamptz not null default clock_timestamp()
+);
+
+comment on table public.massage_events is
+  '按摩預約的異動紀錄（只能新增）。event 的種類見 massage_log 的說明。'
+  '刪除「還沒抽籤」的期數時，那一期的紀錄會一起刪除（抽過籤的期數本來就不能刪）。';
+
+create index if not exists massage_events_session on public.massage_events (session_id, id);
+create index if not exists massage_events_user on public.massage_events (user_id);
+
+-- 不能改：紀錄寫進去之後就固定了
+create or replace function public.massage_events_no_update()
+returns trigger
+language plpgsql
+as $$
+begin
+  raise exception 'massage_events_append_only: 異動紀錄只能新增，不能修改';
+end;
+$$;
+
+drop trigger if exists massage_events_no_update on public.massage_events;
+create trigger massage_events_no_update
+  before update on public.massage_events
+  for each row execute function public.massage_events_no_update();
+
+/**
+ * 寫一筆異動紀錄。只給其他函式內部呼叫，沒有開放給任何角色。
+ *
+ * event 的種類：
+ *   signed_up        報名（details.reactivated = 取消後重新報名，附原本的報名時間）
+ *   withdrew         抽籤前取消報名
+ *   drawn            抽籤／排定時段（整期一筆，附人數、是否抽籤）
+ *   draw_result      抽籤結果（每人一筆：名次、正取／候補、原本排到的時段）
+ *   released         抽籤後取消／讓出名額（details.reason = cancel / yield）
+ *   yield_answered   回答「要不要讓給候補」（選擇保留時記這筆；選擇讓出記 released）
+ *   offered          系統邀請候補遞補
+ *   offer_expired    有時限的邀請過期
+ *   offer_lost       按「我要」時時段已被占用或已結束
+ *   offer_superseded 管理者直接指定了別人，這個邀請作廢
+ *   accepted         候補按「我要」
+ *   assigned         管理者直接指定候補遞補
+ *   moved            管理者改時段
+ *   no_show          管理者在現場按「沒到」
+ *   attendance       出席標記（本人按已完成，或管理者標記／清除）
+ *   owner_changed    更換按摩預約負責人
+ */
+create or replace function public.massage_log(
+  p_session_id uuid, p_signup_id uuid, p_user_id uuid, p_actor_id uuid,
+  p_event text, p_slot_no int default null, p_details jsonb default '{}'::jsonb
+)
+returns void
+language sql
+security definer
+set search_path = public
+as $$
+  insert into public.massage_events (session_id, signup_id, user_id, actor_id, event, slot_no, details)
+  values (p_session_id, p_signup_id, p_user_id, p_actor_id, p_event, p_slot_no, coalesce(p_details, '{}'::jsonb));
+$$;
+
+revoke all on function public.massage_log(uuid, uuid, uuid, uuid, text, int, jsonb) from public;
 
 
 -- ---------------------------------------------------------------------------
@@ -437,12 +516,17 @@ begin
     update public.massage_signups
        set released_at = null, released_late = false, signed_up_at = now()
      where id = v_row.id;
+    perform public.massage_log(p_session_id, v_row.id, p_user_id, p_user_id, 'signed_up', null,
+      jsonb_build_object('reactivated', true, 'previous_signed_up_at', v_row.signed_up_at,
+                         'partial_leave', v_leave is not null));
     return jsonb_build_object('ok', true, 'signup_id', v_row.id, 'partial_leave', v_leave);
   end if;
 
   insert into public.massage_signups (session_id, user_id)
   values (p_session_id, p_user_id)
   returning * into v_row;
+  perform public.massage_log(p_session_id, v_row.id, p_user_id, p_user_id, 'signed_up', null,
+    jsonb_build_object('partial_leave', v_leave is not null));
   return jsonb_build_object('ok', true, 'signup_id', v_row.id, 'partial_leave', v_leave);
 
 exception when unique_violation then
@@ -637,6 +721,22 @@ begin
     from public.massage_signups
    where session_id = p_session_id and released_at is null;
 
+  -- 紀錄：整期一筆，加上每人一筆（之後換時段、遞補都會改到報名資料，
+  -- 「抽籤當下的結果」只能從這裡查回來）
+  perform public.massage_log(p_session_id, null, null, auth.uid(), 'drawn', null,
+    jsonb_build_object('total', v_total, 'selected', v_selected, 'waitlist', v_total - v_selected,
+                       'was_lottery', v_total > s.slot_count, 'slot_conflicts', v_conflicts,
+                       'yield_asked', v_asked, 'previous_session_id', v_prev));
+  insert into public.massage_events (session_id, signup_id, user_id, actor_id, event, slot_no, details)
+  select g.session_id, g.id, g.user_id, auth.uid(), 'draw_result', g.slot_no,
+         jsonb_build_object('rank', g.draw_rank, 'result', g.result,
+                            'went_last_time', g.went_last_time, 'yield_asked', g.yield_asked,
+                            'slot_conflict', g.slot_conflict,
+                            'avoided_leave', cardinality(public.massage_ok_slots(g.session_id, g.user_id)) < s.slot_count)
+    from public.massage_signups g
+   where g.session_id = p_session_id and g.released_at is null
+   order by g.draw_rank;
+
   return jsonb_build_object(
     'ok', true,
     'total', v_total,
@@ -676,6 +776,7 @@ set search_path = public
 as $$
 declare
   v_id uuid;
+  v_user uuid;
 begin
   if p_slot_no is null or not exists (select 1 from public.massage_sessions where id = p_session_id) then
     return null;
@@ -692,7 +793,7 @@ begin
     return null;
   end if;
 
-  select id into v_id
+  select id, user_id into v_id, v_user
     from public.massage_signups
    where session_id = p_session_id
      and result = 'waitlist'
@@ -720,6 +821,9 @@ begin
          offer_status = 'pending'
    where id = v_id;
 
+  perform public.massage_log(p_session_id, v_id, v_user, null, 'offered', p_slot_no,
+    jsonb_build_object('window_minutes', p_window_minutes));
+
   return v_id;
 end;
 $$;
@@ -739,13 +843,14 @@ declare
   n int := 0;
 begin
   for r in
-    select g.id, g.session_id, g.offer_slot_no, s.onsite_offer_window_minutes
+    select g.id, g.session_id, g.user_id, g.offer_slot_no, s.onsite_offer_window_minutes
       from public.massage_signups g
       join public.massage_sessions s on s.id = g.session_id
      where g.offer_status = 'pending' and g.offer_expires_at <= now()
      for update of g skip locked
   loop
     update public.massage_signups set offer_status = 'expired' where id = r.id;
+    perform public.massage_log(r.session_id, r.id, r.user_id, null, 'offer_expired', r.offer_slot_no);
     perform public.massage_offer_next(r.session_id, r.offer_slot_no, r.onsite_offer_window_minutes);
     n := n + 1;
   end loop;
@@ -766,8 +871,10 @@ grant execute on function public.massage_expire_offers() to service_role;
 /**
  * 釋出名額的共用邏輯（本人取消、讓給候補都走這裡）。呼叫前要先鎖住那一列。
  * p_count_late = false 時，就算過了取消期限也不記未到（讓出名額是好意，不該被記）。
+ * p_actor / p_reason 只用來寫異動紀錄（reason = cancel / yield）。
  */
-create or replace function public.massage_release_row(p_signup_id uuid, p_count_late boolean)
+drop function if exists public.massage_release_row(uuid, boolean);
+create or replace function public.massage_release_row(p_signup_id uuid, p_count_late boolean, p_actor uuid, p_reason text)
 returns jsonb
 language plpgsql
 security definer
@@ -786,6 +893,7 @@ begin
   -- 抽籤前：單純取消報名
   if s.drawn_at is null then
     update public.massage_signups set released_at = now() where id = g.id;
+    perform public.massage_log(s.id, g.id, g.user_id, p_actor, 'withdrew');
     return jsonb_build_object('ok', true, 'phase', 'before_draw');
   end if;
 
@@ -805,6 +913,11 @@ begin
          attendance = case when v_late then 'no_show' else attendance end,
          attendance_marked_at = case when v_late then now() else attendance_marked_at end
    where id = g.id;
+
+  -- 先記「釋出」再邀請下一位，時間軸的順序才會對
+  perform public.massage_log(s.id, g.id, g.user_id, p_actor, 'released', g.slot_no,
+    jsonb_build_object('reason', p_reason, 'late', v_late, 'freed_slot', v_free_slot,
+                       'declined_offer_slot', case when g.offer_status = 'pending' then g.offer_slot_no end));
 
   -- 本人在按摩開始前釋出：不設時限，等候補第一位回覆
   if v_free_slot is not null then
@@ -837,7 +950,7 @@ begin
   if g.released_at is not null then
     return jsonb_build_object('ok', false, 'code', 'already_released');
   end if;
-  return public.massage_release_row(g.id, true);
+  return public.massage_release_row(g.id, true, p_user_id, 'cancel');
 end;
 $$;
 
@@ -850,7 +963,7 @@ as $$
   select public.massage_release_as(p_signup_id, auth.uid());
 $$;
 
-revoke all on function public.massage_release_row(uuid, boolean) from public;
+revoke all on function public.massage_release_row(uuid, boolean, uuid, text) from public;
 revoke all on function public.massage_release_as(uuid, uuid) from public;
 revoke all on function public.massage_release(uuid) from public;
 grant execute on function public.massage_release_as(uuid, uuid) to service_role;
@@ -885,10 +998,12 @@ begin
     update public.massage_signups
        set yield_answer = 'kept', yield_answered_at = now()
      where id = g.id;
+    perform public.massage_log(g.session_id, g.id, g.user_id, p_user_id, 'yield_answered', g.slot_no,
+      jsonb_build_object('answer', 'kept'));
     return jsonb_build_object('ok', true, 'answer', 'kept');
   end if;
 
-  v_res := public.massage_release_row(g.id, false);
+  v_res := public.massage_release_row(g.id, false, p_user_id, 'yield');
   if not (v_res->>'ok')::boolean then
     return v_res;
   end if;
@@ -937,12 +1052,16 @@ begin
   -- 時段已經結束：按了也沒意義
   if now() >= public.massage_slot_end(g.session_id, g.offer_slot_no) then
     update public.massage_signups set offer_status = 'expired' where id = g.id;
+    perform public.massage_log(g.session_id, g.id, g.user_id, p_user_id, 'offer_lost', g.offer_slot_no,
+      jsonb_build_object('reason', 'slot_over'));
     return jsonb_build_object('ok', false, 'code', 'slot_over');
   end if;
 
   -- 有時限的邀請過期了：照規則讓給下一位（不設時限的邀請 offer_expires_at 是 null，不會進來）
   if g.offer_expires_at is not null and now() > g.offer_expires_at then
     update public.massage_signups set offer_status = 'expired' where id = g.id;
+    perform public.massage_log(g.session_id, g.id, g.user_id, p_user_id, 'offer_expired', g.offer_slot_no,
+      jsonb_build_object('on_accept', true));
     perform public.massage_offer_next(
       g.session_id, g.offer_slot_no,
       (select onsite_offer_window_minutes from public.massage_sessions where id = g.session_id));
@@ -954,6 +1073,8 @@ begin
      where session_id = g.session_id and slot_no = g.offer_slot_no and released_at is null
   ) then
     update public.massage_signups set offer_status = 'expired' where id = g.id;
+    perform public.massage_log(g.session_id, g.id, g.user_id, p_user_id, 'offer_lost', g.offer_slot_no,
+      jsonb_build_object('reason', 'slot_taken'));
     return jsonb_build_object('ok', false, 'code', 'slot_taken');
   end if;
 
@@ -963,6 +1084,9 @@ begin
          offer_status = 'accepted',
          promoted_at = now()
    where id = g.id;
+
+  perform public.massage_log(g.session_id, g.id, g.user_id, p_user_id, 'accepted', g.offer_slot_no,
+    jsonb_build_object('rank', g.draw_rank));
 
   return jsonb_build_object('ok', true, 'slot_no', g.offer_slot_no);
 end;
@@ -1025,6 +1149,8 @@ begin
          attendance_marked_at = now(),
          released_at = now()
    where id = g.id;
+
+  perform public.massage_log(s.id, g.id, g.user_id, auth.uid(), 'no_show', g.slot_no);
 
   v_offered := public.massage_offer_next(s.id, g.slot_no, s.onsite_offer_window_minutes);
 
@@ -1095,6 +1221,12 @@ begin
   )
   select coalesce(array_agg(id), '{}') into v_superseded from x;
 
+  insert into public.massage_events (session_id, signup_id, user_id, actor_id, event, slot_no, details)
+  select o.session_id, o.id, o.user_id, auth.uid(), 'offer_superseded', p_slot_no,
+         jsonb_build_object('assigned_signup_id', g.id)
+    from public.massage_signups o
+   where o.id = any(v_superseded);
+
   v_conflict := not (p_slot_no = any(public.massage_ok_slots(s.id, g.user_id)));
 
   update public.massage_signups
@@ -1106,6 +1238,10 @@ begin
                              when offer_status = 'pending' then 'superseded'
                              else offer_status end
    where id = g.id;
+
+  perform public.massage_log(s.id, g.id, g.user_id, auth.uid(), 'assigned', p_slot_no,
+    jsonb_build_object('rank', g.draw_rank, 'slot_conflict', v_conflict,
+                       'had_offer_slot', case when g.offer_status = 'pending' then g.offer_slot_no end));
 
   -- 他原本手上有「別的時段」的邀請：那個時段改邀下一位（不設時限）
   if g.offer_status = 'pending' and g.offer_slot_no is distinct from p_slot_no then
@@ -1147,6 +1283,8 @@ begin
   ) then
     return jsonb_build_object('ok', false, 'code', 'owner_not_manager');
   end if;
+  perform public.massage_log(null, null, p_user_id, auth.uid(), 'owner_changed', null,
+    jsonb_build_object('from', (select owner_id from public.massage_settings where id), 'to', p_user_id));
   update public.massage_settings
      set owner_id = p_user_id, updated_by = auth.uid(), updated_at = now()
    where id;
@@ -1210,6 +1348,14 @@ begin
      set slot_conflict = not (slot_no = any(public.massage_ok_slots(session_id, user_id)))
    where id in (g.id, v_other);
 
+  perform public.massage_log(s.id, g.id, g.user_id, auth.uid(), 'moved', p_target_slot,
+    jsonb_build_object('from', v_from, 'to', p_target_slot, 'swapped_with', v_other));
+  if v_other is not null then
+    perform public.massage_log(s.id, v_other, (select user_id from public.massage_signups where id = v_other),
+      auth.uid(), 'moved', v_from,
+      jsonb_build_object('from', p_target_slot, 'to', v_from, 'swapped_with', g.id));
+  end if;
+
   return jsonb_build_object('ok', true, 'swapped_with', v_other);
 end;
 $$;
@@ -1252,6 +1398,8 @@ begin
   update public.massage_signups
      set attendance = 'attended', attendance_marked_by = p_user_id, attendance_marked_at = now()
    where id = g.id;
+  perform public.massage_log(g.session_id, g.id, g.user_id, p_user_id, 'attendance', g.slot_no,
+    jsonb_build_object('status', 'attended', 'by', 'self'));
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -1291,6 +1439,8 @@ begin
          attendance_marked_by = case when p_status is null then null else auth.uid() end,
          attendance_marked_at = case when p_status is null then null else now() end
    where id = g.id;
+  perform public.massage_log(g.session_id, g.id, g.user_id, auth.uid(), 'attendance', g.slot_no,
+    jsonb_build_object('status', p_status, 'previous', g.attendance, 'by', 'manager'));
   return jsonb_build_object('ok', true);
 end;
 $$;
@@ -1429,6 +1579,7 @@ create trigger massage_sessions_insert_guard
 alter table public.massage_sessions enable row level security;
 alter table public.massage_signups enable row level security;
 alter table public.massage_settings enable row level security;
+alter table public.massage_events enable row level security;
 
 do $$
 begin
@@ -1468,13 +1619,22 @@ begin
       for select to authenticated using (true);
   end if;
 
-  -- massage_signups / massage_settings 刻意沒有任何寫入政策：只能透過上面的函式寫入
+  -- 異動紀錄只有管理員與 HR 看得到（使用者確認）
+  if not exists (select 1 from pg_policies where schemaname = 'public'
+                 and tablename = 'massage_events' and policyname = 'massage_events_managers_read') then
+    create policy massage_events_managers_read on public.massage_events
+      for select to authenticated using (public.is_massage_manager());
+  end if;
+
+  -- massage_signups / massage_settings / massage_events 刻意沒有任何寫入政策：只能透過上面的函式寫入
 end $$;
 
 grant select on public.massage_sessions to authenticated;
 grant insert, update, delete on public.massage_sessions to authenticated;
 grant select on public.massage_signups to authenticated;
 grant select on public.massage_settings to authenticated;
+grant select on public.massage_events to authenticated;
+grant select on public.massage_events to service_role;
 grant all on public.massage_settings to service_role;
 grant all on public.massage_sessions to service_role;
 grant all on public.massage_signups to service_role;
