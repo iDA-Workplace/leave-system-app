@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { Button, Card, Chip, ConfirmDialog, EmptyState, Select, Skeleton } from '../../components/ui'
+import { Button, Card, Chip, ConfirmDialog, EmptyState, Select, Skeleton, Tabs } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import {
@@ -9,6 +9,7 @@ import {
   pendingOfferFor, phaseTone, sessionPhase, sessionWindow, slotEndAt, slotRange, slotStartAt,
   waitlistOf,
 } from '../../lib/massage'
+import MassageRecords from './MassageRecords'
 
 /**
  * 某一期的現場面板（管理者用）。
@@ -24,6 +25,7 @@ function MassageSessionPanel() {
   const [tick, setTick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(null)
+  const [viewChoice, setViewChoice] = useState(null)
   const reload = () => setTick(n => n + 1)
 
   useEffect(() => {
@@ -71,6 +73,8 @@ function MassageSessionPanel() {
     return !ok || ok.includes(n)
   }
   const slots = Array.from({ length: session.slot_count }, (_, i) => i + 1)
+  // 已經結束的期數，點進來多半是要查紀錄；其他時候預設停在現場
+  const view = viewChoice ?? (phase === 'finished' ? 'records' : 'live')
   const unmarked = active.filter(s => s.slot_no && !s.attendance && now >= slotEndAt(session, s.slot_no)).length
 
   return (
@@ -102,7 +106,14 @@ function MassageSessionPanel() {
         {unmarked > 0 && <p className="massage-warn">{t('massage_unmarked_count', { n: unmarked })}</p>}
       </Card>
 
-      {!session.drawn_at ? (
+      <Tabs tabs={[
+        { key: 'live', label: t('massage_tab_live'), active: view === 'live', onClick: () => setViewChoice('live') },
+        { key: 'records', label: t('massage_tab_records'), active: view === 'records', onClick: () => setViewChoice('records') },
+      ]} />
+
+      {view === 'records' ? (
+        <MassageRecords session={session} signups={signups} />
+      ) : !session.drawn_at ? (
         <Card>
           <h3 className="massage-card-title">{t('massage_signup_list', { n: active.length })}</h3>
           {active.length === 0 ? <p className="massage-hint">{t('massage_signup_list_empty')}</p> : (

@@ -8,6 +8,7 @@ import {
   defaultDeadlines, fetchOwnerName, fmtDate, fromTaipeiInput, phaseTone, sessionPhase,
   sessionWindow, toTaipeiInput,
 } from '../../lib/massage'
+import MassagePeopleStats from './MassagePeopleStats'
 
 function blankForm() {
   return {
@@ -232,6 +233,9 @@ function MassageManage() {
           </div>
         )}
       </Card>
+
+      {/* 同仁的跨期紀錄（報名、抽中、按到、取消、讓出、連續沒抽中…） */}
+      <MassagePeopleStats />
 
       {editing && (
         <Dialog
