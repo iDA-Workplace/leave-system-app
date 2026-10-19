@@ -29,7 +29,16 @@
 --     · 候補在空出的那個時段有請假 → 跳過他，問下一位（下一個空出的時段會再問他）
 --
 --   現場沒到                                              massage_mark_no_show
---     · 由管理者在現場按「沒到」→ 系統通知候補第一位
+--     · 由管理者在現場按「沒到」→ 系統通知候補第一位，也通知負責人
+--
+--   管理者直接指定遞補                                  massage_assign_waitlist
+--     · 管理者可以直接指定任何一位候補補上空出的時段，蓋過系統發出的邀請
+--     · 系統顯示候補順序，但不強制照順序（使用者要求候補功能保留彈性：
+--       現場第一位可能剛好不在座位上）
+--
+--   負責人                                                   massage_settings
+--     · 全公司一位「按摩預約負責人」，所有給管理者的通知只發給他
+--     · 操作權限仍是管理員與 HR 都可以
 --
 --   時段交換                                              massage_move_slot
 --     · 同仁私下講好之後告訴管理者，由管理者在系統裡改
@@ -135,7 +144,8 @@ create table if not exists public.massage_signups (
   offer_slot_no int,
   offered_at timestamptz,
   offer_expires_at timestamptz,            -- null = 不設時限
-  offer_status text check (offer_status in ('pending', 'accepted', 'expired', 'declined')),
+  -- superseded = 管理者直接指定了別人（或指定他去別的時段），這個邀請作廢
+  offer_status text check (offer_status in ('pending', 'accepted', 'expired', 'declined', 'superseded')),
   promoted_at timestamptz,
 
   -- 出席
@@ -159,6 +169,18 @@ create unique index if not exists massage_signups_active_slot
   where slot_no is not null and released_at is null;
 
 create index if not exists massage_signups_user on public.massage_signups (user_id);
+
+-- 全公司共用的設定，只有一列（id 固定為 true）
+create table if not exists public.massage_settings (
+  id boolean primary key default true check (id),
+  owner_id uuid references public.users(id),
+  updated_by uuid references public.users(id),
+  updated_at timestamptz not null default now()
+);
+insert into public.massage_settings (id) values (true) on conflict (id) do nothing;
+
+comment on column public.massage_settings.owner_id is
+  '按摩預約負責人。遞補通知、隔天補標出席的提醒等「給管理者的通知」只發給這個人。';
 
 
 -- ---------------------------------------------------------------------------
@@ -992,6 +1014,128 @@ grant execute on function public.massage_mark_no_show(uuid) to authenticated;
 
 
 -- ---------------------------------------------------------------------------
+-- 管理者：直接指定某位候補遞補
+-- ---------------------------------------------------------------------------
+
+/**
+ * 把一位候補直接排進一個空的時段，不經過「邀請 → 按我要」。
+ *
+ * 給現場用：你走過去問到人了，直接按下去就好。刻意保留彈性：
+ *   · 不強制照候補順序
+ *   · 抽籤後、時段結束前都可以用（不限按摩當天）
+ *   · 那個時段有人手上有系統邀請 → 邀請作廢（superseded）
+ *   · 被指定的人自己手上如果有別的時段的邀請 → 也作廢，那個時段改邀下一位
+ *   · 撞到他的請假也可以指定（現場講好的），只標示 slot_conflict
+ */
+create or replace function public.massage_assign_waitlist(p_signup_id uuid, p_slot_no int)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  g public.massage_signups;
+  s public.massage_sessions;
+  v_superseded uuid[];
+  v_reoffered uuid;
+  v_conflict boolean;
+begin
+  if not public.is_massage_manager() then
+    return jsonb_build_object('ok', false, 'code', 'not_allowed');
+  end if;
+
+  select * into g from public.massage_signups where id = p_signup_id for update;
+  if not found or g.released_at is not null or g.result is distinct from 'waitlist' or g.slot_no is not null then
+    return jsonb_build_object('ok', false, 'code', 'not_waitlisted');
+  end if;
+  select * into s from public.massage_sessions where id = g.session_id for update;
+  if p_slot_no is null or p_slot_no < 1 or p_slot_no > s.slot_count then
+    return jsonb_build_object('ok', false, 'code', 'invalid_slot');
+  end if;
+  if now() >= public.massage_slot_end(s.id, p_slot_no) then
+    return jsonb_build_object('ok', false, 'code', 'slot_over');
+  end if;
+  if exists (
+    select 1 from public.massage_signups
+     where session_id = s.id and slot_no = p_slot_no and released_at is null
+  ) then
+    return jsonb_build_object('ok', false, 'code', 'slot_taken');
+  end if;
+
+  -- 這個時段上別人手上的系統邀請作廢
+  with x as (
+    update public.massage_signups
+       set offer_status = 'superseded'
+     where session_id = s.id and offer_status = 'pending'
+       and offer_slot_no = p_slot_no and id <> g.id
+    returning id
+  )
+  select coalesce(array_agg(id), '{}') into v_superseded from x;
+
+  v_conflict := not (p_slot_no = any(public.massage_ok_slots(s.id, g.user_id)));
+
+  update public.massage_signups
+     set slot_no = p_slot_no,
+         result = 'selected',
+         promoted_at = now(),
+         slot_conflict = v_conflict,
+         offer_status = case when offer_status = 'pending' and offer_slot_no = p_slot_no then 'accepted'
+                             when offer_status = 'pending' then 'superseded'
+                             else offer_status end
+   where id = g.id;
+
+  -- 他原本手上有「別的時段」的邀請：那個時段改邀下一位（不設時限）
+  if g.offer_status = 'pending' and g.offer_slot_no is distinct from p_slot_no then
+    v_reoffered := public.massage_offer_next(s.id, g.offer_slot_no, null);
+  end if;
+
+  return jsonb_build_object(
+    'ok', true,
+    'slot_no', p_slot_no,
+    'slot_conflict', v_conflict,
+    'superseded_signup_ids', to_jsonb(v_superseded),
+    'reoffered_signup_id', v_reoffered
+  );
+end;
+$$;
+
+revoke all on function public.massage_assign_waitlist(uuid, int) from public;
+grant execute on function public.massage_assign_waitlist(uuid, int) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
+-- 負責人
+-- ---------------------------------------------------------------------------
+
+-- 只能設成在職的管理員或 HR —— 收到通知卻沒有權限處理，等於沒通知
+create or replace function public.massage_set_owner(p_user_id uuid)
+returns jsonb
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if not public.is_massage_manager() then
+    return jsonb_build_object('ok', false, 'code', 'not_allowed');
+  end if;
+  if p_user_id is not null and not exists (
+    select 1 from public.users
+     where id = p_user_id and coalesce(is_active, true) and (is_admin or is_finance)
+  ) then
+    return jsonb_build_object('ok', false, 'code', 'owner_not_manager');
+  end if;
+  update public.massage_settings
+     set owner_id = p_user_id, updated_by = auth.uid(), updated_at = now()
+   where id;
+  return jsonb_build_object('ok', true);
+end;
+$$;
+
+revoke all on function public.massage_set_owner(uuid) from public;
+grant execute on function public.massage_set_owner(uuid) to authenticated;
+
+
+-- ---------------------------------------------------------------------------
 -- 管理者：改時段（同仁私下換好之後，由管理者在系統裡改）
 -- ---------------------------------------------------------------------------
 
@@ -1261,6 +1405,7 @@ create trigger massage_sessions_insert_guard
 -- ---------------------------------------------------------------------------
 alter table public.massage_sessions enable row level security;
 alter table public.massage_signups enable row level security;
+alter table public.massage_settings enable row level security;
 
 do $$
 begin
@@ -1294,11 +1439,19 @@ begin
       for delete to authenticated using (public.is_massage_manager());
   end if;
 
-  -- massage_signups 刻意沒有任何 insert / update / delete 政策：只能透過上面的函式寫入
+  if not exists (select 1 from pg_policies where schemaname = 'public'
+                 and tablename = 'massage_settings' and policyname = 'massage_settings_read_all') then
+    create policy massage_settings_read_all on public.massage_settings
+      for select to authenticated using (true);
+  end if;
+
+  -- massage_signups / massage_settings 刻意沒有任何寫入政策：只能透過上面的函式寫入
 end $$;
 
 grant select on public.massage_sessions to authenticated;
 grant insert, update, delete on public.massage_sessions to authenticated;
 grant select on public.massage_signups to authenticated;
+grant select on public.massage_settings to authenticated;
+grant all on public.massage_settings to service_role;
 grant all on public.massage_sessions to service_role;
 grant all on public.massage_signups to service_role;

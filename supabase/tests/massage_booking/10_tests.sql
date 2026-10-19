@@ -582,3 +582,91 @@ select t.as_user(t.e(389));
 select t.ok('遞補：時段已經結束才按「我要」→ 拒絕',
   public.massage_accept_offer(t.sid('59000000-0000-0000-0000-000000000001', t.e(389)))->>'code' = 'slot_over');
 reset role;
+
+
+-- =========================================================================
+-- 12. 管理者直接指定遞補（不照順序、蓋過系統邀請）
+-- =========================================================================
+insert into public.massage_sessions (id, title, session_date, slot_count, signup_deadline, cancel_deadline)
+values ('5d000000-0000-0000-0000-000000000001', '指定遞補', t.td() + 90, 3, now() + interval '1 hour',
+        ((t.td() + 90 + time '12:00') at time zone 'Asia/Taipei'));
+insert into public.massage_signups (session_id, user_id, signed_up_at)
+select '5d000000-0000-0000-0000-000000000001', t.e(60 + n), now() + n * interval '1 second' from generate_series(1, 6) n;
+select t.close('5d000000-0000-0000-0000-000000000001');
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+select public.massage_run_draw('5d000000-0000-0000-0000-000000000001');
+
+-- 名次 1 取消 → 系統邀請名次 4（時段 1）
+set role authenticated;
+select t.as_user(t.uidrank('5d000000-0000-0000-0000-000000000001', 1));
+select public.massage_release(t.byrank('5d000000-0000-0000-0000-000000000001', 1));
+select t.as_user(t.e(1));
+select t.ok('指定遞補：一般同仁不能用',
+  public.massage_assign_waitlist(t.byrank('5d000000-0000-0000-0000-000000000001', 6), 1)->>'code' = 'not_allowed');
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+create temp table a1 as select public.massage_assign_waitlist(t.byrank('5d000000-0000-0000-0000-000000000001', 6), 1) r;
+select t.ok('指定遞補：可以不照順序，直接指定名次 6',
+  (select (r->>'ok')::bool and (r->>'slot_no')::int = 1 from a1)
+  and (select slot_no = 1 and result = 'selected' from public.massage_signups
+        where id = t.byrank('5d000000-0000-0000-0000-000000000001', 6)));
+select t.ok('指定遞補：系統原本發給名次 4 的邀請作廢',
+  (select (r->'superseded_signup_ids') ? t.byrank('5d000000-0000-0000-0000-000000000001', 4)::text from a1)
+  and (select offer_status = 'superseded' from public.massage_signups
+        where id = t.byrank('5d000000-0000-0000-0000-000000000001', 4)));
+select t.as_user(t.uidrank('5d000000-0000-0000-0000-000000000001', 4));
+select t.ok('指定遞補：作廢的邀請按「我要」沒有用',
+  public.massage_accept_offer(t.byrank('5d000000-0000-0000-0000-000000000001', 4))->>'code' = 'no_pending_offer');
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+select t.ok('指定遞補：時段已經有人 → 不行',
+  public.massage_assign_waitlist(t.byrank('5d000000-0000-0000-0000-000000000001', 5), 2)->>'code' = 'slot_taken');
+select t.ok('指定遞補：只能指定候補',
+  public.massage_assign_waitlist(t.byrank('5d000000-0000-0000-0000-000000000001', 2), 1)->>'code' = 'not_waitlisted');
+
+-- 名次 2、3 取消 → 系統分別邀請名次 4（時段 2）、名次 5（時段 3）
+select t.as_user(t.uidrank('5d000000-0000-0000-0000-000000000001', 2));
+select t.ok('指定遞補：作廢過一次的人，之後空出的時段還是會被系統問',
+  (public.massage_release(t.byrank('5d000000-0000-0000-0000-000000000001', 2))->>'offered_signup_id')::uuid
+    = t.byrank('5d000000-0000-0000-0000-000000000001', 4));
+select t.as_user(t.uidrank('5d000000-0000-0000-0000-000000000001', 3));
+select public.massage_release(t.byrank('5d000000-0000-0000-0000-000000000001', 3));
+-- 管理者把手上有時段 2 邀請的名次 4，直接排去時段 3
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+create temp table a2 as select public.massage_assign_waitlist(t.byrank('5d000000-0000-0000-0000-000000000001', 4), 3) r;
+select t.ok('指定遞補：被指定的人原本手上別的時段的邀請，改邀下一位（名次 5 改問時段 2）',
+  (select (r->>'reoffered_signup_id')::uuid = t.byrank('5d000000-0000-0000-0000-000000000001', 5) from a2)
+  and (select offer_status = 'pending' and offer_slot_no = 2 from public.massage_signups
+        where id = t.byrank('5d000000-0000-0000-0000-000000000001', 5)));
+reset role;
+
+-- 撞到請假也可以指定，只標示
+select t.leave(t.uidrank('5d000000-0000-0000-0000-000000000001', 5), t.td()+89, t.td()+91, '09:00', '18:00');
+set role authenticated;
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+create temp table a3 as select public.massage_assign_waitlist(t.byrank('5d000000-0000-0000-0000-000000000001', 5), 2) r;
+select t.ok('指定遞補：撞到請假也可以指定（現場講好的），但標示衝突',
+  (select (r->>'ok')::bool and (r->>'slot_conflict')::bool from a3)
+  and (select slot_conflict and offer_status = 'accepted' from public.massage_signups
+        where id = t.byrank('5d000000-0000-0000-0000-000000000001', 5)));
+reset role;
+
+
+-- =========================================================================
+-- 13. 負責人
+-- =========================================================================
+set role authenticated;
+select t.as_user(t.e(1));
+select t.ok('負責人：一般同仁不能設定', public.massage_set_owner(t.e(1))->>'code' = 'not_allowed');
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000002');
+select t.ok('負責人：只能設成管理員或 HR', public.massage_set_owner(t.e(1))->>'code' = 'owner_not_manager');
+select t.ok('負責人：HR 可以把負責人設成管理員',
+  (public.massage_set_owner('aaaaaaaa-0000-0000-0000-000000000001')->>'ok')::bool);
+select t.as_user(t.e(1));
+select t.ok('負責人：全公司都看得到是誰',
+  (select owner_id from public.massage_settings) = 'aaaaaaaa-0000-0000-0000-000000000001');
+select t.as_user('aaaaaaaa-0000-0000-0000-000000000001');
+do $$ begin
+  update public.massage_settings set owner_id = null;
+  perform t.ok('負責人：不能繞過檢查直接改資料表', false);
+exception when insufficient_privilege then perform t.ok('負責人：不能繞過檢查直接改資料表', true);
+end $$;
+reset role;

@@ -2,7 +2,7 @@
 
 驗證 `migrations/20261019_massage_booking.sql` 的所有規則（報名、部分請假、
 排時段避開請假、一起抽籤＋讓出詢問、公平性、遞補、現場沒到、鎖定、權限、
-出席），共 99 項。
+出席、管理者直接指定遞補、負責人），共 113 項。
 
 **不要在 Supabase 上跑。** 這是給本機 Postgres 16 用的：`00_stub.sql` 會建立
 Supabase 的替身（`auth.uid()`、`anon` / `authenticated` / `service_role` 角色、
