@@ -13,9 +13,14 @@ createdb mt
 psql -d mt -f supabase/tests/massage_booking/00_stub.sql
 psql -d mt -f supabase/migrations/20261019_massage_booking.sql
 psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/10_tests.sql
+
+# Slack 通知用的「發過了沒」紀錄（20261020_massage_slack.sql），15 項
+psql -d mt -f supabase/migrations/20261020_massage_slack.sql
+psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/20_slack_tests.sql
 ```
 
-最後兩個查詢會列出每一項的結果與「N / N 通過」。
+兩支測試最後的兩個查詢都會列出每一項的結果與「N / N 通過」。
+（20_slack_tests.sql 要接在 10_tests.sql 之後跑，沿用它留下的資料。）
 
 公平性那一項會抽 400 次籤，檢查 17 選 9 時每個人的中籤次數都在期望值
 211.8 ± 4 個標準差內，而且上期按過與沒按過的人平均一樣 —— 這一項本質上

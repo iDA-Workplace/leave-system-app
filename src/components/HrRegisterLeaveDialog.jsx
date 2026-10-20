@@ -4,6 +4,7 @@ import { Button, Dialog, Select, Textarea } from './ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
 import { calcHours, countWorkdays, leaveTypeName } from '../lib/leaveEntitlements'
+import { remindMassageForLeave } from '../lib/massage'
 
 // 同仁要在幾天內確認。改這個數字的話，Slack 通知裡那句「N 天內未確認視同
 // 確認」會跟著變（文字用的是同一個變數），但排程那邊是讀 ack_deadline 欄位，
@@ -106,6 +107,8 @@ function HrRegisterLeaveDialog({ hrUser, onClose, onDone }) {
     const { error: notifyError } = await supabase.functions.invoke('send-slack-notification', {
       body: { type: 'hr_registered', request_id: data.id },
     })
+    // 撞到同仁已報名／排好的按摩 → Slack 私訊同仁本人，請他釋出名額
+    remindMassageForLeave(data.id)
 
     setSaving(false)
     onDone?.()

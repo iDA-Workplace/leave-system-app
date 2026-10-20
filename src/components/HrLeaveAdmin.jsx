@@ -4,6 +4,7 @@ import { Button, Chip, ConfirmDialog, Dialog, EmptyState, Select, Skeleton, Text
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
 import { calcHours, countWorkdays, leaveTypeName } from '../lib/leaveEntitlements'
+import { remindMassageForLeave } from '../lib/massage'
 
 /**
  * HR 的假單管理：修改與刪除。
@@ -166,6 +167,8 @@ function HrLeaveAdmin({ hrUser }) {
       await supabase.functions.invoke('send-slack-notification', {
         body: { type: 'hr_registered', request_id: editing.id },
       })
+      // 改了日期／時間 → 可能變成撞到按摩，一樣提醒同仁本人
+      remindMassageForLeave(editing.id)
     }
 
     setSaving(false)

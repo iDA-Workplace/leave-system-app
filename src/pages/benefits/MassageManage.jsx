@@ -5,8 +5,8 @@ import { Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, Skeleton, TextFi
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import {
-  defaultDeadlines, fetchOwnerName, fmtDate, fromTaipeiInput, phaseTone, sessionPhase,
-  sessionWindow, toTaipeiInput,
+  defaultDeadlines, fetchOwnerName, fmtDate, fromTaipeiInput, phaseTone, pokeMassageNotify,
+  sessionPhase, sessionWindow, toTaipeiInput,
 } from '../../lib/massage'
 import MassagePeopleStats from './MassagePeopleStats'
 
@@ -133,6 +133,7 @@ function MassageManage() {
     setSaving(false)
     if (error || !data) { showToast(t('massage_err_save', { msg: error?.message || '' }), { tone: 'error' }); return }
     showToast(t('massage_toast_session_created'))
+    pokeMassageNotify() // 開放報名公告不用等到下一分鐘
     setForm(blankForm())
     navigate(`/benefits/massage/manage/${data.id}`)
   }

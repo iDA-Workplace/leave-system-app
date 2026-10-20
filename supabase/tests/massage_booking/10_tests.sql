@@ -800,3 +800,6 @@ do $$ begin
   perform t.ok('紀錄：就算是資料庫擁有者直接改，也會被擋', false);
 exception when raise_exception then perform t.ok('紀錄：就算是資料庫擁有者直接改，也會被擋', true);
 end $$;
+
+select name, pass, detail from t.results order by n;
+select format('%s / %s 通過', count(*) filter (where pass), count(*)) from t.results;

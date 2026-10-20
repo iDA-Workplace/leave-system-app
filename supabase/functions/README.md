@@ -346,3 +346,77 @@ ${name}!` 那種），如果貼上我們的程式碼時沒有先把範例整個�
 台灣全年 UTC+8、沒有日光節約時間，所以程式裡用固定位移換算（`_shared/leave.ts`
 的 `TAIPEI_OFFSET_MS`），沒有拉整套時區資料庫進來。
 Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己換算。
+
+---
+
+## 按摩預約 × Slack
+
+### 做了什麼
+
+| 誰 | 在哪 | 內容 |
+|---|---|---|
+| 所有人 | 私訊 bot 打「按摩」（英文 `massage`） | 回一張卡片：最近的 1～3 期、自己的狀態，以及報名／取消／釋出／我要／讓出／已完成／看名單等按鈕 |
+| 所有人 | 請假公告頻道（`SLACK_LEAVE_CHANNEL`） | 新的一期開放報名時公告（附「報名」按鈕）；抽籤完成時公告完整的正取（照時段）＋候補（照順位） |
+| 被詢問是否讓出的人 | 私訊 | 抽中、上期有按到、而且有人候補時：「要不要讓給候補？」＋「不用，我要按」「讓給候補」 |
+| 被邀請遞補的候補 | 私訊 | 「時段 N 有空位，輪到你了！」＋「我要」 |
+| 負責人 | 私訊 | 同一時間收到「系統已通知候補 ○○ 遞補時段 N」（候補沒設 Slack 的話會特別註明） |
+| 邀請被負責人改成其他安排的候補 | 私訊 | 「遞補邀請已取消」 |
+| 有時段、還沒標出席的人 | 私訊，按摩隔天 10:00 | 「昨天的按摩有按到嗎？」＋只有一顆「有按到」 |
+| 負責人 | 私訊，按摩隔天 12:00 | 還沒回覆的人的清單（全部都回覆了就不發） |
+| 請假撞到按摩的人 | 私訊 | 在 Slack 送假單、HR 在 Slack 或網頁代登記（含改了代登記的假單）之後：「請把名額釋出」＋每一期一顆「釋出名額」／「取消報名」 |
+
+網頁上自己送假單的人不會收到 Slack 私訊 —— 網頁送出後的畫面上本來就有同樣的提醒和按鈕。
+
+### 兩支 function
+
+- **`slack-interactions`（既有，要重新部署）**：多了打「按摩」與所有按摩按鈕的處理。
+- **`massage-notify`（新的）**：上表所有「主動發出去」的通知。由排程每分鐘呼叫；網頁上與 Slack 上做完按摩相關動作時也會立刻叫它跑一次，通知不用等到下一分鐘。重複呼叫不會重複發（每一筆都先在資料庫「占住」才發，見 `migrations/20261020_massage_slack.sql`）。
+
+### 部署步驟
+
+1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`。
+2. **`slack-interactions`**：點進既有的 function → Code → 整份換成 `slack-interactions/index.ts` → Deploy。
+3. **`massage-notify`**：Deploy a new function → Via Editor → **名稱先改成 `massage-notify`** → 貼上 `massage-notify/index.ts` 全部內容 → Deploy。
+   **Verify JWT 維持開啟（預設值）**：呼叫它的是排程（帶 secret key）、網頁（帶登入者的 token）與 `slack-interactions`（帶 service role key），都有金鑰。
+4. **Slack App 不用改設定**：用到的權限（`chat:write`、`im:write`、`im:history`）、Interactivity、`message.im` 事件都是請假功能已經開好的。
+5. **排程（每分鐘一次）**，在 SQL Editor 執行（key 的新舊制差異見上面「四」）：
+
+   ```sql
+   select cron.schedule(
+     'massage-notify',
+     '* * * * *',
+     $$
+     select net.http_post(
+       url     := 'https://<你的專案ref>.supabase.co/functions/v1/massage-notify',
+       headers := jsonb_build_object(
+         'Content-Type',  'application/json',
+         'apikey',        '<你的 secret key（新制）或 service_role key（舊制）>',
+         'Authorization', 'Bearer <同一把 key>'
+       ),
+       body    := '{}'::jsonb
+     );
+     $$
+   );
+   ```
+
+   每分鐘一次 = 一個月約 4.3 萬次呼叫，在 Supabase 免費額度（每月 50 萬次）內。大部分時候它查一下發現沒事就結束了。
+
+6. **按摩負責人**：網頁「管理後台 → 員工福利」選負責人，而且負責人的帳號要填 Slack User ID，才收得到給負責人的私訊。
+
+### 測試
+
+手動打一次，回傳的是這次做了幾件事：
+
+```bash
+curl -X POST 'https://<ref>.supabase.co/functions/v1/massage-notify' \
+  -H 'apikey: <key>' -H 'Authorization: Bearer <key>' -H 'Content-Type: application/json' -d '{}'
+# → {"events":0,"announced":0,"asked":0,"owner_reminded":0}
+```
+
+如果回的是 `{"message":"Hello ..."}` 之類的範例格式，代表貼上的程式碼沒有存到（見上面「部署後一定要重新確認 Code 分頁的內容」）。
+
+### 注意
+
+- **通知只看 2 天內的異動**：排程停了很久之後重新開，不會把一堆過時的通知一口氣補發。
+- **發送失敗會重試**：Slack 或網路暫時有問題時，5 分鐘後重試，最多 3 次。代價是極少數情況下同一則可能收到兩次 —— 比起漏發遞補邀請好。
+- **「隔天」就是日曆上的隔天**：週五的按摩，隔天是週六 10:00 問。

@@ -168,8 +168,23 @@ export function massageErrorKey(code) {
 export async function callMassage(fn, args) {
   const { data, error } = await supabase.rpc(fn, args)
   if (error) return { ok: false, errorKey: 'massage_err_unknown', raw: error.message }
+  // 有些「失敗」其實也改了資料（例如按「我要」時邀請已過期 → 改問下一位），所以不論成敗都觸發
+  pokeMassageNotify()
   if (data && data.ok === false) return { ok: false, errorKey: massageErrorKey(data.code), data }
   return { ok: true, data }
+}
+
+/**
+ * 叫 Slack 通知那支（massage-notify）現在跑一次，通知不用等到下一分鐘的排程。
+ * 不等它、失敗也不管 —— 排程每分鐘都會補做，畫面不該因為 Slack 慢而卡住。
+ */
+export function pokeMassageNotify(body = {}) {
+  supabase.functions.invoke('massage-notify', { body }).catch(() => {})
+}
+
+/** HR 代登記（或改了代登記的假單）之後：撞到當事人的按摩 → Slack 私訊提醒當事人釋出 */
+export function remindMassageForLeave(leaveId) {
+  pokeMassageNotify({ type: 'leave_reminder', leave_id: leaveId })
 }
 
 /** 一期的完整資料：這一期 + 所有報名（含已取消的） */
