@@ -24,8 +24,8 @@ create table if not exists public.massage_notify_log (
   sent_at timestamptz                              -- 處理完成（該發的都發了）
 );
 
--- 不是由某一筆異動觸發、而是「時間到了」才做的事：開放報名公告、隔天問
--- 「有按到嗎？」、提醒負責人。job_key 例如 'ask_attendance:<signup id>'，
+-- 不是由某一筆異動觸發、而是「時間到了」才做的事：開放報名公告、時段結束
+-- 時問「有按到嗎？」。job_key 例如 'ask_attendance:<signup id>'，
 -- 寫進來就代表做過了，不會重複做。
 create table if not exists public.massage_jobs (
   job_key text primary key,

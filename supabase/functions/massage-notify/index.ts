@@ -22,11 +22,13 @@
 //      draw_result       → 被詢問「要不要讓給候補」的人：私訊，附兩顆按鈕
 //      offered           → 被邀請遞補的候補：私訊，附「我要」；同時私訊負責人
 //      offer_superseded  → 邀請被負責人改成其他安排：私訊告知
-//    其他種類（報名、取消、換時段……）不發通知。
+//      assigned          → 負責人直接指定某位候補遞補：私訊被指定的人
+//      moved             → 負責人改了某人的時段（交換的話兩個人各一筆）：私訊當事人
+//    其他種類（報名、取消、出席標記……）不發通知。
 // c. 時間到才做的事：
 //      開放報名公告     新的一期還在報名期間 → 公告到頻道，附「報名」按鈕
-//      隔天 10:00      有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
-//      隔天 12:00      還是沒回覆的 → 整理成一則私訊給負責人
+//      時段一結束       有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
+//                      沒回覆就不再追，由管理者在網頁的現場面板補登記（使用者決定）
 //
 // ── 語言 ─────────────────────────────────────────────────────────
 // 私訊照收件人自己的 users.language；頻道公告照 SLACK_CHANNEL_LANGUAGE
@@ -35,10 +37,6 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const SLACK_API = 'https://slack.com/api'
-
-// 隔天幾點問「有按到嗎？」、幾點提醒負責人（台北時間，分鐘數）
-const ASK_ATTENDANCE_AT = 10 * 60
-const REMIND_OWNER_AT = 12 * 60
 
 type Lang = 'zh' | 'en'
 const normalizeLang = (v: string | null | undefined): Lang => (v === 'en' ? 'en' : 'zh')
@@ -88,14 +86,19 @@ const T = {
     superseded_text: '💆 遞補邀請已取消',
     superseded_heading: '💆 *{title}*（{date}）{slot}的遞補邀請已取消 —— 負責人已經改成其他安排。',
 
-    ask_text: '💆 昨天的按摩有按到嗎？',
-    ask_heading: '💆 昨天（{date}）的 *{title}*，你的{slot}。有按到嗎？',
+    assigned_text: '💆 你被安排遞補按摩',
+    assigned_heading: '💆 *{title}*（{date}）負責人已安排你遞補{slot}。',
+    assigned_conflict: '⚠️ 這個時段跟你的請假撞到了，請找同仁交換，換好後告訴負責人。',
+    assigned_note: '不能來的話，請私訊我「按摩」或到網頁釋出名額。',
+
+    moved_text: '💆 你的按摩時段已調整',
+    moved_heading: '💆 *{title}*（{date}）負責人已調整你的時段：\n{from} → *{to}*',
+    moved_swapped: '跟 {name} 交換。',
+
+    ask_text: '💆 剛剛的按摩有按到嗎？',
+    ask_heading: '💆 *{title}*（{date}）你的{slot}剛結束。有按到嗎？',
     ask_note: '有按到請按下面的按鈕；沒按到不用回覆。',
     btn_done: '有按到',
-
-    owner_unmarked_text: '💆 還有人沒回覆是否有按到',
-    owner_unmarked_heading: '💆 *{title}*（{date}）還有 {k} 位沒有回覆是否有按到：\n{lines}',
-    owner_unmarked_note: '請到網頁「員工福利 → 按摩預約 → 管理」的現場面板標記出席。',
 
     hit_text: '💆 請釋出按摩名額',
     hit_heading_self: '💆 你剛請的假跟按摩預約撞到了，請把名額釋出給其他同仁：',
@@ -152,14 +155,19 @@ const T = {
     superseded_text: '💆 Waitlist offer withdrawn',
     superseded_heading: '💆 *{title}* ({date}): the offer for {slot} was withdrawn — the organizer arranged it differently.',
 
-    ask_text: '💆 Did you get your massage yesterday?',
-    ask_heading: '💆 *{title}* yesterday ({date}): your {slot}. Did you get your massage?',
+    assigned_text: '💆 You were given a massage slot',
+    assigned_heading: '💆 *{title}* ({date}): the organizer gave you {slot} from the waitlist.',
+    assigned_conflict: '⚠️ This slot overlaps your leave. Please swap with a colleague and let the organizer know.',
+    assigned_note: 'If you cannot make it, DM me "massage" or release the spot on the website.',
+
+    moved_text: '💆 Your massage slot changed',
+    moved_heading: '💆 *{title}* ({date}): the organizer changed your slot:\n{from} → *{to}*',
+    moved_swapped: 'Swapped with {name}.',
+
+    ask_text: '💆 Did you get your massage?',
+    ask_heading: '💆 *{title}* ({date}): your {slot} just ended. Did you get your massage?',
     ask_note: 'If you did, tap the button below. If not, no need to reply.',
     btn_done: 'Yes, I did',
-
-    owner_unmarked_text: '💆 Some people have not confirmed their massage',
-    owner_unmarked_heading: '💆 *{title}* ({date}): {k} people have not confirmed whether they got their massage:\n{lines}',
-    owner_unmarked_note: 'Please mark attendance in the live panel on the website (Benefits → Massage → Manage).',
 
     hit_text: '💆 Please release your massage spot',
     hit_heading_self: '💆 The leave you just filed overlaps your massage booking. Please release your spot for others:',
@@ -217,11 +225,6 @@ function sessionWindow(s: Session) {
 function taipeiNow() {
   const d = new Date(Date.now() + 8 * 3600_000)
   return { date: d.toISOString().slice(0, 10), minutes: d.getUTCHours() * 60 + d.getUTCMinutes() }
-}
-function addDays(date: string, n: number) {
-  const d = new Date(`${date}T00:00:00Z`)
-  d.setUTCDate(d.getUTCDate() + n)
-  return d.toISOString().slice(0, 10)
 }
 
 function fmtDate(lang: Lang, date: string) {
@@ -344,7 +347,6 @@ Deno.serve(async req => {
     summary.events = await processEvents(ctx)
     summary.announced = await announceOpenSessions(ctx)
     summary.asked = await askAttendance(ctx)
-    summary.owner_reminded = await remindOwner(ctx)
 
     return new Response(JSON.stringify(summary), { headers: { 'Content-Type': 'application/json' } })
   } catch (e) {
@@ -390,6 +392,8 @@ async function handleEvent(ctx: Ctx, e: MassageEvent) {
     case 'draw_result': return e.details?.yield_asked ? askYield(ctx, e) : undefined
     case 'offered': return notifyOffer(ctx, e)
     case 'offer_superseded': return notifySuperseded(ctx, e)
+    case 'assigned': return notifyAssigned(ctx, e)
+    case 'moved': return notifyMoved(ctx, e)
   }
 }
 
@@ -498,6 +502,51 @@ async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
   ])
 }
 
+/** 負責人直接指定這位候補遞補（使用者決定：要通知被指定的人） */
+async function notifyAssigned(ctx: Ctx, e: MassageEvent) {
+  const s = await ctx.session(e.session_id!)
+  const p = await ctx.person(e.user_id)
+  if (!s || !p?.slack_user_id || !e.signup_id || !e.slot_no || e.actor_id === e.user_id) return
+  // 處理到這筆時已經又被改掉（取消、換時段）就不發，之後那一筆會有自己的通知
+  const { data: g } = await ctx.db.from('massage_signups')
+    .select('slot_no, released_at').eq('id', e.signup_id).maybeSingle()
+  if (!g || g.released_at || g.slot_no !== e.slot_no) return
+
+  const lang = normalizeLang(p.language)
+  const blocks: unknown[] = [
+    section(t(lang, 'assigned_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no) })),
+  ]
+  if (e.details?.slot_conflict) blocks.push(section(t(lang, 'assigned_conflict')))
+  blocks.push(contextLine(t(lang, 'assigned_note')))
+  await dm(p.slack_user_id, t(lang, 'assigned_text'), blocks)
+}
+
+/** 負責人改了時段（使用者決定：要通知當事人）。交換的話資料庫會記兩筆，兩個人各收到自己的。 */
+async function notifyMoved(ctx: Ctx, e: MassageEvent) {
+  const s = await ctx.session(e.session_id!)
+  const p = await ctx.person(e.user_id)
+  const from = Number(e.details?.from)
+  const to = Number(e.details?.to)
+  if (!s || !p?.slack_user_id || !e.signup_id || !from || !to || e.actor_id === e.user_id) return
+  const { data: g } = await ctx.db.from('massage_signups')
+    .select('slot_no, released_at').eq('id', e.signup_id).maybeSingle()
+  if (!g || g.released_at || g.slot_no !== to) return
+
+  const lang = normalizeLang(p.language)
+  const blocks: unknown[] = [
+    section(t(lang, 'moved_heading', {
+      title: s.title, date: fmtDate(lang, s.session_date), from: slotText(lang, s, from), to: slotText(lang, s, to),
+    })),
+  ]
+  if (e.details?.swapped_with) {
+    const { data: other } = await ctx.db.from('massage_signups')
+      .select('user_id').eq('id', e.details.swapped_with).maybeSingle()
+    const otherName = (await ctx.person(other?.user_id ?? null))?.full_name
+    if (otherName) blocks.push(contextLine(t(lang, 'moved_swapped', { name: otherName })))
+  }
+  await dm(p.slack_user_id, t(lang, 'moved_text'), blocks)
+}
+
 // ===== c. 時間到才做的事 =====
 
 /** 還在報名期間、還沒公告過的期數 → 公告到頻道 */
@@ -525,28 +574,27 @@ async function announceOpenSessions(ctx: Ctx) {
   return n
 }
 
-/** 昨天那一期：有時段、沒取消、還沒標出席的人 */
-async function unmarkedOf(ctx: Ctx, sessionId: string) {
-  const { data } = await ctx.db.from('massage_signups')
-    .select('id, user_id, slot_no')
-    .eq('session_id', sessionId).not('slot_no', 'is', null).is('released_at', null).is('attendance', null)
-    .order('slot_no')
-  return data ?? []
-}
-
-async function yesterdaysSessions(ctx: Ctx) {
-  const { date } = taipeiNow()
-  const { data } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
-    .eq('session_date', addDays(date, -1)).not('drawn_at', 'is', null)
-  return (data ?? []).map(normalizeSession)
-}
-
-/** 隔天 10:00 起：私訊「有按到嗎？」，只有一顆「有按到」 */
+/**
+ * 每個人的時段一結束：私訊「有按到嗎？」，只有一顆「有按到」。
+ *
+ * 排程每分鐘跑一次，所以大約在時段結束後 1 分鐘內收到。已經自己按過
+ * 「已完成」、被標記沒到、或已經取消的人不會收到。沒回覆不會再追 ——
+ * 由管理者在網頁的現場面板補登記（使用者決定）。只看「今天」的期數：
+ * 排程如果停過，不會隔天才補問「剛剛的按摩」。
+ */
 async function askAttendance(ctx: Ctx) {
-  if (taipeiNow().minutes < ASK_ATTENDANCE_AT) return 0
+  const { date } = taipeiNow()
+  const { data: sessions } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
+    .eq('session_date', date).not('drawn_at', 'is', null)
   let n = 0
-  for (const s of await yesterdaysSessions(ctx)) {
-    for (const g of await unmarkedOf(ctx, s.id)) {
+  for (const raw of sessions ?? []) {
+    const s = normalizeSession(raw)
+    const { data: rows } = await ctx.db.from('massage_signups')
+      .select('id, user_id, slot_no')
+      .eq('session_id', s.id).not('slot_no', 'is', null).is('released_at', null).is('attendance', null)
+    for (const g of rows ?? []) {
+      const slotEnd = new Date(`${s.session_date}T${slotRange(s, g.slot_no).to}:00+08:00`)
+      if (Date.now() < slotEnd.getTime()) continue
       const p = await ctx.person(g.user_id)
       if (!p?.slack_user_id) continue
       if (!(await claim(ctx, `ask_attendance:${g.id}`))) continue
@@ -558,28 +606,6 @@ async function askAttendance(ctx: Ctx) {
       ])
       n++
     }
-  }
-  return n
-}
-
-/** 隔天 12:00 起：還是沒回覆的，整理成一則私訊給負責人 */
-async function remindOwner(ctx: Ctx) {
-  if (taipeiNow().minutes < REMIND_OWNER_AT) return 0
-  const owner = await ctx.owner()
-  if (!owner?.slack_user_id) return 0
-  let n = 0
-  for (const s of await yesterdaysSessions(ctx)) {
-    const rows = await unmarkedOf(ctx, s.id)
-    if (!(await claim(ctx, `remind_owner:${s.id}`))) continue
-    if (rows.length === 0) continue
-    const lang = normalizeLang(owner.language)
-    const lines: string[] = []
-    for (const g of rows) lines.push(`• ${slotText(lang, s, g.slot_no)} ${(await ctx.person(g.user_id))?.full_name ?? '—'}`)
-    await dm(owner.slack_user_id, t(lang, 'owner_unmarked_text'), [
-      section(t(lang, 'owner_unmarked_heading', { title: s.title, date: fmtDate(lang, s.session_date), k: rows.length, lines: lines.join('\n') })),
-      contextLine(t(lang, 'owner_unmarked_note')),
-    ])
-    n++
   }
   return n
 }

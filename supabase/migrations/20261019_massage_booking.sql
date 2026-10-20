@@ -186,7 +186,7 @@ create table if not exists public.massage_settings (
 insert into public.massage_settings (id) values (true) on conflict (id) do nothing;
 
 comment on column public.massage_settings.owner_id is
-  '按摩預約負責人。遞補通知、隔天補標出席的提醒等「給管理者的通知」只發給這個人。';
+  '按摩預約負責人。遞補通知等「給管理者的通知」只發給這個人。';
 
 -- 異動紀錄：只能新增。寫入一律透過下面的函式（massage_log），不開放直接寫。
 create table if not exists public.massage_events (
