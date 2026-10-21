@@ -23,8 +23,8 @@ psql -d mt -f supabase/migrations/20261021_massage_add_to_slot.sql
 psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/30_add_to_slot_tests.sql
 ```
 
-兩支測試最後的兩個查詢都會列出每一項的結果與「N / N 通過」。
-（20_slack_tests.sql 要接在 10_tests.sql 之後跑，沿用它留下的資料。）
+每支測試最後的兩個查詢都會列出每一項的結果與「N / N 通過」。
+（20_slack_tests.sql、30_add_to_slot_tests.sql 都要接在 10_tests.sql 之後跑，沿用它的資料與小工具。）
 
 公平性那一項會抽 400 次籤，檢查 17 選 9 時每個人的中籤次數都在期望值
 211.8 ± 4 個標準差內，而且上期按過與沒按過的人平均一樣 —— 這一項本質上
