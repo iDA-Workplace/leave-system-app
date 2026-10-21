@@ -5,6 +5,7 @@ import { Button, Card, Chip, ConfirmDialog, Skeleton, Textarea } from '../compon
 import { useToast } from '../context/ToastContext'
 import { fetchAnnualLeaveDays, leaveTypeName } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
+import MassageHomeWidget from './benefits/MassageHomeWidget'
 import './Home.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
@@ -369,6 +370,9 @@ function Home({ userProfile }) {
         </h1>
         <p className="dash-welcome__subtitle">{t('home_today_is', { date: todayLabel })}{pendingSentence}</p>
       </div>
+
+      {/* 按摩報名期間才會出現（沒有開放中的期數就什麼都不顯示） */}
+      <MassageHomeWidget userProfile={userProfile} />
 
       <div className="dash-top-grid">
         {statsLoading ? <Skeleton height="150px" /> : (

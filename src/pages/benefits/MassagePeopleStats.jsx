@@ -16,7 +16,8 @@ import { fmtDate } from '../../lib/massage'
  * 而且後來也沒有遞補上的期數。中間只要有一期抽中或遞補上就歸零；
  * 沒報名的期數不算（不會因為沒報名而中斷，也不會累加）。
  *
- * 可以選月份：只算那個月的期數（「連續沒抽中」也只在那個月的期數裡往回數）。
+ * 可以選區間（從某年某月到某年某月）：只算區間內的期數，「連續沒抽中」也只在
+ * 區間內的期數裡往回數。年份選「不限」就是那一端不設限。
  *
  * 「管理員加入」：管理者直接把人加進空時段（massage_add_to_slot）。這期沒有
  * 自己報名的（added_at 有值、draw_rank 是 null），不算進「報名」次數。
@@ -83,7 +84,8 @@ function MassagePeopleStats() {
   const { showToast } = useToast()
   const [data, setData] = useState(null)
   const [query, setQuery] = useState('')
-  const [month, setMonth] = useState('')   // '' = 全部月份；否則 'YYYY-MM'
+  // 區間：年份 '' = 不限；月份 1～12（開始預設 1 月、結束預設 12 月）
+  const [range, setRange] = useState({ fromY: '', fromM: '1', toY: '', toM: '12' })
 
   useEffect(() => {
     let cancelled = false
@@ -100,17 +102,38 @@ function MassagePeopleStats() {
     return () => { cancelled = true }
   }, [])
 
-  const months = useMemo(() => (data
-    ? [...new Set(data.sessions.filter(s => s.drawn_at).map(s => s.session_date.slice(0, 7)))].sort().reverse()
+  const years = useMemo(() => (data
+    ? [...new Set(data.sessions.filter(s => s.drawn_at).map(s => s.session_date.slice(0, 4)))].sort().reverse()
     : []), [data])
+  const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`
+  const lower = range.fromY ? ym(range.fromY, range.fromM) : null
+  const upper = range.toY ? ym(range.toY, range.toM) : null
+  const rangeInvalid = lower && upper && lower > upper
   const sessions = useMemo(() => (data
-    ? data.sessions.filter(s => !month || s.session_date.startsWith(month))
-    : []), [data, month])
+    ? data.sessions.filter(s => {
+      const key = s.session_date.slice(0, 7)
+      return (!lower || key >= lower) && (!upper || key <= upper)
+    })
+    : []), [data, lower, upper])
   const people = useMemo(() => (data ? buildPeople(sessions, data.signups) : []), [data, sessions])
   if (!data) return <Card><Skeleton height="120px" /></Card>
 
   const drawnCount = sessions.filter(s => s.drawn_at).length
-  const monthLabel = ym => t('massage_people_month', { y: ym.slice(0, 4), m: Number(ym.slice(5, 7)) })
+  const monthLabel = m => t('massage_people_month_n', {
+    m, name: new Date(2000, m - 1, 1).toLocaleString('en', { month: 'short' }),
+  })
+  const set = key => e => setRange(r => ({ ...r, [key]: e.target.value }))
+  const yearSelect = (key, label) => (
+    <Select aria-label={label} value={range[key]} onChange={set(key)}>
+      <option value="">{t('massage_people_year_any')}</option>
+      {years.map(y => <option key={y} value={y}>{t('massage_people_year', { y })}</option>)}
+    </Select>
+  )
+  const monthSelect = (key, yearKey, label) => (
+    <Select aria-label={label} value={range[key]} onChange={set(key)} disabled={!range[yearKey]}>
+      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={String(m)}>{monthLabel(m)}</option>)}
+    </Select>
+  )
   const q = query.trim()
   const visible = q ? people.filter(p => p.name.includes(q) || p.dept.includes(q)) : people
   const cell = (p, key) => (key === 'lastAttended' ? (p.lastAttended ? fmtDate(p.lastAttended, lang) : '—') : p[key])
@@ -119,7 +142,8 @@ function MassagePeopleStats() {
     const rows = visible.map(p => Object.fromEntries(COLUMNS.map(([key, label]) => [t(label), cell(p, key)])))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), t('massage_sheet_people'))
-    XLSX.writeFile(wb, `${t('massage_people_filename')}${month ? `_${month}` : ''}.xlsx`)
+    const suffix = lower || upper ? `_${lower || ''}~${upper || ''}` : ''
+    XLSX.writeFile(wb, `${t('massage_people_filename')}${suffix}.xlsx`)
     showToast(t('massage_toast_exported'))
   }
 
@@ -131,12 +155,15 @@ function MassagePeopleStats() {
       </div>
       <p className="massage-hint">{t('massage_people_hint', { n: drawnCount })}</p>
       <div className="massage-search">
-        <Select aria-label={t('massage_people_month_label')} value={month} onChange={e => setMonth(e.target.value)}>
-          <option value="">{t('massage_people_month_all')}</option>
-          {months.map(ym => <option key={ym} value={ym}>{monthLabel(ym)}</option>)}
-        </Select>
+        <span className="massage-muted">{t('massage_people_from')}</span>
+        {yearSelect('fromY', t('massage_people_from_year'))}
+        {monthSelect('fromM', 'fromY', t('massage_people_from_month'))}
+        <span className="massage-muted">{t('massage_people_to')}</span>
+        {yearSelect('toY', t('massage_people_to_year'))}
+        {monthSelect('toM', 'toY', t('massage_people_to_month'))}
         <TextField aria-label={t('massage_people_search')} placeholder={t('massage_people_search')} value={query} onChange={e => setQuery(e.target.value)} />
       </div>
+      {rangeInvalid && <p className="massage-warn">{t('massage_people_range_invalid')}</p>}
       {visible.length === 0 ? <p className="massage-hint">{t('massage_people_empty')}</p> : (
         <div className="ui-table-wrap">
           <table className="ui-table">

@@ -144,8 +144,11 @@ function MassageHome({ userProfile, manager }) {
   )
 }
 
-/** 「我的預約」卡片：依目前階段與自己的狀態，只顯示能做的事 */
-function MyStatus({ session, phase, now, mine, signups, leave, busy, run, setConfirm }) {
+/**
+ * 「我的預約」卡片：依目前階段與自己的狀態，只顯示能做的事。
+ * 首頁的「報名按摩」也用這一塊（embedded：不包卡片、不加標題），規則跟這裡完全一樣。
+ */
+export function MyStatus({ session, phase, now, mine, signups, leave, busy, run, setConfirm, embedded = false }) {
   const { t, lang } = useLanguage()
   const isActive = mine && !mine.released_at
   const okSlots = Array.isArray(leave?.ok_slots) ? leave.ok_slots : null
@@ -291,6 +294,7 @@ function MyStatus({ session, phase, now, mine, signups, leave, busy, run, setCon
     )
   }
 
+  if (embedded) return <div className="massage-status">{body}</div>
   return (
     <Card className="massage-status">
       <h3 className="massage-card-title">{t('massage_my_booking')}</h3>

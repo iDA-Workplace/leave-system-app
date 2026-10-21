@@ -128,10 +128,13 @@ function describe(e, session, t, lang) {
   }
 }
 
+const TIMELINE_PAGE_SIZE = 10
+
 function MassageRecords({ session, signups }) {
   const { t, lang } = useLanguage()
   const { showToast } = useToast()
   const [events, setEvents] = useState(null)
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     let cancelled = false
@@ -151,6 +154,11 @@ function MassageRecords({ session, signups }) {
   const stats = buildStats(session, rows)
   // 每人的抽籤結果已經在名單裡，時間軸只放「發生了什麼事」，免得被 9～17 筆洗版
   const timeline = events.filter(e => e.event !== 'draw_result')
+  // 畫面上：最新的在最前面，一頁 10 筆（不讓時間軸佔掉整個頁面）。匯出 Excel 仍是全部、照時間先後
+  const totalPages = Math.max(1, Math.ceil(timeline.length / TIMELINE_PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageItems = [...timeline].reverse()
+    .slice((currentPage - 1) * TIMELINE_PAGE_SIZE, currentPage * TIMELINE_PAGE_SIZE)
 
   const slotLabel = n => (n ? `${n}（${slotRange(session, n).from}）` : '—')
   const resultLabel = r => (r.drawResult ? t(`massage_result_${r.drawResult}`) : t('massage_result_none'))
@@ -280,15 +288,24 @@ function MassageRecords({ session, signups }) {
       <Card>
         <h3 className="massage-card-title">{t('massage_records_timeline_title', { n: timeline.length })}</h3>
         {timeline.length === 0 ? <p className="massage-hint">{t('massage_records_timeline_empty')}</p> : (
-          <ol className="massage-timeline">
-            {timeline.map(e => (
-              <li key={e.id}>
-                <span className="massage-timeline__time">{fmtDateTime(e.created_at, lang)}</span>
-                <span className="massage-timeline__what">{describe(e, session, t, lang)}</span>
-                <span className="massage-timeline__actor">{e.actor?.full_name || t('massage_ev_system')}</span>
-              </li>
-            ))}
-          </ol>
+          <>
+            <ol className="massage-timeline">
+              {pageItems.map(e => (
+                <li key={e.id}>
+                  <span className="massage-timeline__time">{fmtDateTime(e.created_at, lang)}</span>
+                  <span className="massage-timeline__what">{describe(e, session, t, lang)}</span>
+                  <span className="massage-timeline__actor">{e.actor?.full_name || t('massage_ev_system')}</span>
+                </li>
+              ))}
+            </ol>
+            {totalPages > 1 && (
+              <div className="massage-pagination">
+                <Button size="sm" variant="outlined" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>{t('common_prev_page')}</Button>
+                <span className="massage-muted">{t('common_page_indicator', { page: currentPage, total: totalPages })}</span>
+                <Button size="sm" variant="outlined" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>{t('common_next_page')}</Button>
+              </div>
+            )}
+          </>
         )}
       </Card>
     </>

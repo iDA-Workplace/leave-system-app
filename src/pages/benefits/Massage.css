@@ -292,4 +292,7 @@
   .massage-timeline li { grid-template-columns: 1fr; gap: var(--space-025); }
 }
 .massage-search { display: flex; flex-wrap: wrap; gap: var(--space-100); align-items: center; }
-.massage-search > * { width: 220px; max-width: 100%; }
+.massage-search .ui-field { margin: 0; min-width: 110px; }
+.massage-search .ui-field:last-child { min-width: 200px; }
+.massage-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-150); margin-top: var(--space-150); }
+.massage-home-widget .massage-status { margin-top: var(--space-200); padding-top: var(--space-200); border-top: 1px solid var(--sys-color-outline-variant); }
