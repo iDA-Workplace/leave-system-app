@@ -23,6 +23,7 @@
 //      offered           → 被邀請遞補的候補：私訊，附「我要」；同時私訊負責人
 //      offer_superseded  → 邀請被負責人改成其他安排：私訊告知
 //      assigned          → 負責人直接指定某位候補遞補：私訊被指定的人
+//      added             → 負責人把某位同仁直接加進空時段（不一定有報名）：私訊當事人
 //      moved             → 負責人改了某人的時段（交換的話兩個人各一筆）：私訊當事人
 //    其他種類（報名、取消、出席標記……）不發通知。
 // c. 時間到才做的事：
@@ -97,6 +98,8 @@ const T = {
     assigned_heading: '💆 *{title}*（{date}）負責人已安排你遞補{slot}。',
     assigned_conflict: '⚠️ 這個時段跟你的請假撞到了，請找同仁交換，換好後告訴負責人。',
     assigned_note: '不能來的話，請私訊我「按摩」或到網頁釋出名額。',
+    added_text: '💆 你被安排了按摩時段',
+    added_heading: '💆 *{title}*（{date}）負責人已幫你安排{slot}。',
 
     moved_text: '💆 你的按摩時段已調整',
     moved_heading: '💆 *{title}*（{date}）負責人已調整你的時段：\n{from} → *{to}*',
@@ -166,6 +169,8 @@ const T = {
     assigned_heading: '💆 *{title}* ({date}): the organizer gave you {slot} from the waitlist.',
     assigned_conflict: '⚠️ This slot overlaps your leave. Please swap with a colleague and let the organizer know.',
     assigned_note: 'If you cannot make it, DM me "massage" or release the spot on the website.',
+    added_text: '💆 You have a massage slot',
+    added_heading: '💆 *{title}* ({date}): the organizer booked {slot} for you.',
 
     moved_text: '💆 Your massage slot changed',
     moved_heading: '💆 *{title}* ({date}): the organizer changed your slot:\n{from} → *{to}*',
@@ -400,7 +405,8 @@ async function handleEvent(ctx: Ctx, e: MassageEvent) {
     case 'draw_result': return e.details?.yield_asked ? askYield(ctx, e) : undefined
     case 'offered': return notifyOffer(ctx, e)
     case 'offer_superseded': return notifySuperseded(ctx, e)
-    case 'assigned': return notifyAssigned(ctx, e)
+    case 'assigned': return notifyAssigned(ctx, e, 'assigned_text', 'assigned_heading')
+    case 'added': return notifyAssigned(ctx, e, 'added_text', 'added_heading')
     case 'moved': return notifyMoved(ctx, e)
   }
 }
@@ -510,8 +516,11 @@ async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
   ])
 }
 
-/** 負責人直接指定這位候補遞補（使用者決定：要通知被指定的人） */
-async function notifyAssigned(ctx: Ctx, e: MassageEvent) {
+/**
+ * 負責人直接指定這位候補遞補（assigned），或把某位同仁直接加進空時段（added）。
+ * 兩種都是使用者決定要通知當事人；只有開頭那句不一樣。
+ */
+async function notifyAssigned(ctx: Ctx, e: MassageEvent, textKey: MsgKey, headingKey: MsgKey) {
   const s = await ctx.session(e.session_id!)
   const p = await ctx.person(e.user_id)
   if (!s || !p?.slack_user_id || !e.signup_id || !e.slot_no || e.actor_id === e.user_id) return
@@ -522,11 +531,11 @@ async function notifyAssigned(ctx: Ctx, e: MassageEvent) {
 
   const lang = normalizeLang(p.language)
   const blocks: unknown[] = [
-    section(t(lang, 'assigned_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no) })),
+    section(t(lang, headingKey, { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no) })),
   ]
   if (e.details?.slot_conflict) blocks.push(section(t(lang, 'assigned_conflict')))
   blocks.push(contextLine(t(lang, 'assigned_note')))
-  await dm(p.slack_user_id, t(lang, 'assigned_text'), blocks)
+  await dm(p.slack_user_id, t(lang, textKey), blocks)
 }
 
 /** 負責人改了時段（使用者決定：要通知當事人）。交換的話資料庫會記兩筆，兩個人各收到自己的。 */

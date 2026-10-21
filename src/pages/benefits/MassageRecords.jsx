@@ -32,6 +32,7 @@ function buildRoster(session, signups, events) {
     const draw = evs.find(e => e.event === 'draw_result')
     const accepted = evs.find(e => e.event === 'accepted')
     const assigned = evs.find(e => e.event === 'assigned')
+    const added = [...evs].reverse().find(e => e.event === 'added')
     const released = [...evs].reverse().find(e => e.event === 'released')
     const withdrewCount = evs.filter(e => e.event === 'withdrew').length
     const moves = evs.filter(e => e.event === 'moved')
@@ -47,6 +48,8 @@ function buildRoster(session, signups, events) {
       avoidedLeave: !!draw?.details?.avoided_leave,
       promotedBy: accepted ? 'self' : assigned ? 'manager' : null,
       promotedActor: assigned?.actor?.full_name || null,
+      added: !!added,
+      addedActor: added?.actor?.full_name || null,
       released,
       moves,
       offers,
@@ -73,6 +76,7 @@ function buildStats(session, rows) {
     ['massage_stat_selected', count(r => r.drawResult === 'selected')],
     ['massage_stat_waitlisted', count(r => r.drawResult === 'waitlist')],
     ['massage_stat_promoted', count(r => r.promotedBy)],
+    ['massage_stat_added', count(r => r.added)],
     ['massage_stat_cancelled_after', count(r => r.released?.details?.reason === 'cancel' && !r.released.details.late)],
     ['massage_stat_cancelled_late', count(r => r.released?.details?.late)],
     ['massage_stat_yielded', count(r => r.released?.details?.reason === 'yield')],
@@ -112,6 +116,8 @@ function describe(e, session, t, lang) {
     case 'assigned':
       return t(d.slot_conflict ? 'massage_ev_assigned_conflict' : 'massage_ev_assigned', { name, actor, slot: slotText(e.slot_no) })
     case 'moved': return t('massage_ev_moved', { name, from: d.from, to: d.to })
+    case 'added':
+      return t(d.slot_conflict ? 'massage_ev_added_conflict' : 'massage_ev_added', { name, actor, slot: slotText(e.slot_no) })
     case 'no_show': return t('massage_ev_no_show', { name, actor, slot: slotText(e.slot_no) })
     case 'attendance':
       if (d.by === 'self') return t('massage_ev_done_self', { name })
@@ -163,6 +169,7 @@ function MassageRecords({ session, signups }) {
     if (r.withdrewCount && !r.s.released_at) out.push([t('massage_note_resigned', { n: r.withdrewCount }), 'neutral'])
     if (r.promotedBy === 'self') out.push([t('massage_note_promoted_self'), 'success'])
     if (r.promotedBy === 'manager') out.push([t('massage_note_promoted_manager', { name: r.promotedActor || '' }), 'success'])
+    if (r.added) out.push([t('massage_note_added', { name: r.addedActor || '' }), 'success'])
     if (r.moves.length) out.push([t('massage_note_moved', { n: r.moves.length }), 'info'])
     if (r.released?.details?.reason === 'yield') out.push([t('massage_note_yielded'), 'info'])
     else if (r.released?.details?.late) out.push([t('massage_note_cancelled_late', { time: fmtDateTime(r.released.created_at, lang) }), 'error'])

@@ -15,6 +15,9 @@ import { fmtDate } from '../../lib/massage'
  * 「連續沒抽中」：從最近一期往回數，這位同仁有報名、但抽籤當下是候補、
  * 而且後來也沒有遞補上的期數。中間只要有一期抽中或遞補上就歸零；
  * 沒報名的期數不算（不會因為沒報名而中斷，也不會累加）。
+ *
+ * 「管理員加入」：管理者直接把人加進空時段（massage_add_to_slot）。這期沒有
+ * 自己報名的（added_at 有值、draw_rank 是 null），不算進「報名」次數。
  */
 function buildPeople(sessions, signups) {
   const drawn = sessions.filter(s => s.drawn_at)
@@ -25,13 +28,15 @@ function buildPeople(sessions, signups) {
     if (!s) continue
     const p = (byUser[g.user_id] ||= {
       userId: g.user_id, name: g.user?.full_name || '', dept: g.user?.department || '',
-      signedUp: 0, selected: 0, waitlisted: 0, promoted: 0, attended: 0, noShow: 0,
+      signedUp: 0, selected: 0, waitlisted: 0, promoted: 0, added: 0, attended: 0, noShow: 0,
       cancelled: 0, cancelledLate: 0, yielded: 0, lastAttended: null, history: [],
     })
     const inDraw = g.draw_rank != null
     const wasSelected = inDraw && g.draw_rank <= s.slot_count
     const promoted = !!g.promoted_at
-    p.signedUp += 1
+    const addedOnly = !!g.added_at && g.draw_rank == null
+    if (!addedOnly) p.signedUp += 1
+    if (g.added_at) p.added += 1
     if (wasSelected) p.selected += 1
     if (inDraw && !wasSelected) p.waitlisted += 1
     if (promoted) p.promoted += 1
@@ -61,6 +66,7 @@ const COLUMNS = [
   ['selected', 'massage_people_selected'],
   ['waitlisted', 'massage_people_waitlisted'],
   ['promoted', 'massage_people_promoted'],
+  ['added', 'massage_people_added'],
   ['attended', 'massage_people_attended'],
   ['noShow', 'massage_people_no_show'],
   ['cancelled', 'massage_people_cancelled'],
@@ -82,7 +88,7 @@ function MassagePeopleStats() {
       const [{ data: sessions }, { data: signups }] = await Promise.all([
         supabase.from('massage_sessions').select('id, session_date, slot_count, drawn_at'),
         supabase.from('massage_signups').select(`
-          user_id, session_id, draw_rank, promoted_at, released_at, released_late, yield_answer, attendance,
+          user_id, session_id, draw_rank, promoted_at, added_at, released_at, released_late, yield_answer, attendance,
           user:users!massage_signups_user_id_fkey(full_name, department)
         `),
       ])

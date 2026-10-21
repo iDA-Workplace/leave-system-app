@@ -17,6 +17,10 @@ psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/10_tests.sql
 # Slack 通知用的「發過了沒」紀錄（20261020_massage_slack.sql），15 項
 psql -d mt -f supabase/migrations/20261020_massage_slack.sql
 psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/20_slack_tests.sql
+
+# 管理者把人加進空時段（20261021_massage_add_to_slot.sql），24 項；接在 10_tests.sql 之後
+psql -d mt -f supabase/migrations/20261021_massage_add_to_slot.sql
+psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/30_add_to_slot_tests.sql
 ```
 
 兩支測試最後的兩個查詢都會列出每一項的結果與「N / N 通過」。

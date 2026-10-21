@@ -362,6 +362,7 @@ Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己�
 | 負責人 | 私訊 | 同一時間收到「系統已通知候補 ○○ 遞補時段 N」（候補沒設 Slack 的話會特別註明） |
 | 邀請被負責人改成其他安排的候補 | 私訊 | 「遞補邀請已取消」 |
 | 被負責人直接指定遞補的候補 | 私訊 | 「負責人已安排你遞補時段 N」（跟請假撞到的話會另外提醒找人交換） |
+| 被負責人直接加進空時段的人（不一定有報名） | 私訊 | 「負責人已幫你安排時段 N」（跟請假撞到的話會另外提醒） |
 | 被負責人改時段的人 | 私訊 | 「你的時段已調整：時段 A → 時段 B」（交換的話兩個人各收到一則，並註明跟誰交換） |
 | 有時段、還沒標出席的人 | 私訊，自己的時段一結束（約 1 分鐘內） | 「有按到嗎？」＋只有一顆「有按到」。沒回覆不會再追，由管理者在網頁的現場面板補登記 |
 | 請假撞到按摩的人 | 私訊 | 在 Slack 送假單、HR 在 Slack 或網頁代登記（含改了代登記的假單）之後：「請把名額釋出」＋每一期一顆「釋出名額」／「取消報名」 |
@@ -375,7 +376,7 @@ Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己�
 
 ### 部署步驟
 
-1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`。
+1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`、`migrations/20261021_massage_add_to_slot.sql`。
 2. **`slack-interactions`**：點進既有的 function → Code → 整份換成 `slack-interactions/index.ts` → Deploy。
 3. **`massage-notify`**：Deploy a new function → Via Editor → **名稱先改成 `massage-notify`** → 貼上 `massage-notify/index.ts` 全部內容 → Deploy。
    **Verify JWT 維持開啟（預設值）**：呼叫它的是排程（帶 secret key）、網頁（帶登入者的 token）與 `slack-interactions`（帶 service role key），都有金鑰。

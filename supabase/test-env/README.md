@@ -46,6 +46,7 @@
 
 1. [`../migrations/20261019_massage_booking.sql`](../migrations/20261019_massage_booking.sql)
 2. [`../migrations/20261020_massage_slack.sql`](../migrations/20261020_massage_slack.sql)
+3. [`../migrations/20261021_massage_add_to_slot.sql`](../migrations/20261021_massage_add_to_slot.sql)（空時段「編輯」加人）
 
 ## 四、放入假帳號與示範資料
 

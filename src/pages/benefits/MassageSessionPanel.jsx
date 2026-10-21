@@ -16,27 +16,33 @@ import MassageRecords from './MassageRecords'
  *
  * 現場的事情都在這裡：按「沒到」、直接指定候補遞補、對調時段、標記出席。
  * 候補功能照使用者要求保留彈性 —— 下拉選單照候補順序排，但可以選任何一位。
+ * 空的時段可以按「編輯」直接加任何一位在職同仁（massage_add_to_slot），
+ * 撞到請假會先問一次；加入後 Slack 會通知當事人。
  */
 function MassageSessionPanel() {
   const { sessionId } = useParams()
   const { t, lang } = useLanguage()
   const { showToast } = useToast()
-  const [state, setState] = useState({ loading: true, session: null, signups: [], okSlots: {} })
+  const [state, setState] = useState({ loading: true, session: null, signups: [], okSlots: {}, people: [] })
   const [tick, setTick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(null)
   const [viewChoice, setViewChoice] = useState(null)
+  const [addTo, setAddTo] = useState(null)          // { n, userId }：正在編輯哪個空時段
   const reload = () => setTick(n => n + 1)
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const [{ session, signups }, { data: ok }] = await Promise.all([
+      const [{ session, signups }, { data: ok }, { data: people }] = await Promise.all([
         fetchSessionBundle(sessionId),
         supabase.rpc('massage_session_ok_slots', { p_session_id: sessionId }),
+        // 空時段「編輯」用：所有在職同仁（is_active 是 null 的舊資料也算在職）
+        supabase.from('users').select('id, full_name, department')
+          .or('is_active.is.null,is_active.eq.true').order('full_name'),
       ])
       const okSlots = Object.fromEntries((ok || []).map(r => [r.signup_id, r.ok_slots || []]))
-      if (!cancelled) setState({ loading: false, session, signups, okSlots })
+      if (!cancelled) setState({ loading: false, session, signups, okSlots, people: people || [] })
     })()
     return () => { cancelled = true }
   }, [sessionId, tick])
@@ -52,7 +58,33 @@ function MassageSessionPanel() {
     return res
   }
 
-  const { loading, session, signups, okSlots } = state
+  /** 把某人加進空時段。撞到請假時資料庫先回 leave_conflict_confirm，問過管理者再帶 force 送一次 */
+  async function addPerson(n, userId, force = false) {
+    const name = state.people.find(p => p.id === userId)?.full_name || ''
+    const from = slotRange(state.session, n).from
+    setBusy(true)
+    const res = await callMassage('massage_add_to_slot',
+      { p_session_id: state.session.id, p_user_id: userId, p_slot_no: n, p_force: force })
+    setBusy(false)
+    if (!res.ok && res.data?.code === 'leave_conflict_confirm') {
+      setConfirm({
+        title: t('massage_confirm_add_conflict_title'),
+        desc: t('massage_confirm_add_conflict', { name, n, from }),
+        label: t('massage_add_submit'),
+        onConfirm: () => addPerson(n, userId, true),
+      })
+      return
+    }
+    setConfirm(null)
+    if (!res.ok) showToast(t(res.errorKey), { tone: 'error' })
+    else {
+      setAddTo(null)
+      showToast(t('massage_toast_added', { name, n }))
+    }
+    reload()
+  }
+
+  const { loading, session, signups, okSlots, people } = state
   if (loading) return <div className="massage-page"><Skeleton height="200px" /></div>
   if (!session) {
     return (
@@ -73,6 +105,18 @@ function MassageSessionPanel() {
     return !ok || ok.includes(n)
   }
   const slots = Array.from({ length: session.slot_count }, (_, i) => i + 1)
+  // 「編輯」的人選：已經有時段的人不列（他們要用改時段）；候補照順位排最前面，其餘照名字
+  const holderIds = new Set(active.filter(s => s.slot_no).map(s => s.user_id))
+  const waitRank = new Map(waitlist.map((w, i) => [w.user_id, i + 1]))
+  const cancelledIds = new Set(signups.filter(s => s.released_at).map(s => s.user_id))
+  const candidates = people
+    .filter(p => !holderIds.has(p.id))
+    .sort((a, b) => (waitRank.get(a.id) ?? Infinity) - (waitRank.get(b.id) ?? Infinity)
+      || a.full_name.localeCompare(b.full_name))
+  const candidateLabel = p => p.full_name
+    + (p.department ? `（${p.department}）` : '')
+    + (waitRank.has(p.id) ? t('massage_add_option_waitlist', { k: waitRank.get(p.id) })
+      : cancelledIds.has(p.id) ? t('massage_add_option_cancelled') : '')
   // 已經結束的期數，點進來多半是要查紀錄；其他時候預設停在現場
   const view = viewChoice ?? (phase === 'finished' ? 'records' : 'live')
   const unmarked = active.filter(s => s.slot_no && !s.attendance && now >= slotEndAt(session, s.slot_no)).length
@@ -166,6 +210,16 @@ function MassageSessionPanel() {
                           {(h.slot_conflict || !okFor(h, n)) && <Chip tone="warning">{t('massage_chip_leave_conflict')}</Chip>}
                           {h.yield_asked && !h.yield_answer && <Chip tone="info">{t('massage_chip_yield_pending')}</Chip>}
                         </>
+                      ) : addTo?.n === n && !over ? (
+                        <Select
+                          aria-label={t('massage_add_label')}
+                          value={addTo.userId}
+                          disabled={busy}
+                          onChange={e => setAddTo({ n, userId: e.target.value })}
+                        >
+                          <option value="">{t('massage_add_placeholder')}</option>
+                          {candidates.map(p => <option key={p.id} value={p.id}>{candidateLabel(p)}</option>)}
+                        </Select>
                       ) : (
                         <>
                           <span className="massage-muted">{t('massage_slot_empty')}</span>
@@ -232,7 +286,20 @@ function MassageSessionPanel() {
                         </Select>
                       )}
 
-                      {!h && !over && waitlist.length > 0 && (
+                      {!h && !over && addTo?.n === n && (
+                        <>
+                          <Button size="sm" disabled={busy || !addTo.userId} loading={busy}
+                            onClick={() => addPerson(n, addTo.userId)}>{t('massage_add_submit')}</Button>
+                          <Button size="sm" variant="text" disabled={busy} onClick={() => setAddTo(null)}>{t('common_cancel')}</Button>
+                        </>
+                      )}
+
+                      {!h && !over && addTo?.n !== n && (
+                        <Button size="sm" variant="outlined" disabled={busy}
+                          onClick={() => setAddTo({ n, userId: '' })}>{t('massage_slot_edit')}</Button>
+                      )}
+
+                      {!h && !over && addTo?.n !== n && waitlist.length > 0 && (
                         <Select
                           aria-label={t('massage_assign')}
                           value=""
@@ -267,6 +334,7 @@ function MassageSessionPanel() {
               })}
             </div>
             <p className="massage-hint">{t('massage_panel_hint')}</p>
+            {addTo && <p className="massage-hint">{t('massage_add_hint')}</p>}
           </Card>
 
           <Card>

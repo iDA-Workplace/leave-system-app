@@ -154,6 +154,7 @@ const KNOWN_CODES = new Set([
   'already_released', 'slot_over', 'no_pending_offer', 'offer_expired', 'slot_taken',
   'invalid_slot', 'not_started', 'already_marked', 'invalid_status', 'no_slot',
   'not_asked', 'already_answered', 'not_waitlisted', 'owner_not_manager',
+  'not_drawn', 'already_has_slot',
 ])
 
 export function massageErrorKey(code) {
