@@ -546,6 +546,9 @@ async function notifyMoved(ctx: Ctx, e: MassageEvent) {
       title: s.title, date: fmtDate(lang, s.session_date), from: slotText(lang, s, from), to: slotText(lang, s, to),
     })),
   ]
+  // 新時段跟請假撞到 → 一樣提醒（跟網頁、Slack 卡片同一個判斷：看「現在」的請假）
+  const { data: okSlots } = await ctx.db.rpc('massage_ok_slots', { p_session_id: s.id, p_user_id: p.id })
+  if (Array.isArray(okSlots) && !okSlots.includes(to)) blocks.push(section(t(lang, 'assigned_conflict')))
   if (e.details?.swapped_with) {
     const { data: other } = await ctx.db.from('massage_signups')
       .select('user_id').eq('id', e.details.swapped_with).maybeSingle()

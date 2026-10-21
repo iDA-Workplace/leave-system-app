@@ -2146,7 +2146,10 @@ async function massageCardBlocks(db: SupabaseClient, me: any, lang: Lang): Promi
       const slotStart = mAt(s.session_date, mSlotRange(s, mine.slot_no).from)
       const slotEnd = mAt(s.session_date, mSlotRange(s, mine.slot_no).to)
       lines.push(mt(lang, 'me_slot', { slot: mSlot(lang, s, mine.slot_no) }))
-      if (mine.slot_conflict) lines.push(mt(lang, 'me_slot_conflict'))
+      // 跟網頁一樣：抽籤當下的標記，加上「現在」的請假（抽籤之後才請的假也要顯示）
+      const { data: okSlots } = await db.rpc('massage_ok_slots', { p_session_id: s.id, p_user_id: me.id })
+      const leaveHitsSlot = Array.isArray(okSlots) && !okSlots.includes(mine.slot_no)
+      if ((mine.slot_conflict || leaveHitsSlot) && now < slotEnd) lines.push(mt(lang, 'me_slot_conflict'))
       if (mine.attendance === 'attended') lines.push(mt(lang, 'me_attended'))
       else if (mine.attendance === 'no_show') lines.push(mt(lang, 'me_no_show'))
       if (mine.yield_asked && !mine.yield_answer) {
