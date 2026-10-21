@@ -1899,7 +1899,8 @@ const MT = {
     list_signups: '*{title}* 報名名單（{k} 人）\n{lines}',
     list_empty: '*{title}* 還沒有人報名。',
     list_drawn: '*{title}* 名單',
-    list_selected_h: '*正取*',
+    list_selected_h: '*時段表*',
+    list_empty_slot: '_無人預約_',
     list_waitlist_h: '*候補*（依順位）',
 
     ok_signed_up: '✅ 報名成功！',
@@ -1987,7 +1988,8 @@ const MT = {
     list_signups: '*{title}*: {k} signed up\n{lines}',
     list_empty: '*{title}*: nobody has signed up yet.',
     list_drawn: '*{title}*',
-    list_selected_h: '*Confirmed*',
+    list_selected_h: '*Schedule*',
+    list_empty_slot: '_No booking_',
     list_waitlist_h: '*Waitlist* (in order)',
 
     ok_signed_up: '✅ You are signed up!',
@@ -2202,8 +2204,10 @@ async function massageListBlocks(db: SupabaseClient, lang: Lang, sessionId: stri
     const lines = rows.sort((a, b) => a.signed_up_at.localeCompare(b.signed_up_at)).map((r, i) => `${i + 1}. ${name(r)}`)
     return [section(mt(lang, 'list_signups', { title: session.title, k: rows.length, lines: lines.join('\n') }))]
   }
-  const selected = rows.filter(r => r.slot_no).sort((a, b) => a.slot_no - b.slot_no)
-    .map(r => `\`${mSlotRange(session, r.slot_no).from}\` ${name(r)}`)
+  // 每個時段都列出來，沒人的寫「無人預約」（跟網頁的時段表一致）
+  const bySlot = new Map(rows.filter(r => r.slot_no).map(r => [r.slot_no, name(r)]))
+  const selected = Array.from({ length: session.slot_count }, (_, i) => i + 1)
+    .map(n => `\`${mSlotRange(session, n).from}\` ${bySlot.get(n) ?? mt(lang, 'list_empty_slot')}`)
   const waitlist = rows.filter(r => !r.slot_no && r.draw_rank != null).sort((a, b) => a.draw_rank - b.draw_rank)
     .map((r, i) => `${i + 1}. ${name(r)}`)
   const blocks: unknown[] = [

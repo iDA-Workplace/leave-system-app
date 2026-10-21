@@ -68,7 +68,8 @@ const T = {
     drawn_heading: '💆 *{title}* 抽籤結果（{date} {from}–{to}）',
     drawn_lottery: '共 {total} 人報名、名額 {n} 位，公開抽籤結果如下。',
     drawn_no_lottery: '共 {total} 人報名，沒有超過名額，全部錄取，依報名先後排時段。',
-    drawn_selected_h: '*正取*',
+    drawn_selected_h: '*時段表*',
+    empty_slot: '_無人預約_',
     drawn_waitlist_h: '*候補*（依順位）',
     drawn_footer: '時段跟會議衝突的話，請自行跟其他同仁協調交換，換好後告訴負責人。無法出席請在 {deadline} 前取消，之後才取消視同未到。',
 
@@ -139,7 +140,8 @@ const T = {
     drawn_heading: '💆 *{title}*: draw results ({date} {from}–{to})',
     drawn_lottery: '{total} people signed up for {n} spots. Results of the public draw:',
     drawn_no_lottery: '{total} people signed up, within the {n} spots, so everyone is in. Slots follow sign-up order.',
-    drawn_selected_h: '*Confirmed*',
+    drawn_selected_h: '*Schedule*',
+    empty_slot: '_No booking_',
     drawn_waitlist_h: '*Waitlist* (in order)',
     drawn_footer: 'If your slot clashes with a meeting, swap with a colleague and let the organizer know. If you cannot make it, cancel before {deadline}; cancelling after that counts as a no-show.',
 
@@ -422,18 +424,15 @@ async function announceDraw(ctx: Ctx, e: MassageEvent) {
   const rows = (data ?? []).sort((a, b) => (a.details?.rank ?? 0) - (b.details?.rank ?? 0))
   const name = async (id: string) => (await ctx.person(id))?.full_name ?? '—'
 
-  // 正取照時段排（大家要找的是「我幾點」），候補照順位
-  const selected: { slot: number; line: string }[] = []
+  // 正取照時段排（大家要找的是「我幾點」），沒人的時段寫「無人預約」；候補照順位
+  const bySlot = new Map<number, string>()
   const waitlist: string[] = []
   for (const r of rows) {
-    if (r.details?.result === 'selected') {
-      const from = r.slot_no ? slotRange(s, r.slot_no).from : '--:--'
-      selected.push({ slot: r.slot_no ?? Infinity, line: `\`${from}\` ${await name(r.user_id)}` })
-    } else {
-      waitlist.push(`${waitlist.length + 1}. ${await name(r.user_id)}`)
-    }
+    if (r.details?.result === 'selected' && r.slot_no) bySlot.set(r.slot_no, await name(r.user_id))
+    else if (r.details?.result !== 'selected') waitlist.push(`${waitlist.length + 1}. ${await name(r.user_id)}`)
   }
-  const selectedLines = selected.sort((a, b) => a.slot - b.slot).map(x => x.line)
+  const selectedLines = Array.from({ length: s.slot_count }, (_, i) => i + 1)
+    .map(n => `\`${slotRange(s, n).from}\` ${bySlot.get(n) ?? t(lang, 'empty_slot')}`)
 
   const win = sessionWindow(s)
   const blocks: unknown[] = [
