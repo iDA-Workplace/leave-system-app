@@ -291,4 +291,5 @@
 @media (max-width: 720px) {
   .massage-timeline li { grid-template-columns: 1fr; gap: var(--space-025); }
 }
-.massage-search { max-width: 260px; }
+.massage-search { display: flex; flex-wrap: wrap; gap: var(--space-100); align-items: center; }
+.massage-search > * { width: 220px; max-width: 100%; }

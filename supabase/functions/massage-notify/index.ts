@@ -25,7 +25,10 @@
 //      assigned          → 負責人直接指定某位候補遞補：私訊被指定的人
 //      added             → 負責人把某位同仁直接加進空時段（不一定有報名）：私訊當事人
 //      moved             → 負責人改了某人的時段（交換的話兩個人各一筆）：私訊當事人
-//    其他種類（報名、取消、出席標記……）不發通知。
+//    另外，抽籤後時段表有變動（有人空出時段、遞補、被加入、改時段／交換）時，
+//    在頻道發一則「時段異動」，附上最新的時段表（使用者決定：選項 C）。
+//    文字刻意中性：空出來只寫「時段 N 空出來了」，不寫是取消、讓出還是沒到。
+//    其他種類（報名、出席標記……）不發通知。
 // c. 時間到才做的事：
 //      開放報名公告     新的一期還在報名期間 → 公告到頻道，附「報名」按鈕
 //      時段一結束       有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
@@ -70,6 +73,15 @@ const T = {
     drawn_no_lottery: '共 {total} 人報名，沒有超過名額，全部錄取，依報名先後排時段。',
     drawn_selected_h: '*時段表*',
     empty_slot: '_無人預約_',
+
+    change_text: '💆 {title} 時段異動',
+    change_heading: '💆 *{title}*（{date}）時段異動：{change}',
+    change_freed: '{slot}空出來了',
+    change_promoted: '{name} 遞補{slot}',
+    change_added: '{name} 排入{slot}',
+    change_moved: '{name} 從時段 {from} 改到時段 {to}',
+    change_swapped: '{a}（時段 {x}）與 {b}（時段 {y}）交換時段',
+    change_note: '隨時可以私訊我「按摩」→「看名單」查看最新時段表。',
     drawn_waitlist_h: '*候補*（依順位）',
     drawn_footer: '時段跟會議衝突的話，請自行跟其他同仁協調交換，換好後告訴負責人。無法出席請在 {deadline} 前取消，之後才取消視同未到。',
 
@@ -142,6 +154,15 @@ const T = {
     drawn_no_lottery: '{total} people signed up, within the {n} spots, so everyone is in. Slots follow sign-up order.',
     drawn_selected_h: '*Schedule*',
     empty_slot: '_No booking_',
+
+    change_text: '💆 {title}: schedule update',
+    change_heading: '💆 *{title}* ({date}) schedule update: {change}',
+    change_freed: '{slot} is now free',
+    change_promoted: '{name} takes {slot} from the waitlist',
+    change_added: '{name} was added to {slot}',
+    change_moved: '{name} moved from slot {from} to slot {to}',
+    change_swapped: '{a} (slot {x}) and {b} (slot {y}) swapped slots',
+    change_note: 'DM me "massage" → "See the list" any time for the latest schedule.',
     drawn_waitlist_h: '*Waitlist* (in order)',
     drawn_footer: 'If your slot clashes with a meeting, swap with a colleague and let the organizer know. If you cannot make it, cancel before {deadline}; cancelling after that counts as a no-show.',
 
@@ -403,14 +424,75 @@ async function processEvents(ctx: Ctx) {
 async function handleEvent(ctx: Ctx, e: MassageEvent) {
   if (!e.session_id) return
   switch (e.event) {
-    case 'drawn': return announceDraw(ctx, e)
-    case 'draw_result': return e.details?.yield_asked ? askYield(ctx, e) : undefined
-    case 'offered': return notifyOffer(ctx, e)
-    case 'offer_superseded': return notifySuperseded(ctx, e)
-    case 'assigned': return notifyAssigned(ctx, e, 'assigned_text', 'assigned_heading')
-    case 'added': return notifyAssigned(ctx, e, 'added_text', 'added_heading')
-    case 'moved': return notifyMoved(ctx, e)
+    case 'drawn': await announceDraw(ctx, e); break
+    case 'draw_result': if (e.details?.yield_asked) await askYield(ctx, e); break
+    case 'offered': await notifyOffer(ctx, e); break
+    case 'offer_superseded': await notifySuperseded(ctx, e); break
+    case 'assigned': await notifyAssigned(ctx, e, 'assigned_text', 'assigned_heading'); break
+    case 'added': await notifyAssigned(ctx, e, 'added_text', 'added_heading'); break
+    case 'moved': await notifyMoved(ctx, e); break
   }
+  await postScheduleChange(ctx, e)
+}
+
+/** 現在的時段表：每個時段一行，沒人的寫「無人預約」 */
+async function currentScheduleLines(ctx: Ctx, s: Session, lang: Lang) {
+  const { data } = await ctx.db.from('massage_signups')
+    .select('user_id, slot_no').eq('session_id', s.id).is('released_at', null).not('slot_no', 'is', null)
+  const bySlot = new Map<number, string>()
+  for (const r of data ?? []) bySlot.set(r.slot_no, (await ctx.person(r.user_id))?.full_name ?? '—')
+  return Array.from({ length: s.slot_count }, (_, i) => i + 1)
+    .map(n => `\`${slotRange(s, n).from}\` ${bySlot.get(n) ?? t(lang, 'empty_slot')}`)
+}
+
+/**
+ * 抽籤後時段表有變動 → 頻道發一則「時段異動」＋最新時段表。
+ * 哪些算變動：空出時段（取消、讓出、沒到）、遞補上（按我要、負責人指定）、
+ * 負責人加人、改時段。交換時段資料庫記兩筆，只發一則。
+ */
+async function postScheduleChange(ctx: Ctx, e: MassageEvent) {
+  const kind =
+    (e.event === 'released' || e.event === 'no_show') && e.slot_no ? 'freed'
+    : e.event === 'accepted' || e.event === 'assigned' ? 'promoted'
+    : e.event === 'added' ? 'added'
+    : e.event === 'moved' ? 'moved'
+    : null
+  if (!kind || !e.slot_no) return
+  const s = await ctx.session(e.session_id!)
+  if (!s?.drawn_at) return
+  // 這一期已經整個結束就不發了
+  if (Date.now() >= new Date(`${s.session_date}T${sessionWindow(s).to}:00+08:00`).getTime()) return
+
+  const lang = channelLang()
+  const name = (await ctx.person(e.user_id))?.full_name ?? '—'
+  const short = (n: number) => `${n}（${slotRange(s, n).from}）`
+  let change: string
+  if (kind === 'freed') change = t(lang, 'change_freed', { slot: slotText(lang, s, e.slot_no) })
+  else if (kind === 'promoted') change = t(lang, 'change_promoted', { name, slot: slotText(lang, s, e.slot_no) })
+  else if (kind === 'added') change = t(lang, 'change_added', { name, slot: slotText(lang, s, e.slot_no) })
+  else {
+    const from = Number(e.details?.from)
+    const to = Number(e.details?.to)
+    if (!from || !to) return
+    if (e.details?.swapped_with) {
+      // 交換：兩筆紀錄是連著記的。第二筆（前一筆就是對方）不再發
+      const { data: prev } = await ctx.db.from('massage_events')
+        .select('signup_id, event').eq('id', e.id - 1).maybeSingle()
+      if (prev?.event === 'moved' && prev.signup_id === e.details.swapped_with) return
+      const { data: other } = await ctx.db.from('massage_signups')
+        .select('user_id').eq('id', e.details.swapped_with).maybeSingle()
+      const otherName = (await ctx.person(other?.user_id ?? null))?.full_name ?? '—'
+      change = t(lang, 'change_swapped', { a: name, x: short(from), b: otherName, y: short(to) })
+    } else {
+      change = t(lang, 'change_moved', { name, from: short(from), to: short(to) })
+    }
+  }
+
+  await postChannel(t(lang, 'change_text', { title: s.title }), [
+    section(t(lang, 'change_heading', { title: s.title, date: fmtDate(lang, s.session_date), change })),
+    section(`${t(lang, 'drawn_selected_h')}\n${(await currentScheduleLines(ctx, s, lang)).join('\n')}`),
+    contextLine(t(lang, 'change_note')),
+  ])
 }
 
 async function announceDraw(ctx: Ctx, e: MassageEvent) {

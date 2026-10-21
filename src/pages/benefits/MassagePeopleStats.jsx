@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
-import { Button, Card, Skeleton, TextField } from '../../components/ui'
+import { Button, Card, Select, Skeleton, TextField } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import { fmtDate } from '../../lib/massage'
@@ -15,6 +15,8 @@ import { fmtDate } from '../../lib/massage'
  * 「連續沒抽中」：從最近一期往回數，這位同仁有報名、但抽籤當下是候補、
  * 而且後來也沒有遞補上的期數。中間只要有一期抽中或遞補上就歸零；
  * 沒報名的期數不算（不會因為沒報名而中斷，也不會累加）。
+ *
+ * 可以選月份：只算那個月的期數（「連續沒抽中」也只在那個月的期數裡往回數）。
  *
  * 「管理員加入」：管理者直接把人加進空時段（massage_add_to_slot）。這期沒有
  * 自己報名的（added_at 有值、draw_rank 是 null），不算進「報名」次數。
@@ -81,6 +83,7 @@ function MassagePeopleStats() {
   const { showToast } = useToast()
   const [data, setData] = useState(null)
   const [query, setQuery] = useState('')
+  const [month, setMonth] = useState('')   // '' = 全部月份；否則 'YYYY-MM'
 
   useEffect(() => {
     let cancelled = false
@@ -97,10 +100,17 @@ function MassagePeopleStats() {
     return () => { cancelled = true }
   }, [])
 
-  const people = useMemo(() => (data ? buildPeople(data.sessions, data.signups) : []), [data])
+  const months = useMemo(() => (data
+    ? [...new Set(data.sessions.filter(s => s.drawn_at).map(s => s.session_date.slice(0, 7)))].sort().reverse()
+    : []), [data])
+  const sessions = useMemo(() => (data
+    ? data.sessions.filter(s => !month || s.session_date.startsWith(month))
+    : []), [data, month])
+  const people = useMemo(() => (data ? buildPeople(sessions, data.signups) : []), [data, sessions])
   if (!data) return <Card><Skeleton height="120px" /></Card>
 
-  const drawnCount = data.sessions.filter(s => s.drawn_at).length
+  const drawnCount = sessions.filter(s => s.drawn_at).length
+  const monthLabel = ym => t('massage_people_month', { y: ym.slice(0, 4), m: Number(ym.slice(5, 7)) })
   const q = query.trim()
   const visible = q ? people.filter(p => p.name.includes(q) || p.dept.includes(q)) : people
   const cell = (p, key) => (key === 'lastAttended' ? (p.lastAttended ? fmtDate(p.lastAttended, lang) : '—') : p[key])
@@ -109,7 +119,7 @@ function MassagePeopleStats() {
     const rows = visible.map(p => Object.fromEntries(COLUMNS.map(([key, label]) => [t(label), cell(p, key)])))
     const wb = XLSX.utils.book_new()
     XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), t('massage_sheet_people'))
-    XLSX.writeFile(wb, `${t('massage_people_filename')}.xlsx`)
+    XLSX.writeFile(wb, `${t('massage_people_filename')}${month ? `_${month}` : ''}.xlsx`)
     showToast(t('massage_toast_exported'))
   }
 
@@ -121,6 +131,10 @@ function MassagePeopleStats() {
       </div>
       <p className="massage-hint">{t('massage_people_hint', { n: drawnCount })}</p>
       <div className="massage-search">
+        <Select aria-label={t('massage_people_month_label')} value={month} onChange={e => setMonth(e.target.value)}>
+          <option value="">{t('massage_people_month_all')}</option>
+          {months.map(ym => <option key={ym} value={ym}>{monthLabel(ym)}</option>)}
+        </Select>
         <TextField aria-label={t('massage_people_search')} placeholder={t('massage_people_search')} value={query} onChange={e => setQuery(e.target.value)} />
       </div>
       {visible.length === 0 ? <p className="massage-hint">{t('massage_people_empty')}</p> : (

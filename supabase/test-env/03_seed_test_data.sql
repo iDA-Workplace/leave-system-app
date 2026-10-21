@@ -98,7 +98,7 @@ begin
   while extract(isodow from v_day) > 5 loop v_day := v_day + 1; end loop;
 
   insert into public.massage_sessions (title, session_date, signup_deadline, cancel_deadline, draw_scheduled_at)
-  values (format('%s/%s 盲人按摩（測試・開放報名中）', extract(month from v_day), extract(day from v_day)),
+  values (format('%s/%s 盲人按摩（測試一）', extract(month from v_day), extract(day from v_day)),
           v_day,
           ((v_day - 1)::text || ' 12:00+08')::timestamptz,
           (v_day::text || ' 12:00+08')::timestamptz,
@@ -110,7 +110,7 @@ begin
 
   -- 第二期先用「還沒截止」建立，讓報名能寫進去，報完再把截止時間改成剛剛過
   insert into public.massage_sessions (title, session_date, signup_deadline, cancel_deadline, draw_scheduled_at)
-  values (format('%s/%s 盲人按摩（測試・可以抽籤）', extract(month from v_day), extract(day from v_day)),
+  values (format('%s/%s 盲人按摩（測試二）', extract(month from v_day), extract(day from v_day)),
           v_day,
           ((v_day - 1)::text || ' 12:00+08')::timestamptz,
           (v_day::text || ' 12:00+08')::timestamptz,
