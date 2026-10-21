@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useLocation } from 'react-router-dom'
+import { Link, useLocation, useSearchParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, EmptyState, Skeleton } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
@@ -11,8 +11,15 @@ import {
 } from '../../lib/massage'
 import MassageRules from './MassageRules'
 
-/** 同仁看到的「這一期」：最近一個還沒到的；都過了就顯示最近結束的那一期 */
-async function fetchCurrentSession() {
+/**
+ * 同仁看到的「這一期」：網址有指定（?session=，從首頁卡片點進來）就顯示那一期；
+ * 否則是最近一個還沒到的；都過了就顯示最近結束的那一期。
+ */
+async function fetchCurrentSession(sessionId) {
+  if (sessionId) {
+    const { data } = await supabase.from('massage_sessions').select('*').eq('id', sessionId).maybeSingle()
+    if (data) return data
+  }
   const today = taipeiToday()
   const { data: upcoming } = await supabase
     .from('massage_sessions').select('*')
@@ -44,11 +51,13 @@ function MassageHome({ userProfile, manager }) {
   const [confirm, setConfirm] = useState(null)
   const reload = () => setTick(n => n + 1)
   const location = useLocation()
+  const [searchParams] = useSearchParams()
+  const sessionParam = searchParams.get('session')
 
   useEffect(() => {
     let cancelled = false
     ;(async () => {
-      const session = await fetchCurrentSession()
+      const session = await fetchCurrentSession(sessionParam)
       let signups = []
       let leave = null
       if (session) {
@@ -61,7 +70,7 @@ function MassageHome({ userProfile, manager }) {
       if (!cancelled) setState({ loading: false, session, signups, leave, ownerName })
     })()
     return () => { cancelled = true }
-  }, [tick])
+  }, [tick, sessionParam])
 
   async function run(fn, args, successKey, params) {
     setBusy(true)

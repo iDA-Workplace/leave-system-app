@@ -105,7 +105,7 @@ function OpenSessionCard({ session, signups, leave, now, myId, busy, run, setCon
         </div>
         <div className="massage-actions massage-actions--tight">
           <Chip tone={phaseTone(phase)}>{t(`massage_phase_${phase}`)}</Chip>
-          <Link to="/benefits/massage#massage-rules" className="massage-link">{t('massage_home_widget_more')} →</Link>
+          <Link to={`/benefits/massage?session=${session.id}#massage-rules`} className="massage-link">{t('massage_home_widget_more')} →</Link>
         </div>
       </div>
       <dl className="massage-facts">
@@ -139,7 +139,7 @@ function ClosedSessionCard({ session, now }) {
         </div>
         <div className="massage-actions massage-actions--tight">
           <Chip tone={phaseTone(phase)}>{t(`massage_phase_${phase}`)}</Chip>
-          <Button size="sm" onClick={() => navigate('/benefits/massage#massage-lists')}>{t('massage_home_list')}</Button>
+          <Button size="sm" onClick={() => navigate(`/benefits/massage?session=${session.id}#massage-lists`)}>{t('massage_home_list')}</Button>
         </div>
       </div>
     </Card>
