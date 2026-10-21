@@ -38,6 +38,13 @@ import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supa
 
 const SLACK_API = 'https://slack.com/api'
 
+// 網頁（瀏覽器）會直接呼叫這支，所以要回 CORS 標頭；跟 send-slack-notification 同一組設定。
+// 少了這個，瀏覽器的預檢請求（OPTIONS）過不了，真正的 POST 根本不會送出來。
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
 type Lang = 'zh' | 'en'
 const normalizeLang = (v: string | null | undefined): Lang => (v === 'en' ? 'en' : 'zh')
 
@@ -330,6 +337,7 @@ function normalizeSession(s: Record<string, any>): Session {
 // ===== 進入點 =====
 
 Deno.serve(async req => {
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   try {
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
       { auth: { persistSession: false } })
@@ -348,10 +356,10 @@ Deno.serve(async req => {
     summary.announced = await announceOpenSessions(ctx)
     summary.asked = await askAttendance(ctx)
 
-    return new Response(JSON.stringify(summary), { headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify(summary), { headers: { ...CORS, 'Content-Type': 'application/json' } })
   } catch (e) {
     console.error(e)
-    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { 'Content-Type': 'application/json' } })
+    return new Response(JSON.stringify({ error: 'Internal error' }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } })
   }
 })
 
