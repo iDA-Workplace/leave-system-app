@@ -62,6 +62,8 @@ function buildPeople(sessions, signups) {
   return Object.values(byUser).sort((a, b) => b.streak - a.streak || a.name.localeCompare(b.name))
 }
 
+const PAGE_SIZE = 10
+
 const COLUMNS = [
   ['name', 'massage_col_name'],
   ['dept', 'massage_col_dept'],
@@ -86,6 +88,7 @@ function MassagePeopleStats() {
   const [query, setQuery] = useState('')
   // 區間：年份 '' = 不限；月份 1～12（開始預設 1 月、結束預設 12 月）
   const [range, setRange] = useState({ fromY: '', fromM: '1', toY: '', toM: '12' })
+  const [page, setPage] = useState(1)
 
   useEffect(() => {
     let cancelled = false
@@ -122,7 +125,8 @@ function MassagePeopleStats() {
   const monthLabel = m => t('massage_people_month_n', {
     m, name: new Date(2000, m - 1, 1).toLocaleString('en', { month: 'short' }),
   })
-  const set = key => e => setRange(r => ({ ...r, [key]: e.target.value }))
+  // 換篩選條件就回到第一頁
+  const set = key => e => { setRange(r => ({ ...r, [key]: e.target.value })); setPage(1) }
   const yearSelect = (key, label) => (
     <Select aria-label={label} value={range[key]} onChange={set(key)}>
       <option value="">{t('massage_people_year_any')}</option>
@@ -137,6 +141,11 @@ function MassagePeopleStats() {
   const q = query.trim()
   const visible = q ? people.filter(p => p.name.includes(q) || p.dept.includes(q)) : people
   const cell = (p, key) => (key === 'lastAttended' ? (p.lastAttended ? fmtDate(p.lastAttended, lang) : '—') : p[key])
+
+  // 畫面上一頁 10 筆，不讓表格佔掉整個頁面；匯出 Excel 仍是篩選後的全部
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageRows = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
 
   function exportExcel() {
     const rows = visible.map(p => Object.fromEntries(COLUMNS.map(([key, label]) => [t(label), cell(p, key)])))
@@ -161,7 +170,7 @@ function MassagePeopleStats() {
         <span className="massage-muted">{t('massage_people_to')}</span>
         {yearSelect('toY', t('massage_people_to_year'))}
         {monthSelect('toM', 'toY', t('massage_people_to_month'))}
-        <TextField aria-label={t('massage_people_search')} placeholder={t('massage_people_search')} value={query} onChange={e => setQuery(e.target.value)} />
+        <TextField aria-label={t('massage_people_search')} placeholder={t('massage_people_search')} value={query} onChange={e => { setQuery(e.target.value); setPage(1) }} />
       </div>
       {rangeInvalid && <p className="massage-warn">{t('massage_people_range_invalid')}</p>}
       {visible.length === 0 ? <p className="massage-hint">{t('massage_people_empty')}</p> : (
@@ -169,13 +178,20 @@ function MassagePeopleStats() {
           <table className="ui-table">
             <thead><tr>{COLUMNS.map(([key, label]) => <th key={key}>{t(label)}</th>)}</tr></thead>
             <tbody>
-              {visible.map(p => (
+              {pageRows.map(p => (
                 <tr key={p.userId}>
                   {COLUMNS.map(([key]) => <td key={key}>{cell(p, key)}</td>)}
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+      {totalPages > 1 && (
+        <div className="massage-pagination">
+          <Button size="sm" variant="outlined" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>{t('common_prev_page')}</Button>
+          <span className="massage-muted">{t('common_page_indicator', { page: currentPage, total: totalPages })}</span>
+          <Button size="sm" variant="outlined" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>{t('common_next_page')}</Button>
         </div>
       )}
     </Card>

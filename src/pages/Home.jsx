@@ -461,7 +461,7 @@ function Home({ userProfile }) {
                     <tr key={req.id}>
                       <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{leaveTypeName(req.leave_type, lang)}</Chip></td>
                       <td>{isMultiDay ? `${req.start_date} ~ ${req.end_date}` : req.start_date}</td>
-                      <td>{isMultiDay ? t('common_all_day') : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
+                      <td>{isMultiDay ? t('common_all_day') : (req.start_time && req.end_time ? `${req.start_time.slice(0, 5)} ~ ${req.end_time.slice(0, 5)}` : '—')}</td>
                       <td>{req.hours ? t('common_hours', { n: req.hours }) : (isMultiDay ? t('common_days', { n: calendarDayCount(req.start_date, req.end_date) }) : '—')}</td>
                       <td>
                         <div className="dash-status-cell">

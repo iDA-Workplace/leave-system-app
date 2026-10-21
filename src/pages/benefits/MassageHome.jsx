@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useLocation } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
 import { Button, Card, Chip, ConfirmDialog, EmptyState, Skeleton } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
@@ -43,6 +43,7 @@ function MassageHome({ userProfile, manager }) {
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(null)
   const reload = () => setTick(n => n + 1)
+  const location = useLocation()
 
   useEffect(() => {
     let cancelled = false
@@ -73,6 +74,13 @@ function MassageHome({ userProfile, manager }) {
   }
 
   const { loading, session, signups, leave, ownerName } = state
+
+  // 從首頁「今日按摩名單」過來（#massage-lists）：資料載入後捲到公開名單
+  useEffect(() => {
+    if (!loading && location.hash === '#massage-lists') {
+      document.getElementById('massage-lists')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [loading, location.hash])
 
   const managerLink = manager && (
     <div className="massage-toolbar">
@@ -312,7 +320,7 @@ function PublicLists({ session, phase, signups, myId }) {
   if (phase === 'open' || phase === 'closed') {
     const list = [...active].sort((a, b) => new Date(a.signed_up_at) - new Date(b.signed_up_at))
     return (
-      <Card className="massage-list">
+      <Card className="massage-list" id="massage-lists">
         <h3 className="massage-card-title">{t('massage_signup_list', { n: list.length })}</h3>
         {list.length === 0 ? <p className="massage-hint">{t('massage_signup_list_empty')}</p> : (
           <div className="ui-table-wrap">
@@ -336,7 +344,7 @@ function PublicLists({ session, phase, signups, myId }) {
 
   const waitlist = waitlistOf(signups)
   return (
-    <Card className="massage-list">
+    <Card className="massage-list" id="massage-lists">
       <h3 className="massage-card-title">{t('massage_slot_table')}</h3>
       <div className="ui-table-wrap">
         <table className="ui-table">
