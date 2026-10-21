@@ -47,7 +47,7 @@ function MassageRules({ session, ownerName }) {
   ]
 
   return (
-    <Card className="massage-rules">
+    <Card className="massage-rules" id="massage-rules">
       <h3 className="massage-card-title">{t('massage_rules_title')}</h3>
       {sections.map(([heading, items]) => (
         <section key={heading} className="massage-rules__section">

@@ -16,7 +16,7 @@ import './Massage.css'
  *
  * 報名期間（還沒抽籤、報名還沒截止）：完整的報名卡片。報名、取消報名、請假擋下
  * 的說明都直接用員工福利頁的 MyStatus，規則一模一樣。
- * 報名截止後到按摩結束：只留一張小卡和「今日按摩名單」按鈕，連到員工福利頁的
+ * 報名截止後到按摩結束：只留一張小卡和「按摩名單」按鈕，連到員工福利頁的
  * 公開名單（抽籤前是報名名單，抽籤後是時段表）。全部同仁都看得到。
  * 都不是（沒有期數、或已經按完）就整塊不出現。
  */
@@ -105,7 +105,7 @@ function OpenSessionCard({ session, signups, leave, now, myId, busy, run, setCon
         </div>
         <div className="massage-actions massage-actions--tight">
           <Chip tone={phaseTone(phase)}>{t(`massage_phase_${phase}`)}</Chip>
-          <Link to="/benefits/massage" className="massage-link">{t('massage_home_widget_more')} →</Link>
+          <Link to="/benefits/massage#massage-rules" className="massage-link">{t('massage_home_widget_more')} →</Link>
         </div>
       </div>
       <dl className="massage-facts">
@@ -124,7 +124,7 @@ function OpenSessionCard({ session, signups, leave, now, myId, busy, run, setCon
   )
 }
 
-/** 報名截止後到按摩結束：小卡＋「今日按摩名單」 */
+/** 報名截止後到按摩結束：小卡＋「按摩名單」 */
 function ClosedSessionCard({ session, now }) {
   const { t, lang } = useLanguage()
   const navigate = useNavigate()
@@ -139,7 +139,7 @@ function ClosedSessionCard({ session, now }) {
         </div>
         <div className="massage-actions massage-actions--tight">
           <Chip tone={phaseTone(phase)}>{t(`massage_phase_${phase}`)}</Chip>
-          <Button size="sm" onClick={() => navigate('/benefits/massage#massage-lists')}>{t('massage_home_today_list')}</Button>
+          <Button size="sm" onClick={() => navigate('/benefits/massage#massage-lists')}>{t('massage_home_list')}</Button>
         </div>
       </div>
     </Card>

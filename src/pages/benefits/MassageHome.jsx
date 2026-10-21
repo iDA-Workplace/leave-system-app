@@ -75,10 +75,11 @@ function MassageHome({ userProfile, manager }) {
 
   const { loading, session, signups, leave, ownerName } = state
 
-  // 從首頁「今日按摩名單」過來（#massage-lists）：資料載入後捲到公開名單
+  // 從首頁過來：「按摩名單」帶 #massage-lists、「詳情與規則」帶 #massage-rules，
+  // 資料載入後捲到那一塊
   useEffect(() => {
-    if (!loading && location.hash === '#massage-lists') {
-      document.getElementById('massage-lists')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    if (!loading && (location.hash === '#massage-lists' || location.hash === '#massage-rules')) {
+      document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [loading, location.hash])
 
