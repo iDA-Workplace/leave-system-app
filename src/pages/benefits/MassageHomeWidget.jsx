@@ -110,13 +110,14 @@ function MassageHomeWidget({ userProfile }) {
 
   return (
     <>
-      {closed.map(session => <ClosedSessionCard key={session.id} session={session} now={now} />)}
+      {/* 報名中的永遠排第一（使用者要求），截止後的小卡排在後面，各自照日期 */}
       {items.map(({ session, signups, leave }) => (
         <OpenSessionCard
           key={session.id} session={session} signups={signups} leave={leave} now={now}
           myId={userProfile?.id} busy={busy} run={run} setConfirm={setConfirm}
         />
       ))}
+      {closed.map(session => <ClosedSessionCard key={session.id} session={session} now={now} />)}
       {confirm && (
         <ConfirmDialog
           title={t(confirm.titleKey)}
