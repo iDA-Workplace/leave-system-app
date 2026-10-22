@@ -72,6 +72,28 @@ function MassageHome({ userProfile, manager }) {
     return () => { cancelled = true }
   }, [tick, sessionParam])
 
+  // 即時更新（使用者要求）：管理者新開／編輯期數、有人報名／取消、抽籤、遞補……
+  // 這兩張表一有變動就重讀。一個動作可能連續觸發好幾筆，等 0.5 秒沒有新變動再讀；
+  // 訂閱萬一沒連上，每分鐘也會自己重讀一次（要先執行 migration 20261023_massage_realtime.sql）。
+  useEffect(() => {
+    let timer = null
+    const refresh = () => {
+      clearTimeout(timer)
+      timer = setTimeout(reload, 500)
+    }
+    const channel = supabase
+      .channel('massage_benefits_page')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'massage_sessions' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'massage_signups' }, refresh)
+      .subscribe()
+    const fallback = setInterval(refresh, 60 * 1000)
+    return () => {
+      clearTimeout(timer)
+      clearInterval(fallback)
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
   async function run(fn, args, successKey, params) {
     setBusy(true)
     const res = await callMassage(fn, args)
