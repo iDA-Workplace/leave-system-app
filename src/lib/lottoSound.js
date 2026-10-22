@@ -76,3 +76,17 @@ export function playDing() {
 export function playFanfare() {
   ;[523, 659, 784, 1047].forEach((f, i) => tone(f, i * 0.13, i === 3 ? 0.9 : 0.4, 'triangle', 0.18))
 }
+
+/** 輪盤轉動：「喀、喀、喀」越來越慢，ms 毫秒後停下（跟輪盤減速的節奏差不多） */
+export function playTicks(ms) {
+  const c = audio()
+  if (!c) return
+  const total = ms / 1000
+  // 減速：一開始很密，越來越疏。用「已轉角度 = 1 - (1 - t)^3」反推每一格經過的時間
+  const ticks = 42
+  for (let i = 1; i <= ticks; i++) {
+    const progress = i / ticks
+    const t = total * (1 - Math.cbrt(1 - progress))
+    click(c, c.currentTime + t)
+  }
+}

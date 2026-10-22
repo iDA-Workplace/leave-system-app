@@ -8,8 +8,9 @@ import {
   activeSignups, callMassage, fetchSessionBundle, fmtDate, fmtDateTime, holderOf,
   sessionWindow, slotRange, waitlistOf,
 } from '../../lib/massage'
-import { playDing, playFanfare, playRattle } from '../../lib/lottoSound'
+import { playDing, playFanfare, playRattle, playTicks } from '../../lib/lottoSound'
 import LotteryDrum from './LotteryDrum'
+import LotteryWheel from './LotteryWheel'
 
 /**
  * 公開抽籤畫面。會投影給大家看，所以字要大、資訊要少。
@@ -26,6 +27,8 @@ import LotteryDrum from './LotteryDrum'
  *     任何時候都可以按「全部揭曉」。
  *   · 只有正取一位一位開；正取開完，候補名單一次列出。
  *   · 有音效，可以隨時關掉（記在這台電腦的瀏覽器裡）。
+ *   · 動畫有兩種可以切換：樂透彩球機、輪盤（記在這台電腦的瀏覽器裡）。
+ *     輪盤每揭曉一位就轉到那個人的格子停下，已揭曉的格子變灰、不拿掉。
  *   · 已經抽完的期數可以「重新播放揭曉」（例如畫面不小心重新整理了），
  *     播的是抽籤當下記下來的結果（異動紀錄裡的 draw_result）。
  */
@@ -33,7 +36,9 @@ import LotteryDrum from './LotteryDrum'
 const LOTTO_COLORS = ['#ef4444', '#f59e0b', '#10b981', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316', '#6366f1', '#84cc16']
 const MODE_KEY = 'massage-draw-mode'
 const SOUND_KEY = 'massage-draw-sound'
-const MIX_MS = 1800       // 每一顆開出來之前翻滾多久
+const STYLE_KEY = 'massage-draw-style'
+const MIX_MS = 1800       // 彩球機：每一顆開出來之前翻滾多久
+const WHEEL_MS = 3600     // 輪盤：每一次轉多久
 const SHOW_MS = 1000      // 開出來之後停留多久才能開下一顆
 const AUTO_GAP_MS = 1200  // 自動播放時，兩顆之間再多等多久
 const IDLE_SPEED = 0.5
@@ -73,6 +78,8 @@ function MassageDraw() {
 
   const [mode, setMode] = useState(() => readPref(MODE_KEY, 'manual'))       // manual | auto
   const [soundOn, setSoundOn] = useState(() => readPref(SOUND_KEY, 'on') === 'on')
+  const [style, setStyle] = useState(() => readPref(STYLE_KEY, 'balls'))         // balls | wheel
+  const [spin, setSpin] = useState(null)   // 輪盤：{ id, key } 這次要轉到誰
   // 揭曉中：{ order, waitlist, revealed, step: ready | mixing | showing | done }
   const [show, setShow] = useState(null)
   const speedRef = useRef(IDLE_SPEED)
@@ -106,6 +113,7 @@ function MassageDraw() {
   async function startReveal(signups) {
     const result = await loadDrawResult(sessionId, signups)
     speedRef.current = IDLE_SPEED
+    setSpin(null)
     setShow({ ...result, revealed: 0, step: 'ready' })
   }
 
@@ -122,9 +130,16 @@ function MassageDraw() {
   function revealNext() {
     const s = showRef.current
     if (!s || s.step !== 'ready' || s.revealed >= s.order.length) return
+    const wheel = style === 'wheel'
+    const duration = wheel ? WHEEL_MS : MIX_MS
     setShow({ ...s, step: 'mixing' })
-    speedRef.current = MIX_SPEED
-    if (soundRef.current) playRattle(MIX_MS)
+    if (wheel) {
+      setSpin({ id: s.order[s.revealed].id, key: Date.now() })
+      if (soundRef.current) playTicks(duration)
+    } else {
+      speedRef.current = MIX_SPEED
+      if (soundRef.current) playRattle(duration)
+    }
     later(() => {
       speedRef.current = IDLE_SPEED
       const revealed = s.revealed + 1
@@ -136,7 +151,7 @@ function MassageDraw() {
       } else {
         later(() => setShow(cur => ({ ...cur, step: 'ready' })), SHOW_MS)
       }
-    }, MIX_MS)
+    }, duration)
   }
 
   function revealAll() {
@@ -159,6 +174,10 @@ function MassageDraw() {
   function chooseMode(next) {
     setMode(next)
     writePref(MODE_KEY, next)
+  }
+  function chooseStyle(next) {
+    setStyle(next)
+    writePref(STYLE_KEY, next)
   }
   function toggleSound() {
     setSoundOn(on => {
@@ -195,8 +214,22 @@ function MassageDraw() {
   const drumSize = Math.min(380, window.innerWidth - 72)
   const outIds = new Set(show ? show.order.slice(0, show.revealed).map(x => x.id) : [])
 
+  const mixing = show?.step === 'mixing'
+  const visual = idle => (style === 'wheel'
+    ? <LotteryWheel entries={balls} outIds={outIds} spinTarget={spin} spinMs={WHEEL_MS} idle={idle} size={drumSize} />
+    : <LotteryDrum balls={balls} speedRef={speedRef} outIds={outIds} size={drumSize} />)
+
   const controls = (
     <div className="lotto-controls">
+      <div className="lotto-mode" role="radiogroup" aria-label={t('massage_draw_style_label')}>
+        <span className="lotto-mode__label">{t('massage_draw_style_label')}</span>
+        {['balls', 'wheel'].map(v => (
+          <button key={v} type="button" role="radio" aria-checked={style === v} disabled={mixing}
+            className={`lotto-mode__opt${style === v ? ' is-on' : ''}`} onClick={() => chooseStyle(v)}>
+            {t(`massage_draw_style_${v}`)}
+          </button>
+        ))}
+      </div>
       <div className="lotto-mode" role="radiogroup" aria-label={t('massage_draw_mode_label')}>
         <span className="lotto-mode__label">{t('massage_draw_mode_label')}</span>
         {['manual', 'auto'].map(m => (
@@ -221,7 +254,7 @@ function MassageDraw() {
       <>
         <div className="lotto-layout">
           <div className="lotto-left">
-            <LotteryDrum balls={balls} speedRef={speedRef} outIds={outIds} size={drumSize} />
+            {visual(false)}
             <div className="lotto-result" aria-live="polite">
               {show.step === 'mixing' ? (
                 <span className="lotto-result__hint">{t('massage_draw_mixing', { k: show.revealed + 1 })}</span>
@@ -281,7 +314,7 @@ function MassageDraw() {
       <>
         {overCapacity && !beforeDeadline ? (
           <div className="lotto-layout lotto-layout--center">
-            <LotteryDrum balls={balls} speedRef={speedRef} outIds={outIds} size={drumSize} />
+            {visual(true)}
           </div>
         ) : (
           <div className="massage-stage__names">
