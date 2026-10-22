@@ -146,6 +146,19 @@
 
 測試專案 → SQL Editor。key 用**測試專案**的 secret key（Project Settings → API Keys）：
 
+⚠️ 下面 `< >` 包起來的三個地方（專案 ref、兩次 key）都要換成真的值，連 `< >` 一起換掉。
+漏換的話排程照樣會建立、每分鐘照樣跑，但每次都失敗（`cron.job_run_details` 會看到
+`invalid URL`），結果是「時間到才做的事」都不會發生（開放報名公告、遞補邀請逾時、時段前提醒、
+有按到嗎、編輯後改寫公告），只剩網頁上有動作時才順便發通知。
+
+要重建排程，先刪掉舊的：`select cron.unschedule('massage-notify');`
+檢查有沒有在跑：
+
+```sql
+select status, return_message, start_time from cron.job_run_details order by start_time desc limit 5;
+select status_code, content::text, created from net._http_response order by created desc limit 5;
+```
+
 ```sql
 create extension if not exists pg_cron with schema pg_catalog;
 create extension if not exists pg_net with schema extensions;
