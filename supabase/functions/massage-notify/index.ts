@@ -31,6 +31,7 @@
 //    其他種類（報名、出席標記……）不發通知。
 // c. 時間到才做的事：
 //      開放報名公告     新的一期還在報名期間 → 公告到頻道，附「報名」按鈕
+//      時段開始前 10 分鐘 有時段、沒取消的人 → 私訊「時段快到了」，附「釋出名額」
 //      時段一結束       有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
 //                      沒回覆就不再追，由管理者在網頁的現場面板補登記（使用者決定）
 //
@@ -41,6 +42,9 @@
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const SLACK_API = 'https://slack.com/api'
+
+// 時段開始前幾分鐘提醒（使用者決定：10 分鐘）
+const REMIND_BEFORE_MIN = 10
 
 // 網頁（瀏覽器）會直接呼叫這支，所以要回 CORS 標頭；跟 send-slack-notification 同一組設定。
 // 少了這個，瀏覽器的預檢請求（OPTIONS）過不了，真正的 POST 根本不會送出來。
@@ -117,6 +121,10 @@ const T = {
     moved_text: '💆 你的按摩時段已調整',
     moved_heading: '💆 *{title}*（{date}）負責人已調整你的時段：\n{from} → *{to}*',
     moved_swapped: '跟 {name} 交換。',
+
+    remind_text: '💆 按摩時段快到了',
+    remind_heading: '💆 *{title}*：你的{slot}快到了（{min} 分鐘後開始），請準時前往。',
+    remind_note: '臨時無法前往的話，請按下方按鈕釋出名額，讓候補的同仁遞補。',
 
     ask_text: '💆 剛剛的按摩有按到嗎？',
     ask_heading: '💆 *{title}*（{date}）你的{slot}剛結束。有按到嗎？',
@@ -198,6 +206,10 @@ const T = {
     moved_text: '💆 Your massage slot changed',
     moved_heading: '💆 *{title}* ({date}): the organizer changed your slot:\n{from} → *{to}*',
     moved_swapped: 'Swapped with {name}.',
+
+    remind_text: '💆 Your massage slot is coming up',
+    remind_heading: '💆 *{title}*: your {slot} starts in {min} minutes. Please be on time.',
+    remind_note: "If something came up and you can't make it, release your spot below so someone on the waitlist can take it.",
 
     ask_text: '💆 Did you get your massage?',
     ask_heading: '💆 *{title}* ({date}): your {slot} just ended. Did you get your massage?',
@@ -382,6 +394,7 @@ Deno.serve(async req => {
 
     summary.events = await processEvents(ctx)
     summary.announced = await announceOpenSessions(ctx)
+    summary.reminded = await remindUpcoming(ctx)
     summary.asked = await askAttendance(ctx)
 
     return new Response(JSON.stringify(summary), { headers: { ...CORS, 'Content-Type': 'application/json' } })
@@ -683,6 +696,43 @@ async function announceOpenSessions(ctx: Ctx) {
  * 由管理者在網頁的現場面板補登記（使用者決定）。只看「今天」的期數：
  * 排程如果停過，不會隔天才補問「剛剛的按摩」。
  */
+/**
+ * 時段開始前 10 分鐘：私訊「時段快到了」，附「釋出名額」（使用者決定；不另外通知負責人）。
+ *
+ * 排程每分鐘跑一次，所以大約在開始前 10 分鐘收到。時段已經開始才輪到檢查的
+ * （例如排程停過），就不再發「快到了」。job key 帶著時段編號：提醒之後才被
+ * 改到別的時段，新時段快到時會再提醒一次。
+ */
+async function remindUpcoming(ctx: Ctx) {
+  const { date } = taipeiNow()
+  const { data: sessions } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
+    .eq('session_date', date).not('drawn_at', 'is', null)
+  const now = Date.now()
+  let n = 0
+  for (const raw of sessions ?? []) {
+    const s = normalizeSession(raw)
+    const { data: rows } = await ctx.db.from('massage_signups')
+      .select('id, user_id, slot_no')
+      .eq('session_id', s.id).not('slot_no', 'is', null).is('released_at', null).is('attendance', null)
+    for (const g of rows ?? []) {
+      const start = new Date(`${s.session_date}T${slotRange(s, g.slot_no).from}:00+08:00`).getTime()
+      if (now < start - REMIND_BEFORE_MIN * 60_000 || now >= start) continue
+      const p = await ctx.person(g.user_id)
+      if (!p?.slack_user_id) continue
+      if (!(await claim(ctx, `remind_slot:${g.id}:${g.slot_no}`))) continue
+      const lang = normalizeLang(p.language)
+      await dm(p.slack_user_id, t(lang, 'remind_text'), [
+        section(t(lang, 'remind_heading', { title: s.title, slot: slotText(lang, s, g.slot_no), min: Math.max(1, Math.round((start - now) / 60_000)) })),
+        contextLine(t(lang, 'remind_note')),
+        { type: 'actions', elements: [button(t(lang, 'btn_release'), 'massage_release', g.id,
+          { style: 'danger', confirm: confirm(lang, 'confirm_release_title', 'confirm_release_text', t(lang, 'btn_release')) })] },
+      ])
+      n++
+    }
+  }
+  return n
+}
+
 async function askAttendance(ctx: Ctx) {
   const { date } = taipeiNow()
   const { data: sessions } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
