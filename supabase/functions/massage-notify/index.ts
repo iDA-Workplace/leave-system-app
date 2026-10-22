@@ -20,7 +20,10 @@
 // b. 還沒發過通知的異動紀錄，依種類：
 //      drawn             → 抽籤結果公告到頻道（SLACK_LEAVE_CHANNEL）
 //      draw_result       → 被詢問「要不要讓給候補」的人：私訊，附兩顆按鈕
+//      released          → 抽籤後有人釋出時段（任何管道）：私訊負責人，寫明是誰、哪個時段、
+//                          一般取消／逾期取消（記為未到）／讓給候補，以及接著邀請了誰（使用者決定）
 //      offered           → 被邀請遞補的候補：私訊，附「我要」；同時私訊負責人
+//                          （緊接在「釋出」之後的那次邀請，負責人在上一則已經知道了，不重複發）
 //      offer_superseded  → 邀請被負責人改成其他安排：私訊告知
 //      assigned          → 負責人直接指定某位候補遞補：私訊被指定的人
 //      added             → 負責人把某位同仁直接加進空時段（不一定有報名）：私訊當事人
@@ -108,6 +111,14 @@ const T = {
     owner_offer_no_slack: '⚠️ {name} 沒有設定 Slack，收不到這則通知，請直接聯絡他。',
     owner_offer_note: '如果當面問比較快，也可以到網頁的現場面板直接「指定遞補」。',
 
+    owner_released_text: '💆 有人釋出按摩時段',
+    owner_released_heading: '💆 *{title}*（{date}）：*{name}* 釋出了{slot}。',
+    owner_released_cancel: '在取消期限前取消。',
+    owner_released_late: '⚠️ 超過取消期限才釋出，系統已記為「未到」。',
+    owner_released_yield: '自願讓給候補（上一期有按到），不算未到。',
+    owner_released_offered: '系統已邀請候補 *{name}* 遞補。',
+    owner_released_no_waitlist: '目前沒有候補可以邀請，這個時段空著；可以到現場面板用「編輯」補人。',
+
     superseded_text: '💆 遞補邀請已取消',
     superseded_heading: '💆 *{title}*（{date}）{slot}的遞補邀請已取消 —— 負責人已經改成其他安排。',
 
@@ -192,6 +203,14 @@ const T = {
     owner_offer_heading: '💆 *{title}* ({date}): the system offered {slot} to *{name}* from the waitlist.',
     owner_offer_no_slack: '⚠️ {name} has no Slack ID set and will not get this message — please contact them directly.',
     owner_offer_note: 'If asking in person is quicker, you can also assign the slot directly in the live panel on the website.',
+
+    owner_released_text: '💆 Someone released a massage slot',
+    owner_released_heading: '💆 *{title}* ({date}): *{name}* released {slot}.',
+    owner_released_cancel: 'Cancelled before the cancellation deadline.',
+    owner_released_late: '⚠️ Released after the cancellation deadline — recorded as a no-show.',
+    owner_released_yield: 'Gave it to the waitlist voluntarily (had a massage last time) — not a no-show.',
+    owner_released_offered: 'The system offered it to *{name}* from the waitlist.',
+    owner_released_no_waitlist: 'Nobody is on the waitlist, so the slot is empty; you can add someone with "Edit" in the live panel.',
 
     superseded_text: '💆 Waitlist offer withdrawn',
     superseded_heading: '💆 *{title}* ({date}): the offer for {slot} was withdrawn — the organizer arranged it differently.',
@@ -439,6 +458,7 @@ async function handleEvent(ctx: Ctx, e: MassageEvent) {
   switch (e.event) {
     case 'drawn': await announceDraw(ctx, e); break
     case 'draw_result': if (e.details?.yield_asked) await askYield(ctx, e); break
+    case 'released': await notifyOwnerReleased(ctx, e); break
     case 'offered': await notifyOffer(ctx, e); break
     case 'offer_superseded': await notifySuperseded(ctx, e); break
     case 'assigned': await notifyAssigned(ctx, e, 'assigned_text', 'assigned_heading'); break
@@ -585,9 +605,14 @@ async function notifyOffer(ctx: Ctx, e: MassageEvent) {
     ])
   }
 
-  // 負責人也同時收到（使用者決定：系統和負責人同時通知）
+  // 負責人也同時收到（使用者決定：系統和負責人同時通知）。
+  // 但如果這次邀請是「有人釋出」直接帶出來的（前一筆就是同一個時段的釋出），
+  // 負責人在「○○ 釋出了…」那則已經知道邀請了誰，不再重複發。
+  const { data: prev } = await ctx.db.from('massage_events')
+    .select('event, session_id, slot_no').eq('id', e.id - 1).maybeSingle()
+  const afterRelease = prev?.event === 'released' && prev.session_id === e.session_id && prev.slot_no === e.slot_no
   const owner = await ctx.owner()
-  if (stillPending && owner?.slack_user_id && owner.id !== p.id) {
+  if (stillPending && !afterRelease && owner?.slack_user_id && owner.id !== p.id) {
     const lang = normalizeLang(owner.language)
     const blocks: unknown[] = [
       section(t(lang, 'owner_offer_heading', {
@@ -598,6 +623,36 @@ async function notifyOffer(ctx: Ctx, e: MassageEvent) {
     blocks.push(contextLine(t(lang, 'owner_offer_note')))
     await dm(owner.slack_user_id, t(lang, 'owner_offer_text'), blocks)
   }
+}
+
+/** 抽籤後有人釋出時段 → 私訊負責人（不論從網頁、Slack、提醒或請假提醒釋出） */
+async function notifyOwnerReleased(ctx: Ctx, e: MassageEvent) {
+  if (!e.slot_no) return                       // 候補退出（本來就沒有時段）不算
+  const s = await ctx.session(e.session_id!)
+  const owner = await ctx.owner()
+  if (!s?.drawn_at || !owner?.slack_user_id || owner.id === e.user_id) return
+  const p = await ctx.person(e.user_id)
+  const lang = normalizeLang(owner.language)
+
+  const reason: MsgKey = e.details?.reason === 'yield' ? 'owner_released_yield'
+    : e.details?.late ? 'owner_released_late' : 'owner_released_cancel'
+
+  // 同一個動作裡系統接著邀請了誰（就是下一筆紀錄）
+  const { data: next } = await ctx.db.from('massage_events')
+    .select('event, user_id, slot_no').eq('id', e.id + 1).maybeSingle()
+  const offeredTo = next?.event === 'offered' && next.slot_no === e.slot_no ? await ctx.person(next.user_id) : null
+
+  const blocks: unknown[] = [
+    section(t(lang, 'owner_released_heading', {
+      title: s.title, date: fmtDate(lang, s.session_date), name: p?.full_name ?? '—', slot: slotText(lang, s, e.slot_no),
+    })),
+    section(t(lang, reason)),
+    section(offeredTo
+      ? t(lang, 'owner_released_offered', { name: offeredTo.full_name })
+      : t(lang, 'owner_released_no_waitlist')),
+  ]
+  if (offeredTo && !offeredTo.slack_user_id) blocks.push(section(t(lang, 'owner_offer_no_slack', { name: offeredTo.full_name })))
+  await dm(owner.slack_user_id, t(lang, 'owner_released_text'), blocks)
 }
 
 async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
