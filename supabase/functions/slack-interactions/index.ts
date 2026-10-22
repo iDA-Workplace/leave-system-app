@@ -2178,7 +2178,8 @@ async function massageCardBlocks(db: SupabaseClient, me: any, lang: Lang): Promi
       buttons.push(mButton(mt(lang, 'btn_leave_waitlist'), 'massage_leave_waitlist', mine.id,
         { confirm: mConfirm(lang, 'confirm_waitlist_title', 'confirm_waitlist_text', mt(lang, 'btn_leave_waitlist')) }))
     }
-    buttons.push(mButton(mt(lang, 'btn_list'), 'massage_list', s.id))
+    // 「看名單」拿掉了（使用者決定）：名單一有變動，頻道就會發一則最新時段表，私訊再看一次像重複通知。
+    // 以前發出去的卡片上還留著那顆按鈕，按下去照樣會回名單（下面的 massage_list）。
 
     if (blocks.length) blocks.push({ type: 'divider' })
     // block_id 用 mcard 開頭：按鈕被按下時，靠它分辨「這是卡片」（要整張換成最新狀態）

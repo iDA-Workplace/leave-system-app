@@ -152,6 +152,7 @@ function MassageManage() {
       return
     }
     showToast(t('massage_toast_session_updated'))
+    pokeMassageNotify() // 頻道的開放報名公告改寫成最新內容，不用等到下一分鐘
     setEditing(null)
     reload()
   }
@@ -164,6 +165,7 @@ function MassageManage() {
       showToast(t('massage_err_delete', { msg: error?.message || t('massage_err_not_allowed') }), { tone: 'error' })
     } else {
       showToast(t('massage_toast_session_deleted'))
+      pokeMassageNotify() // 頻道的開放報名公告改成「本期已取消」
     }
     setDeleting(null)
     reload()

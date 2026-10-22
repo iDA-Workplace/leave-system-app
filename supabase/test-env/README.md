@@ -50,6 +50,7 @@
 4. [`../migrations/20261022_massage_hide_sessions.sql`](../migrations/20261022_massage_hide_sessions.sql)（管理頁隱藏抽過籤的期數）
 5. [`../migrations/20261023_massage_realtime.sql`](../migrations/20261023_massage_realtime.sql)（首頁按摩欄位、員工福利按摩頁即時更新）
 6. [`../migrations/20261024_massage_close_signup.sql`](../migrations/20261024_massage_close_signup.sql)（編輯視窗的「提前截止」）
+7. [`../migrations/20261025_massage_announcements.sql`](../migrations/20261025_massage_announcements.sql)（編輯／刪除期數時改寫頻道上的開放報名公告）
 
 ## 四、放入假帳號與示範資料
 
@@ -190,13 +191,13 @@ select cron.schedule(
 ## 九、可以試什麼
 
 **網頁（預覽網址）**
-- 員工福利 → 按摩預約：報名、取消、看名單、規則
+- 員工福利 → 按摩預約：報名、取消、看名單、規則（網頁上的名單照舊）
 - 管理：開新的一期（開放報名公告會發到測試頻道）
 - 第二期 → 投影畫面抽籤 → 抽籤結果公告到測試頻道
 - 現場面板：釋出、沒到、指定遞補、改時段、標出席；「紀錄」分頁、匯出 Excel
 
 **Slack（私訊「iDA 測試」這個 bot）**
-- 打「按摩」→ 卡片 → 報名／取消／看名單
+- 打「按摩」→ 卡片 → 報名／取消（私訊卡片已拿掉「看名單」，名單看頻道的時段表或網頁）
 - 測試頻道的開放報名公告 → 按「報名」
 - 用網頁登入某個測試同仁、在第二期抽籤後取消他的時段 → 候補第一位收到「輪到你了」
   （候補要是「測試管理員」才收得到，因為只有這個帳號有你的 Slack ID）

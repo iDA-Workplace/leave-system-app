@@ -355,8 +355,8 @@ Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己�
 
 | 誰 | 在哪 | 內容 |
 |---|---|---|
-| 所有人 | 私訊 bot 打「按摩」（英文 `massage`） | 回一張卡片：最近的 1～3 期、自己的狀態，以及報名／取消／釋出／我要／讓出／已完成／看名單等按鈕 |
-| 所有人 | 請假公告頻道（`SLACK_LEAVE_CHANNEL`） | 新的一期開放報名時公告（附「報名」按鈕）；抽籤完成時公告完整的正取（照時段）＋候補（照順位） |
+| 所有人 | 私訊 bot 打「按摩」（英文 `massage`） | 回一張卡片：最近的 1～3 期、自己的狀態，以及報名／取消／釋出／我要／讓出／已完成等按鈕（「看名單」已拿掉：名單變動時頻道會發最新時段表） |
+| 所有人 | 請假公告頻道（`SLACK_LEAVE_CHANNEL`） | 新的一期開放報名時公告（附「報名」按鈕）。之後管理者編輯這一期，**原本那則公告直接改寫成最新內容**（不另發新訊息）；這一期被刪除，公告改成「本期已取消」；抽籤完成時公告完整的正取（照時段）＋候補（照順位） |
 | 所有人 | 請假公告頻道 | 抽籤後時段表有變動時（有人空出時段、遞補上、被負責人加入、改時段／交換）發一則「時段異動」＋最新時段表。空出來只寫「時段 N 空出來了」，不寫原因 |
 | 被詢問是否讓出的人 | 私訊 | 抽中、上期有按到、而且有人候補時：「要不要讓給候補？」＋「不用，我要按」「讓給候補」 |
 | 被邀請遞補的候補 | 私訊 | 「時段 N 有空位，輪到你了！」＋「我要」 |
@@ -379,7 +379,7 @@ Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己�
 
 ### 部署步驟
 
-1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`、`migrations/20261021_massage_add_to_slot.sql`、`migrations/20261022_massage_hide_sessions.sql`、`migrations/20261023_massage_realtime.sql`、`migrations/20261024_massage_close_signup.sql`。
+1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`、`migrations/20261021_massage_add_to_slot.sql`、`migrations/20261022_massage_hide_sessions.sql`、`migrations/20261023_massage_realtime.sql`、`migrations/20261024_massage_close_signup.sql`、`migrations/20261025_massage_announcements.sql`。
 2. **`slack-interactions`**：點進既有的 function → Code → 整份換成 `slack-interactions/index.ts` → Deploy。
 3. **`massage-notify`**：Deploy a new function → Via Editor → **名稱先改成 `massage-notify`** → 貼上 `massage-notify/index.ts` 全部內容 → Deploy。
    **Verify JWT 維持開啟（預設值）**：呼叫它的是排程（帶 secret key）、網頁（帶登入者的 token）與 `slack-interactions`（帶 service role key），都有金鑰。
@@ -415,7 +415,7 @@ Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己�
 ```bash
 curl -X POST 'https://<ref>.supabase.co/functions/v1/massage-notify' \
   -H 'apikey: <key>' -H 'Authorization: Bearer <key>' -H 'Content-Type: application/json' -d '{}'
-# → {"events":0,"announced":0,"asked":0,"owner_reminded":0}
+# → {"events":0,"announced":0,"announcements_updated":0,"reminded":0,"asked":0}
 ```
 
 如果回的是 `{"message":"Hello ..."}` 之類的範例格式，代表貼上的程式碼沒有存到（見上面「部署後一定要重新確認 Code 分頁的內容」）。

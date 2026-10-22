@@ -34,6 +34,8 @@
 //    其他種類（報名、出席標記……）不發通知。
 // c. 時間到才做的事：
 //      開放報名公告     新的一期還在報名期間 → 公告到頻道，附「報名」按鈕
+//      改寫開放報名公告 期數被編輯（日期、時段、名額、截止……）→ 直接改寫那則公告，不另發新訊息；
+//                      期數被刪除 → 改成「本期已取消」（使用者決定）
 //      時段開始前 10 分鐘 有時段、沒取消的人 → 私訊「時段快到了」，附「釋出名額」
 //      時段一結束       有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
 //                      沒回覆就不再追，由管理者在網頁的現場面板補登記（使用者決定）
@@ -73,6 +75,8 @@ const T = {
     open_draw_at: '預計抽籤：{time}',
     open_note: '報名人數超過名額時公開抽籤，每個人抽中的機率都一樣。也可以私訊我「按摩」，或到網頁「員工福利」報名。',
     btn_signup: '報名',
+    cancelled_text: '💆 {title} 本期已取消',
+    cancelled_heading: '💆 *{title}*（{date}）本期已取消。',
 
     drawn_text: '💆 {title} 抽籤結果',
     drawn_heading: '💆 *{title}* 抽籤結果（{date} {from}–{to}）',
@@ -88,7 +92,7 @@ const T = {
     change_added: '{name} 排入{slot}',
     change_moved: '{name} 從時段 {from} 改到時段 {to}',
     change_swapped: '{a}（時段 {x}）與 {b}（時段 {y}）交換時段',
-    change_note: '隨時可以私訊我「按摩」→「看名單」查看最新時段表。',
+    change_note: '最新時段表也可以到網頁「員工福利 → 按摩預約」查看。',
     drawn_waitlist_h: '*候補*（依順位）',
     drawn_footer: '時段跟會議衝突的話，請自行跟其他同仁協調交換，換好後告訴負責人。無法出席請在 {deadline} 前取消，之後才取消視同未到。',
 
@@ -166,6 +170,8 @@ const T = {
     open_draw_at: 'Draw scheduled: {time}',
     open_note: 'If more people sign up than there are spots, there is a public draw and everyone has the same chance. You can also DM me "massage" or sign up under Benefits on the website.',
     btn_signup: 'Sign up',
+    cancelled_text: '💆 {title} has been cancelled',
+    cancelled_heading: '💆 *{title}* ({date}) has been cancelled.',
 
     drawn_text: '💆 {title}: draw results',
     drawn_heading: '💆 *{title}*: draw results ({date} {from}–{to})',
@@ -181,7 +187,7 @@ const T = {
     change_added: '{name} was added to {slot}',
     change_moved: '{name} moved from slot {from} to slot {to}',
     change_swapped: '{a} (slot {x}) and {b} (slot {y}) swapped slots',
-    change_note: 'DM me "massage" → "See the list" any time for the latest schedule.',
+    change_note: 'You can also see the latest schedule under Benefits → Massage on the website.',
     drawn_waitlist_h: '*Waitlist* (in order)',
     drawn_footer: 'If your slot clashes with a meeting, swap with a colleague and let the organizer know. If you cannot make it, cancel before {deadline}; cancelling after that counts as a no-show.',
 
@@ -413,6 +419,7 @@ Deno.serve(async req => {
 
     summary.events = await processEvents(ctx)
     summary.announced = await announceOpenSessions(ctx)
+    summary.announcements_updated = await syncAnnouncements(ctx)
     summary.reminded = await remindUpcoming(ctx)
     summary.asked = await askAttendance(ctx)
 
@@ -727,21 +734,90 @@ async function announceOpenSessions(ctx: Ctx) {
     const s = normalizeSession(raw)
     if (!(await claim(ctx, `announce_open:${s.id}`))) continue
     const lang = channelLang()
-    const win = sessionWindow(s)
-    const blocks: unknown[] = [
-      section(t(lang, 'open_heading', { title: s.title })),
-      section(t(lang, 'open_body', {
-        date: fmtDate(lang, s.session_date), ...win, n: s.slot_count, len: s.slot_minutes,
-        deadline: fmtDateTime(lang, s.signup_deadline),
-      }) + (s.draw_scheduled_at ? `\n${t(lang, 'open_draw_at', { time: fmtDateTime(lang, s.draw_scheduled_at) })}` : '')),
-      { type: 'actions', elements: [button(t(lang, 'btn_signup'), 'massage_signup', s.id, { style: 'primary' })] },
-      contextLine(t(lang, 'open_note')),
-    ]
-    await postChannel(t(lang, 'open_text', { title: s.title }), blocks)
+    const blocks = openAnnouncementBlocks(s, lang)
+    const res = await postChannel(t(lang, 'open_text', { title: s.title }), blocks)
+    // 記下這則公告在哪裡，之後期數被編輯／刪除時才能直接改寫它
+    if (res?.ok) {
+      const { error } = await ctx.db.from('massage_announcements').upsert({
+        session_id: s.id, channel: res.channel, ts: res.ts,
+        title: s.title, session_date: s.session_date, content: JSON.stringify(blocks),
+      })
+      if (error) console.error('記錄開放報名公告失敗：', error.message)
+    }
     n++
   }
   return n
 }
+
+function openAnnouncementBlocks(s: Session, lang: Lang): unknown[] {
+  return [
+    section(t(lang, 'open_heading', { title: s.title })),
+    section(t(lang, 'open_body', {
+      date: fmtDate(lang, s.session_date), ...sessionWindow(s), n: s.slot_count, len: s.slot_minutes,
+      deadline: fmtDateTime(lang, s.signup_deadline),
+    }) + (s.draw_scheduled_at ? `\n${t(lang, 'open_draw_at', { time: fmtDateTime(lang, s.draw_scheduled_at) })}` : '')),
+    { type: 'actions', elements: [button(t(lang, 'btn_signup'), 'massage_signup', s.id, { style: 'primary' })] },
+    contextLine(t(lang, 'open_note')),
+  ]
+}
+
+/**
+ * 開放報名公告跟著期數改（使用者決定）：
+ *   · 期數被編輯 → 用同樣的格式重新產生內容，跟上次發的不一樣就直接改寫那則訊息（chat.update），不另發新的
+ *   · 期數被刪除（只有還沒抽籤的期數能刪）→ 改成「本期已取消」，拿掉「報名」按鈕，之後不再追蹤
+ * 報名截止、抽籤本身不會改公告（使用者選 A：只有編輯才改）。
+ * 提前截止會把截止時間改成「現在」，公告上的截止時間也會跟著改。
+ * 只追蹤 60 天內發的公告；這個功能上線前發的公告沒有記下位置，改不到。
+ */
+async function syncAnnouncements(ctx: Ctx) {
+  const { data: rows, error } = await ctx.db.from('massage_announcements')
+    .select('session_id, channel, ts, title, session_date, content')
+    .is('closed_at', null).gt('posted_at', new Date(Date.now() - 60 * 86400_000).toISOString())
+  if (error) { console.error('讀取開放報名公告失敗：', error.message); return 0 }
+  if (!rows?.length) return 0
+
+  // 一次查完；查詢失敗就整批跳過（不能把「查不到」誤當成「被刪除」）
+  const { data: sessions, error: sErr } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
+    .in('id', rows.map(r => r.session_id))
+  if (sErr) { console.error('讀取期數失敗：', sErr.message); return 0 }
+  const byId = new Map((sessions ?? []).map(raw => [raw.id, normalizeSession(raw)]))
+
+  const lang = channelLang()
+  let n = 0
+  for (const row of rows) {
+    const s = byId.get(row.session_id)
+    if (!s) {
+      const blocks = [section(t(lang, 'cancelled_heading', { title: row.title, date: fmtDate(lang, row.session_date) }))]
+      const res = await callSlack('chat.update', {
+        channel: row.channel, ts: row.ts, text: t(lang, 'cancelled_text', { title: row.title }), blocks,
+      })
+      if (res.ok || gone(res.error)) {
+        await ctx.db.from('massage_announcements')
+          .update({ closed_at: new Date().toISOString(), content: JSON.stringify(blocks) }).eq('session_id', row.session_id)
+        if (res.ok) n++
+      }
+      continue
+    }
+    const blocks = openAnnouncementBlocks(s, lang)
+    const content = JSON.stringify(blocks)
+    if (content === row.content) continue
+    const res = await callSlack('chat.update', {
+      channel: row.channel, ts: row.ts, text: t(lang, 'open_text', { title: s.title }), blocks,
+    })
+    if (res.ok) {
+      await ctx.db.from('massage_announcements')
+        .update({ content, title: s.title, session_date: s.session_date, updated_at: new Date().toISOString() })
+        .eq('session_id', s.id)
+      n++
+    } else if (gone(res.error)) {
+      // 公告被人從頻道刪掉了（或 bot 被移出頻道）：不再追蹤，免得每分鐘都失敗一次
+      await ctx.db.from('massage_announcements').update({ closed_at: new Date().toISOString() }).eq('session_id', s.id)
+    }
+  }
+  return n
+}
+
+const gone = (err: unknown) => ['message_not_found', 'channel_not_found', 'cant_update_message', 'is_archived'].includes(String(err))
 
 /**
  * 每個人的時段一結束：私訊「有按到嗎？」，只有一顆「有按到」。
