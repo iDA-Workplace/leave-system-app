@@ -117,6 +117,7 @@ function describe(e, session, t, lang) {
       return t(d.slot_conflict ? 'massage_ev_assigned_conflict' : 'massage_ev_assigned', { name, actor, slot: slotText(e.slot_no) })
     case 'moved': return t('massage_ev_moved', { name, from: d.from, to: d.to })
     case 'hidden': return t('massage_ev_hidden', { actor })
+    case 'signup_closed_early': return t('massage_ev_closed_early', { actor, time: fmtDateTime(d.previous_deadline, lang) })
     case 'unhidden': return t('massage_ev_unhidden', { actor })
     case 'added':
       return t(d.slot_conflict ? 'massage_ev_added_conflict' : 'massage_ev_added', { name, actor, slot: slotText(e.slot_no) })

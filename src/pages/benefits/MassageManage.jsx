@@ -108,6 +108,7 @@ function MassageManage() {
   const [saving, setSaving] = useState(false)
   const [editing, setEditing] = useState(null)       // { id, form }
   const [deleting, setDeleting] = useState(null)     // session
+  const [closingEarly, setClosingEarly] = useState(false)
   const [showHidden, setShowHidden] = useState(false)
   const reload = () => setTick(n => n + 1)
 
@@ -165,6 +166,18 @@ function MassageManage() {
       showToast(t('massage_toast_session_deleted'))
     }
     setDeleting(null)
+    reload()
+  }
+
+  /** 提前截止：報名截止時間直接設成「現在」（用資料庫的時間），不用自己改日期時間 */
+  async function handleCloseEarly() {
+    setSaving(true)
+    const res = await callMassage('massage_close_signup', { p_session_id: editing.id })
+    setSaving(false)
+    setClosingEarly(false)
+    if (!res.ok) { showToast(t(res.errorKey), { tone: 'error' }); reload(); return }
+    showToast(t('massage_toast_closed_early'))
+    setEditing(null)
     reload()
   }
 
@@ -277,6 +290,12 @@ function MassageManage() {
           onClose={() => setEditing(null)}
           actions={(
             <>
+              {(() => {
+                const s = state.sessions.find(x => x.id === editing.id)
+                return s && !s.drawn_at && new Date() < new Date(s.signup_deadline) && (
+                  <Button variant="danger-outlined" disabled={saving} onClick={() => setClosingEarly(true)}>{t('massage_close_early')}</Button>
+                )
+              })()}
               <Button variant="text" onClick={() => setEditing(null)}>{t('common_cancel')}</Button>
               <Button loading={saving} onClick={handleSaveEdit}>{t('common_save')}</Button>
             </>
@@ -284,6 +303,18 @@ function MassageManage() {
         >
           <SessionForm form={editing.form} setForm={f => setEditing(e => ({ ...e, form: typeof f === 'function' ? f(e.form) : f }))} />
         </Dialog>
+      )}
+
+      {closingEarly && editing && (
+        <ConfirmDialog
+          title={t('massage_close_early_title')}
+          description={t('massage_close_early_desc')}
+          confirmLabel={t('massage_close_early')}
+          danger
+          loading={saving}
+          onConfirm={handleCloseEarly}
+          onCancel={() => setClosingEarly(false)}
+        />
       )}
 
       {deleting && (

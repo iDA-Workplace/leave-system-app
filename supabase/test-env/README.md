@@ -49,6 +49,7 @@
 3. [`../migrations/20261021_massage_add_to_slot.sql`](../migrations/20261021_massage_add_to_slot.sql)（空時段「編輯」加人）
 4. [`../migrations/20261022_massage_hide_sessions.sql`](../migrations/20261022_massage_hide_sessions.sql)（管理頁隱藏抽過籤的期數）
 5. [`../migrations/20261023_massage_realtime.sql`](../migrations/20261023_massage_realtime.sql)（首頁按摩欄位即時更新）
+6. [`../migrations/20261024_massage_close_signup.sql`](../migrations/20261024_massage_close_signup.sql)（編輯視窗的「提前截止」）
 
 ## 四、放入假帳號與示範資料
 
