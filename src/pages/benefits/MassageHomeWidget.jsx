@@ -20,8 +20,11 @@ import './Massage.css'
  * 公開名單（抽籤前是報名名單，抽籤後是時段表）。全部同仁都看得到。
  * 都不是（沒有期數、或已經按完）就整塊不出現。
  *
- * 時間一到就自動換狀態，不用重新整理：報名截止那一刻從報名卡片換成小卡，
- * 按摩結束那一刻小卡消失（使用者要求）。
+ * 不用重新整理就會更新（使用者要求）：
+ *   · 時間一到就換狀態：報名截止那一刻從報名卡片換成小卡，按摩結束那一刻小卡消失
+ *   · 管理者新開一期、編輯一期、有人報名／取消：即時訂閱（Realtime）收到變動就
+ *     重新讀一次。訂閱萬一沒連上，每分鐘也會自己重讀一次當作備援。
+ *     （要先執行 migration 20261023_massage_realtime.sql）
  */
 function MassageHomeWidget({ userProfile }) {
   const { t } = useLanguage()
@@ -55,6 +58,27 @@ function MassageHomeWidget({ userProfile }) {
     })()
     return () => { cancelled = true }
   }, [tick])
+
+  // 有人新開／編輯期數、報名或取消 → 重新讀一次。一次動作可能連續觸發好幾筆
+  // 變動（例如抽籤一次改很多筆報名），所以等 0.5 秒沒有新變動再讀。
+  useEffect(() => {
+    let timer = null
+    const refresh = () => {
+      clearTimeout(timer)
+      timer = setTimeout(() => setTick(n => n + 1), 500)
+    }
+    const channel = supabase
+      .channel('massage_home_widget')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'massage_sessions' }, refresh)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'massage_signups' }, refresh)
+      .subscribe()
+    const fallback = setInterval(refresh, 60 * 1000)
+    return () => {
+      clearTimeout(timer)
+      clearInterval(fallback)
+      supabase.removeChannel(channel)
+    }
+  }, [])
 
   // 排一個計時器在「下一個會改變顯示的時間點」重新讀一次：報名中的期數看報名
   // 截止、截止後的期數看按摩結束。瀏覽器的計時器最長約 24 天，所以最多等 1 小時
