@@ -19,6 +19,9 @@ import './Massage.css'
  * 報名截止後到按摩結束：只留一張小卡和「按摩名單」按鈕，連到員工福利頁的
  * 公開名單（抽籤前是報名名單，抽籤後是時段表）。全部同仁都看得到。
  * 都不是（沒有期數、或已經按完）就整塊不出現。
+ *
+ * 時間一到就自動換狀態，不用重新整理：報名截止那一刻從報名卡片換成小卡，
+ * 按摩結束那一刻小卡消失（使用者要求）。
  */
 function MassageHomeWidget({ userProfile }) {
   const { t } = useLanguage()
@@ -52,6 +55,21 @@ function MassageHomeWidget({ userProfile }) {
     })()
     return () => { cancelled = true }
   }, [tick])
+
+  // 排一個計時器在「下一個會改變顯示的時間點」重新讀一次：報名中的期數看報名
+  // 截止、截止後的期數看按摩結束。瀏覽器的計時器最長約 24 天，所以最多等 1 小時
+  // 就重新排一次。
+  useEffect(() => {
+    const now = Date.now()
+    const changes = [
+      ...items.map(({ session }) => new Date(session.signup_deadline).getTime()),
+      ...closed.map(s => taipeiDate(s.session_date, sessionWindow(s).to).getTime()),
+    ].filter(ms => ms > now)
+    if (changes.length === 0) return undefined
+    const wait = Math.min(Math.min(...changes) - now + 1000, 60 * 60 * 1000)
+    const timer = setTimeout(() => setTick(n => n + 1), wait)
+    return () => clearTimeout(timer)
+  }, [items, closed])
 
   async function run(fn, args, successKey, params) {
     setBusy(true)
