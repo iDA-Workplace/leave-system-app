@@ -296,3 +296,4 @@
 .massage-search .ui-field:last-child { min-width: 200px; }
 .massage-pagination { display: flex; align-items: center; justify-content: center; gap: var(--space-150); margin-top: var(--space-150); }
 .massage-home-widget .massage-status { margin-top: var(--space-200); padding-top: var(--space-200); border-top: 1px solid var(--sys-color-outline-variant); }
+.massage-check { display: inline-flex; align-items: center; gap: var(--space-075, 6px); font-size: var(--type-body-medium-size); color: var(--sys-color-on-surface-variant); cursor: pointer; }

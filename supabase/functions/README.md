@@ -377,7 +377,7 @@ Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己�
 
 ### 部署步驟
 
-1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`、`migrations/20261021_massage_add_to_slot.sql`。
+1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`、`migrations/20261021_massage_add_to_slot.sql`、`migrations/20261022_massage_hide_sessions.sql`。
 2. **`slack-interactions`**：點進既有的 function → Code → 整份換成 `slack-interactions/index.ts` → Deploy。
 3. **`massage-notify`**：Deploy a new function → Via Editor → **名稱先改成 `massage-notify`** → 貼上 `massage-notify/index.ts` 全部內容 → Deploy。
    **Verify JWT 維持開啟（預設值）**：呼叫它的是排程（帶 secret key）、網頁（帶登入者的 token）與 `slack-interactions`（帶 service role key），都有金鑰。

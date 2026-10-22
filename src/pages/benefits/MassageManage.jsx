@@ -5,7 +5,7 @@ import { Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, Skeleton, TextFi
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import {
-  defaultDeadlines, fetchOwnerName, fmtDate, fromTaipeiInput, phaseTone, pokeMassageNotify,
+  callMassage, defaultDeadlines, fetchOwnerName, fmtDate, fromTaipeiInput, phaseTone, pokeMassageNotify,
   sessionPhase, sessionWindow, toTaipeiInput,
 } from '../../lib/massage'
 import MassagePeopleStats from './MassagePeopleStats'
@@ -108,6 +108,7 @@ function MassageManage() {
   const [saving, setSaving] = useState(false)
   const [editing, setEditing] = useState(null)       // { id, form }
   const [deleting, setDeleting] = useState(null)     // session
+  const [showHidden, setShowHidden] = useState(false)
   const reload = () => setTick(n => n + 1)
 
   useEffect(() => {
@@ -167,6 +168,18 @@ function MassageManage() {
     reload()
   }
 
+  /** 隱藏／取消隱藏（抽過籤的期數不能刪，只能從列表隱藏；紀錄與統計照常） */
+  async function toggleHidden(s) {
+    const hide = !s.hidden_at
+    const res = await callMassage('massage_set_hidden', { p_session_id: s.id, p_hidden: hide })
+    if (!res.ok) showToast(t(res.errorKey), { tone: 'error' })
+    else showToast(t(hide ? 'massage_toast_hidden' : 'massage_toast_unhidden'))
+    reload()
+  }
+
+  const hiddenCount = state.sessions.filter(s => s.hidden_at).length
+  const listed = state.sessions.filter(s => showHidden || !s.hidden_at)
+
   return (
     <div className="massage-page">
       <div className="massage-toolbar">
@@ -192,9 +205,19 @@ function MassageManage() {
       </Card>
 
       <Card>
-        <h3 className="massage-card-title">{t('massage_sessions')}</h3>
+        <div className="massage-toolbar">
+          <h3 className="massage-card-title">{t('massage_sessions')}</h3>
+          {hiddenCount > 0 && (
+            <label className="massage-check">
+              <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />
+              {t('massage_show_hidden', { n: hiddenCount })}
+            </label>
+          )}
+        </div>
         {state.loading ? <Skeleton height="120px" /> : state.sessions.length === 0 ? (
           <EmptyState icon="💆" title={t('massage_sessions_empty')} />
+        ) : listed.length === 0 ? (
+          <p className="massage-hint">{t('massage_all_hidden')}</p>
         ) : (
           <div className="ui-table-wrap">
             <table className="ui-table">
@@ -205,14 +228,17 @@ function MassageManage() {
                 </tr>
               </thead>
               <tbody>
-                {state.sessions.map(s => {
+                {listed.map(s => {
                   const phase = sessionPhase(s)
                   const win = sessionWindow(s)
                   return (
                     <tr key={s.id}>
                       <td>{fmtDate(s.session_date, lang)}<div className="massage-muted">{win.from}–{win.to}</div></td>
                       <td>{s.title}</td>
-                      <td><Chip tone={phaseTone(phase)}>{t(`massage_phase_${phase}`)}</Chip></td>
+                      <td>
+                        <Chip tone={phaseTone(phase)}>{t(`massage_phase_${phase}`)}</Chip>
+                        {s.hidden_at && <> <Chip tone="neutral">{t('massage_chip_hidden')}</Chip></>}
+                      </td>
                       <td>{t('massage_capacity_value', { n: state.counts[s.id] || 0, cap: s.slot_count })}</td>
                       <td>
                         <div className="massage-actions massage-actions--tight">
@@ -223,6 +249,11 @@ function MassageManage() {
                               <Button size="sm" variant="outlined" onClick={() => setEditing({ id: s.id, form: formFromSession(s) })}>{t('common_edit')}</Button>
                               <Button size="sm" variant="danger-outlined" onClick={() => setDeleting(s)}>{t('common_delete')}</Button>
                             </>
+                          )}
+                          {s.drawn_at && (
+                            <Button size="sm" variant="outlined" onClick={() => toggleHidden(s)}>
+                              {t(s.hidden_at ? 'massage_unhide' : 'massage_hide')}
+                            </Button>
                           )}
                         </div>
                       </td>

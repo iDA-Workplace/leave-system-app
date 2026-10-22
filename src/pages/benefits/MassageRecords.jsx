@@ -116,6 +116,8 @@ function describe(e, session, t, lang) {
     case 'assigned':
       return t(d.slot_conflict ? 'massage_ev_assigned_conflict' : 'massage_ev_assigned', { name, actor, slot: slotText(e.slot_no) })
     case 'moved': return t('massage_ev_moved', { name, from: d.from, to: d.to })
+    case 'hidden': return t('massage_ev_hidden', { actor })
+    case 'unhidden': return t('massage_ev_unhidden', { actor })
     case 'added':
       return t(d.slot_conflict ? 'massage_ev_added_conflict' : 'massage_ev_added', { name, actor, slot: slotText(e.slot_no) })
     case 'no_show': return t('massage_ev_no_show', { name, actor, slot: slotText(e.slot_no) })
