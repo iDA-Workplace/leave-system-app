@@ -888,15 +888,16 @@ async function remindUpcoming(ctx: Ctx) {
       if (now < start - REMIND_BEFORE_MIN * 60_000 || now >= start) continue
       const p = await ctx.person(g.user_id)
       if (!p?.slack_user_id) continue
-      if (!(await claim(ctx, `remind_slot:${g.id}:${g.slot_no}`))) continue
+      const key = `remind_slot:${g.id}:${g.slot_no}`
+      if (!(await claim(ctx, key))) continue
       const lang = normalizeLang(p.language)
-      await dm(ctx, p, t(lang, 'remind_text'), [
+      const sent = await dmOrUnclaim(ctx, key, p, t(lang, 'remind_text'), [
         section(t(lang, 'remind_heading', { title: s.title, slot: slotText(lang, s, g.slot_no), min: Math.max(1, Math.round((start - now) / 60_000)) })),
         contextLine(t(lang, 'remind_note')),
         { type: 'actions', elements: [button(t(lang, 'btn_release'), 'massage_release', g.id,
           { style: 'danger', confirm: confirm(lang, 'confirm_release_title', 'confirm_release_text', t(lang, 'btn_release')) })] },
       ])
-      n++
+      if (sent) n++
     }
   }
   return n
@@ -917,17 +918,37 @@ async function askAttendance(ctx: Ctx) {
       if (Date.now() < slotEnd.getTime()) continue
       const p = await ctx.person(g.user_id)
       if (!p?.slack_user_id) continue
-      if (!(await claim(ctx, `ask_attendance:${g.id}`))) continue
+      const key = `ask_attendance:${g.id}`
+      if (!(await claim(ctx, key))) continue
       const lang = normalizeLang(p.language)
-      await dm(ctx, p, t(lang, 'ask_text'), [
+      const sent = await dmOrUnclaim(ctx, key, p, t(lang, 'ask_text'), [
         section(t(lang, 'ask_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, g.slot_no) })),
         contextLine(t(lang, 'ask_note')),
         { type: 'actions', elements: [button(t(lang, 'btn_done'), 'massage_done', g.id, { style: 'primary' })] },
       ])
-      n++
+      if (sent) n++
     }
   }
   return n
+}
+
+/**
+ * 時間到才發的私訊（時段提醒、有按到嗎）：先占住再發；沒送到（Slack ID 錯、Slack 當下出問題）就放掉，
+ * 下一分鐘重試，直到送到或過了時效（時段提醒：時段開始；有按到嗎：當天結束）。使用者決定。
+ * 「Slack ID 無效」給負責人的提醒另有自己的紀錄，重試不會讓負責人重複收到。
+ */
+async function dmOrUnclaim(ctx: Ctx, key: string, p: Person, text: string, blocks: unknown[]) {
+  let ok = false
+  try {
+    ok = (await dm(ctx, p, text, blocks))?.ok === true
+  } catch (err) {
+    console.error(`私訊失敗（${key}）：`, err)
+  }
+  if (!ok) {
+    const { error } = await ctx.db.from('massage_jobs').delete().eq('job_key', key)
+    if (error) console.error(`放掉 ${key} 失敗：`, error.message)
+  }
+  return ok
 }
 
 async function claim(ctx: Ctx, key: string) {
