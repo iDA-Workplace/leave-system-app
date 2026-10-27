@@ -1933,6 +1933,9 @@ const MT = {
     err_not_asked: '沒有詢問你要不要讓出',
     err_already_answered: '你已經回答過了',
 
+    bad_id_text: '⚠️ 有同仁收不到按摩通知',
+    bad_id_heading: '⚠️ *{name}* 的 Slack User ID（`{id}`）無效，系統私訊不到對方，所以收不到按摩通知。\n請到網頁「管理後台 → 員工帳號」更正。',
+    bad_id_missed: '這次沒送到的通知：{what}。同一個錯誤的 ID 只會提醒一次；更正之後，之後的通知就會正常送達（已經錯過的不會補發）。',
     hit_text: '💆 請釋出按摩名額',
     hit_heading_self: '💆 你剛請的假跟按摩預約撞到了，請把名額釋出給其他同仁：',
     hit_heading_hr: '💆 HR 幫你登記的假跟按摩預約撞到了，請把名額釋出給其他同仁：',
@@ -2022,6 +2025,9 @@ const MT = {
     err_not_asked: 'You were not asked to give up your spot',
     err_already_answered: 'You already answered',
 
+    bad_id_text: '⚠️ Someone is not getting massage notifications',
+    bad_id_heading: "⚠️ *{name}*'s Slack User ID (`{id}`) is invalid, so the system cannot DM them and they are not getting massage notifications.\nPlease fix it under Admin → Employee accounts on the website.",
+    bad_id_missed: 'Missed this time: {what}. You are told only once per wrong ID; once it is fixed, later notifications arrive normally (missed ones are not resent).',
     hit_text: '💆 Please release your massage spot',
     hit_heading_self: '💆 The leave you just filed overlaps your massage booking. Please release your spot for others:',
     hit_heading_hr: '💆 The leave HR registered for you overlaps your massage booking. Please release your spot for others:',
@@ -2361,7 +2367,7 @@ function pokeMassageNotify() {
  */
 async function remindMassageForLeave(
   db: SupabaseClient, leaveId: string,
-  person: { slack_user_id?: string | null; language?: string | null } | null | undefined,
+  person: { id?: string; full_name?: string; slack_user_id?: string | null; language?: string | null } | null | undefined,
   heading: 'hit_heading_self' | 'hit_heading_hr',
 ) {
   if (!person?.slack_user_id) return
@@ -2387,5 +2393,34 @@ async function remindMassageForLeave(
         { confirm: mConfirm(lang, 'confirm_withdraw_title', 'confirm_withdraw_text', mt(lang, 'btn_withdraw')) })
     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: line }, accessory: btn })
   }
-  await dm(person.slack_user_id, mt(lang, 'hit_text'), blocks)
+  const res = await dm(person.slack_user_id, mt(lang, 'hit_text'), blocks)
+  // HR 代登記時，當事人的 Slack User ID 可能填錯 → 請按摩負責人更正（同 massage-notify 的 reportBadSlackId）
+  if (!res.ok && ['channel_not_found', 'user_not_found', 'user_disabled', 'cannot_dm_bot'].includes(res.error)) {
+    await reportBadMassageSlackId(db, person, mt(lang, 'hit_text'))
+  }
+}
+
+async function reportBadMassageSlackId(
+  db: SupabaseClient,
+  person: { id?: string; full_name?: string; slack_user_id?: string | null },
+  missed: string,
+) {
+  const { data: settings } = await db.from('massage_settings').select('owner_id').maybeSingle()
+  const { data: owner } = settings?.owner_id
+    ? await db.from('users').select('id, slack_user_id, language, is_active').eq('id', settings.owner_id).maybeSingle()
+    : { data: null }
+  if (!owner?.slack_user_id || owner.is_active === false || owner.id === person.id) {
+    console.error(`${person.full_name} 的 Slack User ID（${person.slack_user_id}）無效，也沒有可以通知的負責人`)
+    return
+  }
+  const { data: first } = await db.rpc('massage_job_claim', { p_key: `bad_slack_id:${person.id}:${person.slack_user_id}` })
+  if (first !== true) return
+  const lang = normalizeLang(owner.language)
+  await callSlack('chat.postMessage', {
+    channel: owner.slack_user_id, text: mt(lang, 'bad_id_text'),
+    blocks: [
+      section(mt(lang, 'bad_id_heading', { name: person.full_name ?? '—', id: person.slack_user_id ?? '' })),
+      { type: 'context', elements: [{ type: 'mrkdwn', text: mt(lang, 'bad_id_missed', { what: missed }) }] },
+    ],
+  })
 }

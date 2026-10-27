@@ -38,6 +38,8 @@
 //                      期數被刪除 → 改成「本期已取消」（使用者決定）
 //      時段開始前 10 分鐘 有時段、沒取消的人 → 私訊「時段快到了」，附「釋出名額」
 //      時段一結束       有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
+// d. 任何一則私訊發不出去、原因是收件人的 Slack User ID 無效 → 私訊負責人請他更正
+//    （同一個人的同一個錯誤 ID 只提醒一次；使用者決定）
 //                      沒回覆就不再追，由管理者在網頁的現場面板補登記（使用者決定）
 //
 // ── 語言 ─────────────────────────────────────────────────────────
@@ -146,6 +148,10 @@ const T = {
     ask_note: '有按到請按下面的按鈕；沒按到不用回覆。',
     btn_done: '有按到',
 
+    bad_id_text: '⚠️ 有同仁收不到按摩通知',
+    bad_id_heading: '⚠️ *{name}* 的 Slack User ID（`{id}`）無效，系統私訊不到對方，所以收不到按摩通知。\n請到網頁「管理後台 → 員工帳號」更正。',
+    bad_id_missed: '這次沒送到的通知：{what}。同一個錯誤的 ID 只會提醒一次；更正之後，之後的通知就會正常送達（已經錯過的不會補發）。',
+
     hit_text: '💆 請釋出按摩名額',
     hit_heading_self: '💆 你剛請的假跟按摩預約撞到了，請把名額釋出給其他同仁：',
     hit_heading_hr: '💆 HR 幫你登記的假跟按摩預約撞到了，請把名額釋出給其他同仁：',
@@ -240,6 +246,10 @@ const T = {
     ask_heading: '💆 *{title}* ({date}): your {slot} just ended. Did you get your massage?',
     ask_note: 'If you did, tap the button below. If not, no need to reply.',
     btn_done: 'Yes, I did',
+
+    bad_id_text: '⚠️ Someone is not getting massage notifications',
+    bad_id_heading: "⚠️ *{name}*'s Slack User ID (`{id}`) is invalid, so the system cannot DM them and they are not getting massage notifications.\nPlease fix it under Admin → Employee accounts on the website.",
+    bad_id_missed: 'Missed this time: {what}. You are told only once per wrong ID; once it is fixed, later notifications arrive normally (missed ones are not resent).',
 
     hit_text: '💆 Please release your massage spot',
     hit_heading_self: '💆 The leave you just filed overlaps your massage booking. Please release your spot for others:',
@@ -346,8 +356,35 @@ const confirm = (lang: Lang, title: MsgKey, text: MsgKey, ok: string) => ({
   deny: { type: 'plain_text', text: t(lang, 'confirm_cancel') },
 })
 
-function dm(slackId: string, text: string, blocks: unknown[]) {
-  return callSlack('chat.postMessage', { channel: slackId, text, blocks })
+/**
+ * 私訊一位同仁。Slack 說「找不到這個人」（Slack User ID 填錯、帳號已停用）時，
+ * 私訊按摩負責人請他更正（使用者決定）；同一個人的同一個錯誤 ID 只提醒一次。
+ */
+async function dm(ctx: Ctx, p: Person, text: string, blocks: unknown[]) {
+  const res = await callSlack('chat.postMessage', { channel: p.slack_user_id, text, blocks })
+  if (!res.ok && BAD_SLACK_ID_ERRORS.includes(res.error)) await reportBadSlackId(ctx, p, text)
+  return res
+}
+
+// 收件人的 Slack User ID 有問題時 chat.postMessage 會回的錯誤（token、權限之類的錯誤不算）
+const BAD_SLACK_ID_ERRORS = ['channel_not_found', 'user_not_found', 'user_disabled', 'cannot_dm_bot']
+
+async function reportBadSlackId(ctx: Ctx, p: Person, missed: string) {
+  const owner = await ctx.owner()
+  if (!owner?.slack_user_id || owner.id === p.id) {
+    console.error(`${p.full_name} 的 Slack User ID（${p.slack_user_id}）無效，也沒有可以通知的負責人`)
+    return
+  }
+  if (!(await claim(ctx, `bad_slack_id:${p.id}:${p.slack_user_id}`))) return
+  const lang = normalizeLang(owner.language)
+  // 直接呼叫 Slack，不經過 dm()：負責人自己的 ID 也錯的話，不要再回頭通知自己
+  await callSlack('chat.postMessage', {
+    channel: owner.slack_user_id, text: t(lang, 'bad_id_text'),
+    blocks: [
+      section(t(lang, 'bad_id_heading', { name: p.full_name, id: p.slack_user_id ?? '' })),
+      contextLine(t(lang, 'bad_id_missed', { what: missed })),
+    ],
+  })
 }
 function postChannel(text: string, blocks: unknown[]) {
   const channel = Deno.env.get('SLACK_LEAVE_CHANNEL')
@@ -578,7 +615,7 @@ async function askYield(ctx: Ctx, e: MassageEvent) {
   if (!g || g.released_at || g.yield_answer || !g.slot_no) return
 
   const lang = normalizeLang(p.language)
-  await dm(p.slack_user_id, t(lang, 'yield_text'), [
+  await dm(ctx, p, t(lang, 'yield_text'), [
     section(t(lang, 'yield_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, g.slot_no) })),
     {
       type: 'actions',
@@ -603,7 +640,7 @@ async function notifyOffer(ctx: Ctx, e: MassageEvent) {
 
   if (stillPending && p.slack_user_id) {
     const lang = normalizeLang(p.language)
-    await dm(p.slack_user_id, t(lang, 'offer_text'), [
+    await dm(ctx, p, t(lang, 'offer_text'), [
       section(t(lang, 'offer_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no) })),
       contextLine(g.offer_expires_at
         ? t(lang, 'offer_until', { time: fmtDateTime(lang, g.offer_expires_at) })
@@ -628,7 +665,7 @@ async function notifyOffer(ctx: Ctx, e: MassageEvent) {
     ]
     if (!p.slack_user_id) blocks.push(section(t(lang, 'owner_offer_no_slack', { name: p.full_name })))
     blocks.push(contextLine(t(lang, 'owner_offer_note')))
-    await dm(owner.slack_user_id, t(lang, 'owner_offer_text'), blocks)
+    await dm(ctx, owner, t(lang, 'owner_offer_text'), blocks)
   }
 }
 
@@ -659,7 +696,7 @@ async function notifyOwnerReleased(ctx: Ctx, e: MassageEvent) {
       : t(lang, 'owner_released_no_waitlist')),
   ]
   if (offeredTo && !offeredTo.slack_user_id) blocks.push(section(t(lang, 'owner_offer_no_slack', { name: offeredTo.full_name })))
-  await dm(owner.slack_user_id, t(lang, 'owner_released_text'), blocks)
+  await dm(ctx, owner, t(lang, 'owner_released_text'), blocks)
 }
 
 async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
@@ -667,7 +704,7 @@ async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
   const p = await ctx.person(e.user_id)
   if (!s || !p?.slack_user_id || !e.slot_no) return
   const lang = normalizeLang(p.language)
-  await dm(p.slack_user_id, t(lang, 'superseded_text'), [
+  await dm(ctx, p, t(lang, 'superseded_text'), [
     section(t(lang, 'superseded_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no) })),
   ])
 }
@@ -691,7 +728,7 @@ async function notifyAssigned(ctx: Ctx, e: MassageEvent, textKey: MsgKey, headin
   ]
   if (e.details?.slot_conflict) blocks.push(section(t(lang, 'assigned_conflict')))
   blocks.push(contextLine(t(lang, 'assigned_note')))
-  await dm(p.slack_user_id, t(lang, textKey), blocks)
+  await dm(ctx, p, t(lang, textKey), blocks)
 }
 
 /** 負責人改了時段（使用者決定：要通知當事人）。交換的話資料庫會記兩筆，兩個人各收到自己的。 */
@@ -720,7 +757,7 @@ async function notifyMoved(ctx: Ctx, e: MassageEvent) {
     const otherName = (await ctx.person(other?.user_id ?? null))?.full_name
     if (otherName) blocks.push(contextLine(t(lang, 'moved_swapped', { name: otherName })))
   }
-  await dm(p.slack_user_id, t(lang, 'moved_text'), blocks)
+  await dm(ctx, p, t(lang, 'moved_text'), blocks)
 }
 
 // ===== c. 時間到才做的事 =====
@@ -853,7 +890,7 @@ async function remindUpcoming(ctx: Ctx) {
       if (!p?.slack_user_id) continue
       if (!(await claim(ctx, `remind_slot:${g.id}:${g.slot_no}`))) continue
       const lang = normalizeLang(p.language)
-      await dm(p.slack_user_id, t(lang, 'remind_text'), [
+      await dm(ctx, p, t(lang, 'remind_text'), [
         section(t(lang, 'remind_heading', { title: s.title, slot: slotText(lang, s, g.slot_no), min: Math.max(1, Math.round((start - now) / 60_000)) })),
         contextLine(t(lang, 'remind_note')),
         { type: 'actions', elements: [button(t(lang, 'btn_release'), 'massage_release', g.id,
@@ -882,7 +919,7 @@ async function askAttendance(ctx: Ctx) {
       if (!p?.slack_user_id) continue
       if (!(await claim(ctx, `ask_attendance:${g.id}`))) continue
       const lang = normalizeLang(p.language)
-      await dm(p.slack_user_id, t(lang, 'ask_text'), [
+      await dm(ctx, p, t(lang, 'ask_text'), [
         section(t(lang, 'ask_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, g.slot_no) })),
         contextLine(t(lang, 'ask_note')),
         { type: 'actions', elements: [button(t(lang, 'btn_done'), 'massage_done', g.id, { style: 'primary' })] },
@@ -921,7 +958,7 @@ async function leaveReminder(ctx: Ctx, req: Request, leaveId: string) {
   const p = await ctx.person(leave?.requester_id ?? null)
   if (!p?.slack_user_id) return 0
   const lang = normalizeLang(p.language)
-  await dm(p.slack_user_id, t(lang, 'hit_text'),
+  await dm(ctx, p, t(lang, 'hit_text'),
     await leaveHitBlocks(ctx, lang, hits, leave?.registered_by ? 'hit_heading_hr' : 'hit_heading_self'))
   return hits.length
 }
