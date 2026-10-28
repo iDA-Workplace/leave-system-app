@@ -17,7 +17,9 @@ create table public.users (
   role text default 'employee',
   is_active boolean default true,
   is_admin boolean not null default false,
-  is_finance boolean not null default false
+  is_finance boolean not null default false,
+  slack_user_id text,
+  language text
 );
 create table public.leave_types (
   id uuid primary key default gen_random_uuid(),

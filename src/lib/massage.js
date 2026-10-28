@@ -12,7 +12,7 @@ import { supabase } from './supabase'
 export const SIGNUP_SELECT = `
   id, session_id, user_id, signed_up_at, draw_rank, result, went_last_time,
   yield_asked, yield_answer, slot_no, slot_conflict, released_at, released_late,
-  offer_slot_no, offer_status, offer_expires_at, attendance,
+  offer_slot_no, offer_status, offer_expires_at, attendance, grabbed_at,
   user:users!massage_signups_user_id_fkey(full_name, department)
 `
 
@@ -144,7 +144,61 @@ export function defaultDeadlines(sessionDate) {
     signup_deadline: `${dayBefore}T12:00`,
     draw_scheduled_at: `${dayBefore}T16:00`,
     cancel_deadline: `${sessionDate}T12:00`,
+    release_open_at: `${sessionDate}T11:00`,
   }
+}
+
+/**
+ * 釋出等待期（使用者決定）：抽籤後到「釋出開放時間」之前釋出的名額先保留、可以取消釋出，
+ * 時間到才交給候補或開放報名。跟資料庫的 massage_release_held 同一個判斷，只用來決定畫面上顯示什麼。
+ */
+export function releaseHeld(session, now = new Date()) {
+  return !!session?.drawn_at && !session.release_opened_at && !!session.release_open_at
+    && now < new Date(session.release_open_at)
+}
+
+/** 這個人的釋出是不是還在等待期（可以取消釋出） */
+export function isHeldRelease(session, signup, now = new Date()) {
+  return !!signup?.released_at && signup.slot_no != null && !!session?.drawn_at
+    && new Date(signup.released_at) >= new Date(session.drawn_at) && releaseHeld(session, now)
+}
+
+/** 等待期間「釋出中」的時段（沒有人、而且是抽籤後有人釋出的）—— 同 massage_held_slots */
+export function heldSlots(session, signups, now = new Date()) {
+  if (!releaseHeld(session, now)) return []
+  const set = new Set(signups.filter(s => isHeldRelease(session, s, now)).map(s => s.slot_no))
+  return [...set].filter(n => !holderOf(signups, n)).sort((a, b) => a - b)
+}
+
+/** 現在可以搶的時段（已開放、還沒結束、沒有人、沒有人手上有邀請）—— 同 massage_open_slots */
+export function openSlots(session, signups, now = new Date()) {
+  if (!session?.drawn_at || !session.release_opened_at) return []
+  return Array.from({ length: session.slot_count }, (_, i) => i + 1)
+    .filter(n => now < slotEndAt(session, n) && !holderOf(signups, n) && !pendingOfferFor(signups, n))
+}
+
+/** 釋出開放時間 →「10/28（三）上午 11:00」（使用者指定的寫法，跟 Slack 一致） */
+export function fmtOpens(ts, lang) {
+  if (!ts) return ''
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'Asia/Taipei', month: 'numeric', day: 'numeric', weekday: 'short', hour: 'numeric', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date(ts)).map(p => [p.type, p.value]))
+  const h = Number(parts.hour) % 24
+  const h12 = h % 12 || 12
+  if (lang === 'en') return `${parts.weekday} ${parts.month}/${parts.day} ${h12}:${parts.minute} ${h < 12 ? 'AM' : 'PM'}`
+  const zhWeek = { Sun: '日', Mon: '一', Tue: '二', Wed: '三', Thu: '四', Fri: '五', Sat: '六' }[parts.weekday]
+  return `${parts.month}/${parts.day}（${zhWeek}）${h < 12 ? '上午' : '下午'} ${h12}:${parts.minute}`
+}
+
+/** 假單 →「2026/10/27 特休 13:00–18:00」（搶空位時「這個時段你剛好請假」用） */
+export function leaveShort(leave, lang) {
+  if (!leave) return ''
+  const d = v => String(v).slice(0, 10).replaceAll('-', '/')
+  const sameDay = leave.start_date === leave.end_date
+  const dates = sameDay ? d(leave.start_date) : `${d(leave.start_date)}–${d(leave.end_date)}`
+  const type = (lang === 'en' && leave.leave_type_en) || leave.leave_type || ''
+  const time = sameDay && leave.start_time && leave.end_time ? ` ${leave.start_time}–${leave.end_time}` : ''
+  return `${dates} ${type}${time}`.trim()
 }
 
 // 資料庫函式回傳的 code → 翻譯字串的 key。沒列到的一律顯示通用錯誤。
@@ -154,7 +208,7 @@ const KNOWN_CODES = new Set([
   'already_released', 'slot_over', 'no_pending_offer', 'offer_expired', 'slot_taken',
   'invalid_slot', 'not_started', 'already_marked', 'invalid_status', 'no_slot',
   'not_asked', 'already_answered', 'not_waitlisted', 'owner_not_manager',
-  'not_drawn', 'already_has_slot',
+  'not_drawn', 'already_has_slot', 'not_open', 'cancel_release_closed', 'not_released',
 ])
 
 export function massageErrorKey(code) {

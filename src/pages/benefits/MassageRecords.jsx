@@ -4,7 +4,7 @@ import { supabase } from '../../lib/supabase'
 import { Button, Card, Chip, Skeleton } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
-import { fmtDateTime, slotEndAt, slotRange } from '../../lib/massage'
+import { fmtDateTime, fmtOpens, slotEndAt, slotRange } from '../../lib/massage'
 
 /**
  * 某一期的完整紀錄（管理員與 HR 才看得到；資料庫層也只開放給這兩種人讀）。
@@ -33,7 +33,11 @@ function buildRoster(session, signups, events) {
     const accepted = evs.find(e => e.event === 'accepted')
     const assigned = evs.find(e => e.event === 'assigned')
     const added = [...evs].reverse().find(e => e.event === 'added')
-    const released = [...evs].reverse().find(e => e.event === 'released')
+    const lastReleased = [...evs].reverse().find(e => e.event === 'released')
+    const releaseCancelled = [...evs].reverse().find(e => e.event === 'release_cancelled')
+    // 等待期間取消了釋出 → 那次釋出不算
+    const released = lastReleased && !(releaseCancelled && releaseCancelled.id > lastReleased.id) ? lastReleased : null
+    const grabbed = [...evs].reverse().find(e => e.event === 'grabbed')
     const withdrewCount = evs.filter(e => e.event === 'withdrew').length
     const moves = evs.filter(e => e.event === 'moved')
     const lastAttendance = [...evs].reverse().find(e => e.event === 'attendance' || e.event === 'no_show')
@@ -50,6 +54,8 @@ function buildRoster(session, signups, events) {
       promotedActor: assigned?.actor?.full_name || null,
       added: !!added,
       addedActor: added?.actor?.full_name || null,
+      grabbed: !!grabbed,
+      releaseCancelled: !!releaseCancelled,
       released,
       moves,
       offers,
@@ -77,6 +83,7 @@ function buildStats(session, rows) {
     ['massage_stat_waitlisted', count(r => r.drawResult === 'waitlist')],
     ['massage_stat_promoted', count(r => r.promotedBy)],
     ['massage_stat_added', count(r => r.added)],
+    ['massage_stat_grabbed', count(r => r.grabbed)],
     ['massage_stat_cancelled_after', count(r => r.released?.details?.reason === 'cancel' && !r.released.details.late)],
     ['massage_stat_cancelled_late', count(r => r.released?.details?.late)],
     ['massage_stat_yielded', count(r => r.released?.details?.reason === 'yield')],
@@ -105,7 +112,14 @@ function describe(e, session, t, lang) {
     case 'released':
       if (d.reason === 'yield') return t('massage_ev_yielded', { name, slot: slotText(e.slot_no) })
       if (!e.slot_no) return t('massage_ev_left_waitlist', { name })
+      if (d.held) return t('massage_ev_released_held', { name, slot: slotText(e.slot_no), time: fmtOpens(d.opens_at, lang) })
+      // 2026-10 起逾期釋出不再記未到（新的紀錄都帶 held 這個欄位，舊的沒有）
+      if (d.late && 'held' in d) return t('massage_ev_released_late_new', { name, slot: slotText(e.slot_no) })
       return t(d.late ? 'massage_ev_released_late' : 'massage_ev_released', { name, slot: slotText(e.slot_no) })
+    case 'release_cancelled': return t('massage_ev_release_cancelled', { name, slot: slotText(e.slot_no) })
+    case 'slot_open': return t('massage_ev_slot_open', { slot: slotText(e.slot_no) })
+    case 'releases_opened': return t('massage_ev_releases_opened', { n: (d.slots || []).length })
+    case 'grabbed': return t('massage_ev_grabbed', { name, slot: slotText(e.slot_no) })
     case 'yield_answered': return t('massage_ev_yield_kept', { name })
     case 'offered': return t('massage_ev_offered', { name, slot: slotText(e.slot_no) })
     case 'offer_expired': return t('massage_ev_offer_expired', { name, slot: slotText(e.slot_no) })
@@ -181,6 +195,8 @@ function MassageRecords({ session, signups }) {
     if (r.promotedBy === 'self') out.push([t('massage_note_promoted_self'), 'success'])
     if (r.promotedBy === 'manager') out.push([t('massage_note_promoted_manager', { name: r.promotedActor || '' }), 'success'])
     if (r.added) out.push([t('massage_note_added', { name: r.addedActor || '' }), 'success'])
+    if (r.grabbed) out.push([t('massage_note_grabbed'), 'success'])
+    if (r.releaseCancelled) out.push([t('massage_note_release_cancelled'), 'neutral'])
     if (r.moves.length) out.push([t('massage_note_moved', { n: r.moves.length }), 'info'])
     if (r.released?.details?.reason === 'yield') out.push([t('massage_note_yielded'), 'info'])
     else if (r.released?.details?.late) out.push([t('massage_note_cancelled_late', { time: fmtDateTime(r.released.created_at, lang) }), 'error'])

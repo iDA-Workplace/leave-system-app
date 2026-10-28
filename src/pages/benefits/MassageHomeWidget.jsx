@@ -5,10 +5,10 @@ import { Button, Card, Chip, ConfirmDialog } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import {
-  activeSignups, callMassage, fetchSessionBundle, fmtDate, fmtDateTime, phaseTone, sessionPhase, sessionWindow,
+  activeSignups, callMassage, fetchSessionBundle, fmtDate, fmtDateTime, openSlots, phaseTone, sessionPhase, sessionWindow,
   taipeiDate, taipeiToday,
 } from '../../lib/massage'
-import { MyStatus } from './MassageHome'
+import { MyStatus, OpenSlotsPanel } from './MassageHome'
 import './Massage.css'
 
 /**
@@ -30,7 +30,7 @@ function MassageHomeWidget({ userProfile }) {
   const { t } = useLanguage()
   const { showToast } = useToast()
   const [items, setItems] = useState([])    // 報名中：[{ session, signups, leave }]
-  const [closed, setClosed] = useState([])  // 報名截止、還沒按完的期數
+  const [closed, setClosed] = useState([])  // 報名截止、還沒按完的期數：[{ session, signups }]
   const [tick, setTick] = useState(0)
   const [busy, setBusy] = useState(false)
   const [confirm, setConfirm] = useState(null)
@@ -54,7 +54,11 @@ function MassageHomeWidget({ userProfile }) {
         ])
         return { session: s, signups, leave }
       }))
-      if (!cancelled) { setItems(loaded); setClosed(later) }
+      // 抽過籤的要報名資料，才知道有沒有「尚有名額」可以搶
+      const laterLoaded = await Promise.all(later.map(async s => (
+        s.drawn_at ? { session: s, signups: (await fetchSessionBundle(s.id)).signups } : { session: s, signups: [] }
+      )))
+      if (!cancelled) { setItems(loaded); setClosed(laterLoaded) }
     })()
     return () => { cancelled = true }
   }, [tick])
@@ -87,7 +91,9 @@ function MassageHomeWidget({ userProfile }) {
     const now = Date.now()
     const changes = [
       ...items.map(({ session }) => new Date(session.signup_deadline).getTime()),
-      ...closed.map(s => taipeiDate(s.session_date, sessionWindow(s).to).getTime()),
+      ...closed.map(({ session: s }) => taipeiDate(s.session_date, sessionWindow(s).to).getTime()),
+      // 釋出開放時間到了 → 可能多出「尚有名額」
+      ...closed.map(({ session: s }) => (s.release_open_at ? new Date(s.release_open_at).getTime() + 60 * 1000 : 0)),
     ].filter(ms => ms > now)
     if (changes.length === 0) return undefined
     const wait = Math.min(Math.min(...changes) - now + 1000, 60 * 60 * 1000)
@@ -117,7 +123,9 @@ function MassageHomeWidget({ userProfile }) {
           myId={userProfile?.id} busy={busy} run={run} setConfirm={setConfirm}
         />
       ))}
-      {closed.map(session => <ClosedSessionCard key={session.id} session={session} now={now} />)}
+      {closed.map(({ session, signups }) => (
+        <ClosedSessionCard key={session.id} session={session} signups={signups} now={now} onDone={reload} />
+      ))}
       {confirm && (
         <ConfirmDialog
           title={t(confirm.titleKey)}
@@ -167,8 +175,8 @@ function OpenSessionCard({ session, signups, leave, now, myId, busy, run, setCon
   )
 }
 
-/** 報名截止後到按摩結束：小卡＋「按摩名單」 */
-function ClosedSessionCard({ session, now }) {
+/** 報名截止後到按摩結束：小卡＋「按摩名單」；有空位可以搶的話，下面接「尚有名額」（使用者決定） */
+function ClosedSessionCard({ session, signups, now, onDone }) {
   const { t, lang } = useLanguage()
   const navigate = useNavigate()
   const phase = sessionPhase(session, now)
@@ -185,6 +193,9 @@ function ClosedSessionCard({ session, now }) {
           <Button size="sm" onClick={() => navigate(`/benefits/massage?session=${session.id}#massage-lists`)}>{t('massage_home_list')}</Button>
         </div>
       </div>
+      {openSlots(session, signups, now).length > 0 && (
+        <OpenSlotsPanel session={session} signups={signups} now={now} onDone={onDone} embedded />
+      )}
     </Card>
   )
 }

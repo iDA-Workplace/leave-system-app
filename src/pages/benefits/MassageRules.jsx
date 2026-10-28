@@ -1,6 +1,6 @@
 import { Card } from '../../components/ui'
 import { useLanguage } from '../../context/LanguageContext'
-import { fmtDateTime, sessionWindow } from '../../lib/massage'
+import { fmtDateTime, fmtOpens, sessionWindow } from '../../lib/massage'
 
 /**
  * 按摩預約規則（寫死在系統裡，使用者確認）。
@@ -17,7 +17,7 @@ function MassageRules({ session, ownerName }) {
   const n = session?.slot_count ?? 9
   const win = session ? sessionWindow(session) : { from: '13:00', to: '16:00' }
   const signupDeadline = session ? fmtDateTime(session.signup_deadline, lang) : t('massage_rules_default_signup_deadline')
-  const cancelDeadline = session ? fmtDateTime(session.cancel_deadline, lang) : t('massage_rules_default_cancel_deadline')
+  const opens = session?.release_open_at ? fmtOpens(session.release_open_at, lang) : t('massage_rules_default_release_open')
 
   const sections = [
     ['massage_rules_basic_h', [
@@ -36,8 +36,8 @@ function MassageRules({ session, ownerName }) {
       t('massage_rules_draw_4'),
     ]],
     ['massage_rules_cancel_h', [
-      t('massage_rules_cancel_1', { deadline: cancelDeadline }),
-      t('massage_rules_cancel_2'),
+      t('massage_rules_cancel_1', { opens }),
+      t('massage_rules_cancel_2', { opens }),
       t('massage_rules_cancel_3'),
       t('massage_rules_cancel_4'),
     ]],

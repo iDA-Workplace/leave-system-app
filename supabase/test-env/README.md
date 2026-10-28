@@ -51,6 +51,7 @@
 5. [`../migrations/20261023_massage_realtime.sql`](../migrations/20261023_massage_realtime.sql)（首頁按摩欄位、員工福利按摩頁即時更新）
 6. [`../migrations/20261024_massage_close_signup.sql`](../migrations/20261024_massage_close_signup.sql)（編輯視窗的「提前截止」）
 7. [`../migrations/20261025_massage_announcements.sql`](../migrations/20261025_massage_announcements.sql)（編輯／刪除期數時改寫頻道上的開放報名公告）
+8. [`../migrations/20261026_massage_release_hold.sql`](../migrations/20261026_massage_release_hold.sql)（釋出等到開放時間、取消釋出、候補時限、空位先搶先贏）
 
 ## 四、放入假帳號與示範資料
 

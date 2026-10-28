@@ -5,7 +5,7 @@ import { Button, Card, Chip, ConfirmDialog, EmptyState, Select, Skeleton, Tabs }
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import {
-  activeSignups, callMassage, fetchSessionBundle, fmtDate, fmtDateTime, holderOf,
+  activeSignups, callMassage, fetchSessionBundle, fmtDate, fmtDateTime, fmtOpens, heldSlots, holderOf,
   pendingOfferFor, phaseTone, sessionPhase, sessionWindow, slotEndAt, slotRange, slotStartAt,
   waitlistOf,
 } from '../../lib/massage'
@@ -105,6 +105,7 @@ function MassageSessionPanel() {
     return !ok || ok.includes(n)
   }
   const slots = Array.from({ length: session.slot_count }, (_, i) => i + 1)
+  const held = new Set(heldSlots(session, signups, now))   // 等待期間有人釋出、還沒開放的時段
   // 「編輯」的人選：已經有時段的人不列（他們要用改時段）；候補照順位排最前面，其餘照名字
   const holderIds = new Set(active.filter(s => s.slot_no).map(s => s.user_id))
   const waitRank = new Map(waitlist.map((w, i) => [w.user_id, i + 1]))
@@ -224,6 +225,7 @@ function MassageSessionPanel() {
                         <>
                           <span className="massage-muted">{t('massage_slot_empty')}</span>
                           {offer && <Chip tone="warning">{t('massage_offering', { name: offer.user?.full_name })}</Chip>}
+                          {held.has(n) && <Chip tone="info">{t('massage_slot_held', { time: fmtOpens(session.release_open_at, lang) })}</Chip>}
                         </>
                       )}
                     </div>

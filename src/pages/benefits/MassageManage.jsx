@@ -21,6 +21,7 @@ function blankForm() {
     signup_deadline: '',
     draw_scheduled_at: '',
     cancel_deadline: '',
+    release_open_at: '',
   }
 }
 
@@ -35,6 +36,7 @@ function formFromSession(s) {
     signup_deadline: toTaipeiInput(s.signup_deadline),
     draw_scheduled_at: toTaipeiInput(s.draw_scheduled_at),
     cancel_deadline: toTaipeiInput(s.cancel_deadline),
+    release_open_at: toTaipeiInput(s.release_open_at),
   }
 }
 
@@ -54,6 +56,8 @@ function toRow(form, t) {
     signup_deadline: fromTaipeiInput(form.signup_deadline),
     draw_scheduled_at: fromTaipeiInput(form.draw_scheduled_at),
     cancel_deadline: fromTaipeiInput(form.cancel_deadline),
+    // 留空 → 資料庫自動帶按摩當天 11:00
+    release_open_at: fromTaipeiInput(form.release_open_at),
   }
   if (![row.slot_minutes, row.break_minutes, row.slot_count].every(Number.isFinite)
       || row.slot_minutes < 5 || row.slot_count < 1 || row.break_minutes < 0) {
@@ -94,6 +98,10 @@ function SessionForm({ form, setForm, isNew }) {
         <TextField label={t('massage_cancel_deadline')} type="datetime-local" required value={form.cancel_deadline} onChange={set('cancel_deadline')}
           helper={t('massage_form_cancel_helper')} />
       </div>
+      <div className="massage-form__row">
+        <TextField label={t('massage_release_open_at')} type="datetime-local" value={form.release_open_at} onChange={set('release_open_at')}
+          helper={t('massage_form_release_helper')} />
+      </div>
     </div>
   )
 }
@@ -109,6 +117,7 @@ function MassageManage() {
   const [editing, setEditing] = useState(null)       // { id, form }
   const [deleting, setDeleting] = useState(null)     // session
   const [closingEarly, setClosingEarly] = useState(false)
+  const [releaseOpen, setReleaseOpen] = useState(null)   // 抽過籤的期數：{ id, value }
   const [showHidden, setShowHidden] = useState(false)
   const reload = () => setTick(n => n + 1)
 
@@ -168,6 +177,25 @@ function MassageManage() {
       pokeMassageNotify() // 頻道的開放報名公告改成「本期已取消」
     }
     setDeleting(null)
+    reload()
+  }
+
+  /**
+   * 抽過籤的期數只能改「釋出開放時間」（日期、時段、截止時間都鎖住了）。
+   * 使用者決定每期可以設定：平常用預設的按摩當天 11:00，測試時改成幾分鐘後就能馬上看到效果。
+   */
+  async function handleSaveReleaseOpen() {
+    setSaving(true)
+    const { data, error } = await supabase.from('massage_sessions')
+      .update({ release_open_at: fromTaipeiInput(releaseOpen.value) }).eq('id', releaseOpen.id).select('id')
+    setSaving(false)
+    if (error || !data?.length) {
+      showToast(t('massage_err_save', { msg: error?.message || t('massage_err_not_allowed') }), { tone: 'error' })
+      return
+    }
+    showToast(t('massage_toast_release_open_saved'))
+    pokeMassageNotify()
+    setReleaseOpen(null)
     reload()
   }
 
@@ -265,6 +293,11 @@ function MassageManage() {
                               <Button size="sm" variant="danger-outlined" onClick={() => setDeleting(s)}>{t('common_delete')}</Button>
                             </>
                           )}
+                          {s.drawn_at && phase !== 'finished' && (
+                            <Button size="sm" variant="outlined" onClick={() => setReleaseOpen({ id: s.id, value: toTaipeiInput(s.release_open_at) })}>
+                              {t('massage_set_release_open')}
+                            </Button>
+                          )}
                           {s.drawn_at && (
                             <Button size="sm" variant="outlined" onClick={() => toggleHidden(s)}>
                               {t(s.hidden_at ? 'massage_unhide' : 'massage_hide')}
@@ -304,6 +337,24 @@ function MassageManage() {
           )}
         >
           <SessionForm form={editing.form} setForm={f => setEditing(e => ({ ...e, form: typeof f === 'function' ? f(e.form) : f }))} />
+        </Dialog>
+      )}
+
+      {releaseOpen && (
+        <Dialog
+          title={t('massage_set_release_open_title')}
+          labelledBy="massage-release-open-title"
+          onClose={() => setReleaseOpen(null)}
+          actions={(
+            <>
+              <Button variant="text" onClick={() => setReleaseOpen(null)}>{t('common_cancel')}</Button>
+              <Button loading={saving} onClick={handleSaveReleaseOpen}>{t('common_save')}</Button>
+            </>
+          )}
+        >
+          <p className="massage-hint">{t('massage_set_release_open_desc')}</p>
+          <TextField label={t('massage_release_open_at')} type="datetime-local" value={releaseOpen.value}
+            onChange={e => setReleaseOpen(r => ({ ...r, value: e.target.value }))} helper={t('massage_form_release_helper')} />
         </Dialog>
       )}
 

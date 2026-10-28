@@ -28,6 +28,11 @@
 //      assigned          → 負責人直接指定某位候補遞補：私訊被指定的人
 //      added             → 負責人把某位同仁直接加進空時段（不一定有報名）：私訊當事人
 //      moved             → 負責人改了某人的時段（交換的話兩個人各一筆）：私訊當事人
+//      released（等待期間）→ 私訊本人，附「取消釋出」；負責人收到「幾點開放」
+//      release_cancelled → 私訊負責人「○○ 已取消釋出」
+//      releases_opened   → 釋出開放時間到了：負責人一則總整理；頻道發時段異動
+//      slot_open         → 沒有候補的空時段：私訊所有可以搶的同仁＋頻道發一則，附「報名」（先搶先贏）
+//      grabbed           → 有人搶到空位：頻道發時段異動；空位通知改寫成「已額滿」（syncNotices）
 //    另外，抽籤後時段表有變動（有人空出時段、遞補、被加入、改時段／交換）時，
 //    在頻道發一則「時段異動」，附上最新的時段表（使用者決定：選項 C）。
 //    文字刻意中性：空出來只寫「時段 N 空出來了」，不寫是取消、讓出還是沒到。
@@ -93,6 +98,9 @@ const T = {
     change_promoted: '{name} 遞補{slot}',
     change_added: '{name} 排入{slot}',
     change_moved: '{name} 從時段 {from} 改到時段 {to}',
+    change_grabbed: '{name} 報名了{slot}',
+    change_opened: '{slots}空出來了',
+    held_slot: '_釋出中（{time} 開放）_',
     change_swapped: '{a}（時段 {x}）與 {b}（時段 {y}）交換時段',
     change_note: '最新時段表也可以到網頁「員工福利 → 按摩預約」查看。',
     drawn_waitlist_h: '*候補*（依順位）',
@@ -120,7 +128,31 @@ const T = {
     owner_released_text: '💆 有人釋出按摩時段',
     owner_released_heading: '💆 *{title}*（{date}）：*{name}* 釋出了{slot}。',
     owner_released_cancel: '在取消期限前取消。',
-    owner_released_late: '⚠️ 超過取消期限才釋出，系統已記為「未到」。',
+    owner_released_late: '超過取消期限才釋出（不記未到）。',
+    owner_released_held: '名額會在 {time} 交給候補或開放其他同仁報名；在那之前本人可以取消釋出。',
+    owner_released_open_slot: '沒有候補可以邀請，已發空位通知給所有同仁（先搶先贏）。',
+    owner_cancel_text: '💆 有人取消釋出',
+    owner_cancel_heading: '💆 *{title}*（{date}）：*{name}* 已取消釋出，{slot}照原本安排。',
+    owner_opened_text: '💆 釋出的名額已開放',
+    owner_opened_heading: '💆 *{title}*（{date}）釋出的名額已開放：',
+    owner_opened_released: '{slot}・{name} 釋出',
+    owner_opened_empty: '{slot}・無人預約',
+    owner_opened_offered: '已邀請候補 *{name}*',
+    owner_opened_open: '沒有候補，已發空位通知給所有同仁',
+
+    release_text: '💆 你已釋出按摩時段',
+    release_heading: '💆 *{title}*（{date}）你已釋出{slot}。\n名額會在 {time} 交給候補或開放其他同仁報名。',
+    release_until: '{time} 前仍可取消釋出名額',
+    btn_cancel_release: '取消釋出',
+    release_cancelled_done: '✅ 已取消釋出，{slot}照原本安排。',
+    release_closed: '已超過 {time}，無法取消釋出。',
+
+    open_slots_text: '💆 {title} 尚有名額',
+    open_slots_heading: '💆 *{title}*（{date}）尚有名額，歡迎有興趣的同仁報名！先按先得 🙌',
+    open_slots_note: '按「報名」就直接排進那個時段。這期已經有時段、或那個時段在請假的同仁無法報名。',
+    open_slot_line: '*{slot}*',
+    open_slot_full: '~{slot}~ 已額滿',
+    open_slots_all_full: '💆 *{title}*（{date}）的空位名額已滿，謝謝大家的關注 🙏',
     owner_released_yield: '自願讓給候補（上一期有按到），不算未到。',
     owner_released_offered: '系統已邀請候補 *{name}* 遞補。',
     owner_released_no_waitlist: '目前沒有候補可以邀請，這個時段空著；可以到現場面板用「編輯」補人。',
@@ -161,7 +193,8 @@ const T = {
     btn_release: '釋出名額',
     btn_withdraw: '取消報名',
     confirm_release_title: '釋出名額？',
-    confirm_release_text: '名額會交給候補的同仁，釋出之後不能再改回來。超過取消期限才釋出的，會記為未到。',
+    confirm_release_text: '名額會交給候補或開放其他同仁報名，釋出之後不能再改回來。',
+    confirm_release_text_held: '釋出後，名額會在 {time} 交給候補或開放其他同仁報名；在那之前你都可以取消釋出。確定要釋出嗎？',
     confirm_withdraw_title: '取消報名？',
     confirm_withdraw_text: '取消後如果想再報名，會排到最後面。',
   },
@@ -192,6 +225,9 @@ const T = {
     change_promoted: '{name} takes {slot} from the waitlist',
     change_added: '{name} was added to {slot}',
     change_moved: '{name} moved from slot {from} to slot {to}',
+    change_grabbed: '{name} signed up for {slot}',
+    change_opened: '{slots} opened up',
+    held_slot: '_Released (opens {time})_',
     change_swapped: '{a} (slot {x}) and {b} (slot {y}) swapped slots',
     change_note: 'You can also see the latest schedule under Benefits → Massage on the website.',
     drawn_waitlist_h: '*Waitlist* (in order)',
@@ -219,7 +255,31 @@ const T = {
     owner_released_text: '💆 Someone released a massage slot',
     owner_released_heading: '💆 *{title}* ({date}): *{name}* released {slot}.',
     owner_released_cancel: 'Cancelled before the cancellation deadline.',
-    owner_released_late: '⚠️ Released after the cancellation deadline — recorded as a no-show.',
+    owner_released_late: 'Released after the cancellation deadline (not counted as a no-show).',
+    owner_released_held: 'The spot goes to the waitlist or opens to everyone at {time}; until then they can undo the release.',
+    owner_released_open_slot: 'Nobody on the waitlist, so everyone was told the slot is open (first come, first served).',
+    owner_cancel_text: '💆 Someone undid a release',
+    owner_cancel_heading: '💆 *{title}* ({date}): *{name}* undid their release and keeps {slot}.',
+    owner_opened_text: '💆 Released spots are now open',
+    owner_opened_heading: '💆 *{title}* ({date}): released spots are now open:',
+    owner_opened_released: '{slot} (released by {name})',
+    owner_opened_empty: '{slot} (no booking)',
+    owner_opened_offered: 'offered to *{name}* from the waitlist',
+    owner_opened_open: 'nobody on the waitlist, everyone was told it is open',
+
+    release_text: '💆 You released your massage slot',
+    release_heading: '💆 *{title}* ({date}): you released {slot}.\nThe spot goes to the waitlist or opens to everyone at {time}.',
+    release_until: 'You can undo the release until {time}',
+    btn_cancel_release: 'Undo release',
+    release_cancelled_done: '✅ Release undone — you keep {slot}.',
+    release_closed: 'It is past {time}, so the release can no longer be undone.',
+
+    open_slots_text: '💆 {title}: spots available',
+    open_slots_heading: '💆 *{title}* ({date}) has open spots — sign up if you are interested! First come, first served 🙌',
+    open_slots_note: 'Tap "Sign up" to take that slot right away. You cannot if you already have a slot this time or are on leave then.',
+    open_slot_line: '*{slot}*',
+    open_slot_full: '~{slot}~ taken',
+    open_slots_all_full: '💆 *{title}* ({date}): the open spots are all taken. Thanks for your interest 🙏',
     owner_released_yield: 'Gave it to the waitlist voluntarily (had a massage last time) — not a no-show.',
     owner_released_offered: 'The system offered it to *{name}* from the waitlist.',
     owner_released_no_waitlist: 'Nobody is on the waitlist, so the slot is empty; you can add someone with "Edit" in the live panel.',
@@ -260,7 +320,8 @@ const T = {
     btn_release: 'Release spot',
     btn_withdraw: 'Cancel sign-up',
     confirm_release_title: 'Release your spot?',
-    confirm_release_text: 'Your spot goes to the waitlist and cannot be taken back. Releasing after the cancellation deadline counts as a no-show.',
+    confirm_release_text: 'Your spot goes to the waitlist or opens to everyone, and cannot be taken back.',
+    confirm_release_text_held: 'Your spot goes to the waitlist or opens to everyone at {time}; until then you can undo the release. Release it?',
     confirm_withdraw_title: 'Cancel your sign-up?',
     confirm_withdraw_text: 'If you sign up again later, you will be placed last.',
   },
@@ -292,6 +353,7 @@ interface Session {
   slot_minutes: number; break_minutes: number; slot_count: number
   signup_deadline: string; cancel_deadline: string; draw_scheduled_at: string | null
   drawn_at: string | null; created_at: string
+  release_open_at: string; release_opened_at: string | null
 }
 
 function slotRange(s: Session, n: number) {
@@ -321,6 +383,15 @@ function fmtDateTime(lang: Lang, iso: string) {
   const d = new Date(new Date(iso).getTime() + 8 * 3600_000)
   return `${fmtDate(lang, d.toISOString().slice(0, 10))} ${fmtMin(d.getUTCHours() * 60 + d.getUTCMinutes())}`
 }
+/** 釋出開放時間 →「10/28（三）上午 11:00」（使用者指定的寫法） */
+function fmtOpens(lang: Lang, iso: string) {
+  const d = new Date(new Date(iso).getTime() + 8 * 3600_000)
+  const h = d.getUTCHours()
+  const m = String(d.getUTCMinutes()).padStart(2, '0')
+  const date = fmtDate(lang, d.toISOString().slice(0, 10))
+  if (lang === 'en') return `${date} ${h % 12 || 12}:${m} ${h < 12 ? 'AM' : 'PM'}`
+  return `${date}${h < 12 ? '上午' : '下午'} ${h % 12 || 12}:${m}`
+}
 function slotText(lang: Lang, s: Session, n: number) {
   return t(lang, 'slot', { n, ...slotRange(s, n) })
 }
@@ -349,6 +420,16 @@ const section = (md: string) => ({ type: 'section', text: { type: 'mrkdwn', text
 const contextLine = (md: string) => ({ type: 'context', elements: [{ type: 'mrkdwn', text: md }] })
 const button = (text: string, action_id: string, value: string, extra: Record<string, unknown> = {}) =>
   ({ type: 'button', text: { type: 'plain_text', text, emoji: true }, action_id, value, ...extra })
+/** 「釋出名額」的確認視窗：等待期間會說明幾點前可以取消釋出（slack-interactions 有一份一樣的） */
+function releaseConfirm(lang: Lang, s: Session) {
+  const held = !!s.drawn_at && !s.release_opened_at && Date.now() < new Date(s.release_open_at).getTime()
+  return {
+    title: { type: 'plain_text', text: t(lang, 'confirm_release_title') },
+    text: { type: 'mrkdwn', text: held ? t(lang, 'confirm_release_text_held', { time: fmtOpens(lang, s.release_open_at) }) : t(lang, 'confirm_release_text') },
+    confirm: { type: 'plain_text', text: t(lang, 'btn_release') },
+    deny: { type: 'plain_text', text: t(lang, 'confirm_cancel') },
+  }
+}
 const confirm = (lang: Lang, title: MsgKey, text: MsgKey, ok: string) => ({
   title: { type: 'plain_text', text: t(lang, title) },
   text: { type: 'mrkdwn', text: t(lang, text) },
@@ -396,7 +477,7 @@ function postChannel(text: string, blocks: unknown[]) {
 
 interface Person { id: string; full_name: string; slack_user_id: string | null; language: string | null; is_active: boolean | null }
 
-const SESSION_COLS = 'id, title, session_date, start_time, slot_minutes, break_minutes, slot_count, signup_deadline, cancel_deadline, draw_scheduled_at, drawn_at, created_at'
+const SESSION_COLS = 'id, title, session_date, start_time, slot_minutes, break_minutes, slot_count, signup_deadline, cancel_deadline, draw_scheduled_at, drawn_at, created_at, release_open_at, release_opened_at'
 
 class Ctx {
   sessions = new Map<string, Session>()
@@ -453,8 +534,12 @@ Deno.serve(async req => {
 
     const { error: expireError } = await db.rpc('massage_expire_offers')
     if (expireError) console.error('massage_expire_offers 失敗：', expireError.message)
+    // 釋出開放時間到了的期數：一次邀請候補／記空位（資料庫裡做，這裡只負責叫它）
+    const { error: openError } = await db.rpc('massage_open_releases')
+    if (openError) console.error('massage_open_releases 失敗：', openError.message)
 
     summary.events = await processEvents(ctx)
+    summary.notices_updated = await syncNotices(ctx)
     summary.announced = await announceOpenSessions(ctx)
     summary.announcements_updated = await syncAnnouncements(ctx)
     summary.reminded = await remindUpcoming(ctx)
@@ -482,7 +567,18 @@ async function processEvents(ctx: Ctx) {
     if (error) { console.error('massage_notify_claim 失敗：', error.message); break }
     const events = (data ?? []) as MassageEvent[]
     if (events.length === 0) break
+    // 空位：同一期同一批的合成一則（使用者決定：多個空時段一則私訊）
+    const opened = events.filter(e => e.event === 'slot_open')
+    if (opened.length) {
+      try {
+        await broadcastOpenSlots(ctx, opened)
+        for (const e of opened) { await ctx.db.rpc('massage_notify_done', { p_event_id: e.id }); handled++ }
+      } catch (err) {
+        console.error('空位通知失敗：', err)
+      }
+    }
     for (const e of events) {
+      if (e.event === 'slot_open') continue
       try {
         await handleEvent(ctx, e)
       } catch (err) {
@@ -502,7 +598,9 @@ async function handleEvent(ctx: Ctx, e: MassageEvent) {
   switch (e.event) {
     case 'drawn': await announceDraw(ctx, e); break
     case 'draw_result': if (e.details?.yield_asked) await askYield(ctx, e); break
-    case 'released': await notifyOwnerReleased(ctx, e); break
+    case 'released': await notifyOwnerReleased(ctx, e); if (e.details?.held) await sendCancelReleaseDm(ctx, e); break
+    case 'release_cancelled': await notifyOwnerCancelled(ctx, e); break
+    case 'releases_opened': await notifyReleasesOpened(ctx, e); break
     case 'offered': await notifyOffer(ctx, e); break
     case 'offer_superseded': await notifySuperseded(ctx, e); break
     case 'assigned': await notifyAssigned(ctx, e, 'assigned_text', 'assigned_heading'); break
@@ -518,8 +616,12 @@ async function currentScheduleLines(ctx: Ctx, s: Session, lang: Lang) {
     .select('user_id, slot_no').eq('session_id', s.id).is('released_at', null).not('slot_no', 'is', null)
   const bySlot = new Map<number, string>()
   for (const r of data ?? []) bySlot.set(r.slot_no, (await ctx.person(r.user_id))?.full_name ?? '—')
+  // 等待期間釋出的時段寫「釋出中」，不寫是誰（使用者決定）
+  const { data: held } = await ctx.db.rpc('massage_held_slots', { p_session_id: s.id })
+  const heldSet = new Set<number>(Array.isArray(held) ? held : [])
+  const heldText = t(lang, 'held_slot', { time: fmtOpens(lang, s.release_open_at) })
   return Array.from({ length: s.slot_count }, (_, i) => i + 1)
-    .map(n => `\`${slotRange(s, n).from}\` ${bySlot.get(n) ?? t(lang, 'empty_slot')}`)
+    .map(n => `\`${slotRange(s, n).from}\` ${bySlot.get(n) ?? (heldSet.has(n) ? heldText : t(lang, 'empty_slot'))}`)
 }
 
 /**
@@ -528,9 +630,11 @@ async function currentScheduleLines(ctx: Ctx, s: Session, lang: Lang) {
  * 負責人加人、改時段。交換時段資料庫記兩筆，只發一則。
  */
 async function postScheduleChange(ctx: Ctx, e: MassageEvent) {
+  // 等待期間的釋出先不發，開放時間到了再一起發（releases_opened）；取消釋出也不發（使用者決定）
   const kind =
-    (e.event === 'released' || e.event === 'no_show') && e.slot_no ? 'freed'
+    (e.event === 'released' || e.event === 'no_show') && e.slot_no && !e.details?.held ? 'freed'
     : e.event === 'accepted' || e.event === 'assigned' ? 'promoted'
+    : e.event === 'grabbed' ? 'grabbed'
     : e.event === 'added' ? 'added'
     : e.event === 'moved' ? 'moved'
     : null
@@ -547,6 +651,7 @@ async function postScheduleChange(ctx: Ctx, e: MassageEvent) {
   if (kind === 'freed') change = t(lang, 'change_freed', { slot: slotText(lang, s, e.slot_no) })
   else if (kind === 'promoted') change = t(lang, 'change_promoted', { name, slot: slotText(lang, s, e.slot_no) })
   else if (kind === 'added') change = t(lang, 'change_added', { name, slot: slotText(lang, s, e.slot_no) })
+  else if (kind === 'grabbed') change = t(lang, 'change_grabbed', { name, slot: slotText(lang, s, e.slot_no) })
   else {
     const from = Number(e.details?.from)
     const to = Number(e.details?.to)
@@ -656,7 +761,8 @@ async function notifyOffer(ctx: Ctx, e: MassageEvent) {
     .select('event, session_id, slot_no').eq('id', e.id - 1).maybeSingle()
   const afterRelease = prev?.event === 'released' && prev.session_id === e.session_id && prev.slot_no === e.slot_no
   const owner = await ctx.owner()
-  if (stillPending && !afterRelease && owner?.slack_user_id && owner.id !== p.id) {
+  // 開放時間到了的那一批：負責人收的是一則總整理（releases_opened），這裡不再一則一則發
+  if (stillPending && !afterRelease && !e.details?.batch && owner?.slack_user_id && owner.id !== p.id) {
     const lang = normalizeLang(owner.language)
     const blocks: unknown[] = [
       section(t(lang, 'owner_offer_heading', {
@@ -685,18 +791,247 @@ async function notifyOwnerReleased(ctx: Ctx, e: MassageEvent) {
   const { data: next } = await ctx.db.from('massage_events')
     .select('event, user_id, slot_no').eq('id', e.id + 1).maybeSingle()
   const offeredTo = next?.event === 'offered' && next.slot_no === e.slot_no ? await ctx.person(next.user_id) : null
+  const openedToAll = next?.event === 'slot_open' && next.slot_no === e.slot_no
 
   const blocks: unknown[] = [
     section(t(lang, 'owner_released_heading', {
       title: s.title, date: fmtDate(lang, s.session_date), name: p?.full_name ?? '—', slot: slotText(lang, s, e.slot_no),
     })),
     section(t(lang, reason)),
-    section(offeredTo
-      ? t(lang, 'owner_released_offered', { name: offeredTo.full_name })
+    section(e.details?.held ? t(lang, 'owner_released_held', { time: fmtOpens(lang, e.details.opens_at ?? s.release_open_at) })
+      : offeredTo ? t(lang, 'owner_released_offered', { name: offeredTo.full_name })
+      : openedToAll ? t(lang, 'owner_released_open_slot')
       : t(lang, 'owner_released_no_waitlist')),
   ]
   if (offeredTo && !offeredTo.slack_user_id) blocks.push(section(t(lang, 'owner_offer_no_slack', { name: offeredTo.full_name })))
   await dm(ctx, owner, t(lang, 'owner_released_text'), blocks)
+}
+
+/** 等待期間釋出 → 私訊本人，附「取消釋出」（開放時間一到，按鈕換成一行字：syncNotices） */
+async function sendCancelReleaseDm(ctx: Ctx, e: MassageEvent) {
+  const s = await ctx.session(e.session_id!)
+  const p = await ctx.person(e.user_id)
+  if (!s || !p?.slack_user_id || !e.signup_id || !e.slot_no) return
+  // 處理到這筆時已經取消釋出、或已經開放了，就不用發
+  const { data: g } = await ctx.db.from('massage_signups').select('released_at').eq('id', e.signup_id).maybeSingle()
+  const { data: held } = await ctx.db.rpc('massage_release_held', { p_session_id: s.id })
+  if (!g?.released_at || held !== true) return
+
+  const lang = normalizeLang(p.language)
+  const blocks = cancelReleaseBlocks(s, lang, e.signup_id, e.slot_no, 'open')
+  const res = await dm(ctx, p, t(lang, 'release_text'), blocks)
+  if (res?.ok) {
+    const { error } = await ctx.db.from('massage_slack_notices').insert({
+      kind: 'cancel_release', session_id: s.id, signup_id: e.signup_id, user_id: p.id,
+      channel: res.channel, ts: res.ts, lang, slots: [e.slot_no], content: JSON.stringify(blocks),
+    })
+    if (error) console.error('記錄取消釋出私訊失敗：', error.message)
+  }
+}
+
+function cancelReleaseBlocks(s: Session, lang: Lang, signupId: string, slot: number, state: 'open' | 'cancelled' | 'closed'): unknown[] {
+  const time = fmtOpens(lang, s.release_open_at)
+  const blocks: unknown[] = [
+    section(t(lang, 'release_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, slot), time })),
+  ]
+  if (state === 'open') {
+    blocks.push({ type: 'actions', elements: [button(t(lang, 'btn_cancel_release'), 'massage_cancel_release', signupId, { style: 'primary' })] })
+    blocks.push(contextLine(t(lang, 'release_until', { time })))
+  } else if (state === 'cancelled') {
+    blocks.push(section(t(lang, 'release_cancelled_done', { slot: slotText(lang, s, slot) })))
+  } else {
+    blocks.push(contextLine(t(lang, 'release_closed', { time })))
+  }
+  return blocks
+}
+
+async function notifyOwnerCancelled(ctx: Ctx, e: MassageEvent) {
+  const s = await ctx.session(e.session_id!)
+  const owner = await ctx.owner()
+  if (!s || !e.slot_no || !owner?.slack_user_id || owner.id === e.user_id) return
+  const p = await ctx.person(e.user_id)
+  const lang = normalizeLang(owner.language)
+  await dm(ctx, owner, t(lang, 'owner_cancel_text'), [
+    section(t(lang, 'owner_cancel_heading', {
+      title: s.title, date: fmtDate(lang, s.session_date), name: p?.full_name ?? '—', slot: slotText(lang, s, e.slot_no),
+    })),
+  ])
+}
+
+/**
+ * 釋出開放時間到了（massage_open_releases 處理完）：
+ *   · 負責人：一則總整理（每個時段是誰釋出的、邀請了哪位候補或發了空位通知）
+ *   · 頻道：等待期間釋出的時段，現在才發「時段異動」（使用者決定）
+ */
+async function notifyReleasesOpened(ctx: Ctx, e: MassageEvent) {
+  const s = await ctx.session(e.session_id!)
+  if (!s) return
+  const items = (Array.isArray(e.details?.slots) ? e.details.slots : []) as
+    { slot: number; released_user_id: string | null; offered_user_id: string | null }[]
+  if (!items.length) return
+
+  const owner = await ctx.owner()
+  if (owner?.slack_user_id) {
+    const lang = normalizeLang(owner.language)
+    const lines: string[] = []
+    for (const it of items) {
+      const rel = it.released_user_id ? await ctx.person(it.released_user_id) : null
+      const left = rel
+        ? t(lang, 'owner_opened_released', { slot: slotText(lang, s, it.slot), name: rel.full_name })
+        : t(lang, 'owner_opened_empty', { slot: slotText(lang, s, it.slot) })
+      const offered = it.offered_user_id ? await ctx.person(it.offered_user_id) : null
+      const right = offered ? t(lang, 'owner_opened_offered', { name: offered.full_name }) : t(lang, 'owner_opened_open')
+      lines.push(`• ${left} → ${right}`)
+    }
+    await dm(ctx, owner, t(lang, 'owner_opened_text'), [
+      section(t(lang, 'owner_opened_heading', { title: s.title, date: fmtDate(lang, s.session_date) })),
+      section(lines.join('\n')),
+    ])
+  }
+
+  const freed = items.filter(it => it.released_user_id).map(it => it.slot)
+  if (!freed.length) return
+  if (Date.now() >= new Date(`${s.session_date}T${sessionWindow(s).to}:00+08:00`).getTime()) return
+  const lang = channelLang()
+  const change = t(lang, 'change_opened', { slots: freed.map(n => slotText(lang, s, n)).join(lang === 'en' ? ', ' : '、') })
+  await postChannel(t(lang, 'change_text', { title: s.title }), [
+    section(t(lang, 'change_heading', { title: s.title, date: fmtDate(lang, s.session_date), change })),
+    section(`${t(lang, 'drawn_selected_h')}\n${(await currentScheduleLines(ctx, s, lang)).join('\n')}`),
+    contextLine(t(lang, 'change_note')),
+  ])
+}
+
+// ===== 空位通知（先搶先贏）=====
+
+/**
+ * 沒有候補可以邀請的空時段 → 私訊所有可以搶的同仁＋頻道發一則（使用者決定）。
+ * 同一期同一批的空時段合成一則，每個時段一顆「報名」；每個人只列他可以搶的時段
+ * （這期已經有時段的人不發；那個時段在請假的不列）。發出去的每一則都記下來，
+ * 之後有人搶走就改寫成「已額滿」（syncNotices）。
+ */
+async function broadcastOpenSlots(ctx: Ctx, events: MassageEvent[]) {
+  const bySession = new Map<string, Set<number>>()
+  for (const e of events) {
+    if (!e.session_id || !e.slot_no) continue
+    if (!bySession.has(e.session_id)) bySession.set(e.session_id, new Set())
+    bySession.get(e.session_id)!.add(e.slot_no)
+  }
+  for (const [sessionId, slotSet] of bySession) {
+    const s = await ctx.session(sessionId)
+    if (!s) continue
+    // 處理到這裡時可能已經被搶走、或負責人補了人
+    const { data: open, error } = await ctx.db.rpc('massage_open_slots', { p_session_id: s.id })
+    if (error) throw new Error(`massage_open_slots 失敗：${error.message}`)
+    const slots = [...slotSet].filter(n => Array.isArray(open) && open.includes(n)).sort((a, b) => a - b)
+    if (!slots.length) continue
+
+    const { data: people, error: pErr } = await ctx.db.rpc('massage_open_slot_recipients', { p_session_id: s.id, p_slots: slots })
+    if (pErr) throw new Error(`massage_open_slot_recipients 失敗：${pErr.message}`)
+    for (const r of (people ?? []) as { user_id: string; full_name: string; slack_user_id: string; language: string | null; slots: number[] }[]) {
+      const lang = normalizeLang(r.language)
+      const blocks = openSlotBlocks(s, lang, r.slots, new Set(r.slots))
+      const res = await dm(ctx, { id: r.user_id, full_name: r.full_name, slack_user_id: r.slack_user_id, language: r.language, is_active: true },
+        t(lang, 'open_slots_text', { title: s.title }), blocks)
+      if (res?.ok) await saveOpenNotice(ctx, s.id, r.user_id, res, lang, r.slots, blocks)
+    }
+
+    const lang = channelLang()
+    const blocks = openSlotBlocks(s, lang, slots, new Set(slots))
+    const res = await postChannel(t(lang, 'open_slots_text', { title: s.title }), blocks)
+    if (res?.ok) await saveOpenNotice(ctx, s.id, null, res, lang, slots, blocks)
+  }
+}
+
+async function saveOpenNotice(ctx: Ctx, sessionId: string, userId: string | null, res: any, lang: Lang, slots: number[], blocks: unknown[]) {
+  const { error } = await ctx.db.from('massage_slack_notices').insert({
+    kind: 'open_slots', session_id: sessionId, user_id: userId, channel: res.channel, ts: res.ts,
+    lang, slots, content: JSON.stringify(blocks),
+  })
+  if (error) console.error('記錄空位通知失敗：', error.message)
+}
+
+/** 空位通知的內容。stillOpen 沒有的時段 → 那一行改成「已額滿」；全部額滿 → 整則改成「名額已滿」 */
+function openSlotBlocks(s: Session, lang: Lang, slots: number[], stillOpen: Set<number>): unknown[] {
+  const date = fmtDate(lang, s.session_date)
+  if (!slots.some(n => stillOpen.has(n))) return [section(t(lang, 'open_slots_all_full', { title: s.title, date }))]
+  const blocks: unknown[] = [section(t(lang, 'open_slots_heading', { title: s.title, date }))]
+  for (const n of slots) {
+    const slot = slotText(lang, s, n)
+    blocks.push(stillOpen.has(n)
+      ? { ...section(t(lang, 'open_slot_line', { slot })),
+          accessory: button(t(lang, 'btn_signup'), `massage_grab_${n}`, `${s.id}|${n}`, { style: 'primary' }) }
+      : section(t(lang, 'open_slot_full', { slot })))
+  }
+  blocks.push(contextLine(t(lang, 'open_slots_note')))
+  return blocks
+}
+
+/**
+ * 改寫已經發出去的私訊／頻道訊息（chat.update），跟現況一致：
+ *   · 空位通知：被搶走（或負責人補了人、邀請了候補）的時段改成「已額滿」，全部額滿 → 「名額已滿」。
+ *     時段時間到了不改（使用者選「不管多近都照發」，按下去會說時段已結束）；整期結束後不再追蹤。
+ *   · 取消釋出的私訊：本人取消了 → 「已取消釋出」；開放時間到了 → 按鈕換成「已超過 … 無法取消釋出」。
+ * 內容跟上次寫的一樣就不動。人多的時候 Slack 會限制改寫的速度（ratelimited），剩下的下一分鐘再改。
+ */
+async function syncNotices(ctx: Ctx) {
+  const { data: rows, error } = await ctx.db.from('massage_slack_notices')
+    .select('id, kind, session_id, signup_id, channel, ts, lang, slots, content')
+    .is('closed_at', null).gt('created_at', new Date(Date.now() - 3 * 86400_000).toISOString())
+    .order('id')
+  if (error) { console.error('讀取已發通知失敗：', error.message); return 0 }
+  if (!rows?.length) return 0
+
+  const openBySession = new Map<string, Set<number>>()
+  const heldBySession = new Map<string, boolean>()
+  let n = 0
+  for (const row of rows) {
+    const s = await ctx.session(row.session_id)
+    if (!s) continue
+    const lang = normalizeLang(row.lang)
+    const close = () => ctx.db.from('massage_slack_notices').update({ closed_at: new Date().toISOString() }).eq('id', row.id)
+    let blocks: unknown[]
+    let done = false
+
+    if (row.kind === 'open_slots') {
+      if (Date.now() >= new Date(`${s.session_date}T${sessionWindow(s).to}:00+08:00`).getTime()) { await close(); continue }
+      if (!openBySession.has(s.id)) {
+        const { data: open, error: oErr } = await ctx.db.rpc('massage_open_slots', { p_session_id: s.id })
+        if (oErr) { console.error('massage_open_slots 失敗：', oErr.message); continue }
+        openBySession.set(s.id, new Set(Array.isArray(open) ? open : []))
+      }
+      const open = openBySession.get(s.id)!
+      // 時間已經過了的時段照舊顯示（不因為時間到就改成已額滿）
+      const showAsOpen = new Set<number>((row.slots as number[]).filter(k =>
+        open.has(k) || Date.now() >= new Date(`${s.session_date}T${slotRange(s, k).to}:00+08:00`).getTime()))
+      blocks = openSlotBlocks(s, lang, row.slots, showAsOpen)
+      done = showAsOpen.size === 0
+    } else {
+      const { data: g } = await ctx.db.from('massage_signups').select('released_at').eq('id', row.signup_id).maybeSingle()
+      if (!heldBySession.has(s.id)) {
+        const { data: held } = await ctx.db.rpc('massage_release_held', { p_session_id: s.id })
+        heldBySession.set(s.id, held === true)
+      }
+      const state = !g ? 'closed' : !g.released_at ? 'cancelled' : heldBySession.get(s.id) ? 'open' : 'closed'
+      blocks = cancelReleaseBlocks(s, lang, row.signup_id, row.slots[0], state)
+      done = state !== 'open'
+    }
+
+    const content = JSON.stringify(blocks)
+    if (content !== row.content) {
+      const text = row.kind === 'open_slots' ? t(lang, 'open_slots_text', { title: s.title }) : t(lang, 'release_text')
+      const res = await callSlack('chat.update', { channel: row.channel, ts: row.ts, text, blocks })
+      if (res.error === 'ratelimited') break
+      if (res.ok) {
+        await ctx.db.from('massage_slack_notices').update({ content, ...(done ? { closed_at: new Date().toISOString() } : {}) }).eq('id', row.id)
+        n++
+      } else if (gone(res.error)) {
+        await close()
+      }
+    } else if (done) {
+      await close()
+    }
+  }
+  return n
 }
 
 async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
@@ -895,7 +1230,7 @@ async function remindUpcoming(ctx: Ctx) {
         section(t(lang, 'remind_heading', { title: s.title, slot: slotText(lang, s, g.slot_no), min: Math.max(1, Math.round((start - now) / 60_000)) })),
         contextLine(t(lang, 'remind_note')),
         { type: 'actions', elements: [button(t(lang, 'btn_release'), 'massage_release', g.id,
-          { style: 'danger', confirm: confirm(lang, 'confirm_release_title', 'confirm_release_text', t(lang, 'btn_release')) })] },
+          { style: 'danger', confirm: releaseConfirm(lang, s) })] },
       ])
       if (sent) n++
     }
@@ -997,8 +1332,7 @@ async function leaveHitBlocks(ctx: Ctx, lang: Lang, hits: any[], heading: MsgKey
         ? t(lang, 'hit_line_waitlist', { title: s.title, date })
         : t(lang, 'hit_line_signed', { title: s.title, date })
     const btn = h.drawn
-      ? button(t(lang, 'btn_release'), 'massage_release', h.signup_id,
-        { style: 'danger', confirm: confirm(lang, 'confirm_release_title', 'confirm_release_text', t(lang, 'btn_release')) })
+      ? button(t(lang, 'btn_release'), 'massage_release', h.signup_id, { style: 'danger', confirm: releaseConfirm(lang, s) })
       : button(t(lang, 'btn_withdraw'), 'massage_withdraw', h.signup_id,
         { confirm: confirm(lang, 'confirm_withdraw_title', 'confirm_withdraw_text', t(lang, 'btn_withdraw')) })
     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: line }, accessory: btn })

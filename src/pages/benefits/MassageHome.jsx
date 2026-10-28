@@ -5,9 +5,9 @@ import { Button, Card, Chip, ConfirmDialog, EmptyState, Skeleton } from '../../c
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import {
-  activeSignups, callMassage, fetchOwnerName, fetchSessionBundle, fmtDate, fmtDateTime, fmtTime,
-  holderOf, pendingOfferFor, phaseTone, sessionPhase, sessionWindow, slotEndAt, slotRange,
-  slotStartAt, taipeiToday, waitlistOf,
+  activeSignups, callMassage, fetchOwnerName, fetchSessionBundle, fmtDate, fmtDateTime, fmtOpens, fmtTime,
+  heldSlots, holderOf, isHeldRelease, leaveShort, openSlots, pendingOfferFor, phaseTone, releaseHeld,
+  sessionPhase, sessionWindow, slotEndAt, slotRange, slotStartAt, taipeiToday, waitlistOf,
 } from '../../lib/massage'
 import MassageRules from './MassageRules'
 
@@ -156,6 +156,9 @@ function MassageHome({ userProfile, manager }) {
             <div><dt>{t('massage_draw_time')}</dt><dd>{fmtDateTime(session.draw_scheduled_at, lang)}</dd></div>
           )}
           <div><dt>{t('massage_cancel_deadline')}</dt><dd>{fmtDateTime(session.cancel_deadline, lang)}</dd></div>
+          {session.release_open_at && (
+            <div><dt>{t('massage_release_open_at')}</dt><dd>{fmtOpens(session.release_open_at, lang)}</dd></div>
+          )}
           <div><dt>{t('massage_capacity')}</dt><dd>{t('massage_capacity_value', { n: active.length, cap: session.slot_count })}</dd></div>
         </dl>
       </Card>
@@ -164,6 +167,8 @@ function MassageHome({ userProfile, manager }) {
         session={session} phase={phase} now={now} mine={mine} signups={signups} leave={leave}
         busy={busy} run={run} setConfirm={setConfirm}
       />
+
+      <OpenSlotsPanel session={session} signups={signups} now={now} onDone={reload} />
 
       <PublicLists session={session} phase={phase} signups={signups} myId={userProfile?.id} />
 
@@ -240,6 +245,20 @@ export function MyStatus({ session, phase, now, mine, signups, leave, busy, run,
     body = <p className="massage-status__main">{isActive ? t('massage_waiting_draw') : t('massage_closed_not_signed')}</p>
   } else if (!mine) {
     body = <p className="massage-status__main">{t('massage_not_in_session')}</p>
+  } else if (isHeldRelease(session, mine, now)) {
+    // 等待期間釋出的：開放時間之前都可以取消釋出（使用者決定）
+    const r = slotRange(session, mine.slot_no)
+    body = (
+      <>
+        <p className="massage-status__main">{t('massage_release_held_status', { n: mine.slot_no, from: r.from, to: r.to })}</p>
+        <div className="massage-actions">
+          <Button loading={busy} onClick={() => run('massage_cancel_release', { p_signup_id: mine.id }, 'massage_toast_release_cancelled')}>
+            {t('massage_cancel_release')}
+          </Button>
+        </div>
+        <p className="massage-note">{t('massage_release_held_until', { time: fmtOpens(session.release_open_at, lang) })}</p>
+      </>
+    )
   } else if (mine.released_at) {
     const key = mine.yield_answer === 'yielded' ? 'massage_you_yielded'
       : mine.attendance === 'no_show' ? 'massage_you_no_show'
@@ -250,7 +269,7 @@ export function MyStatus({ session, phase, now, mine, signups, leave, busy, run,
     const started = now >= slotStartAt(session, mine.slot_no)
     const over = now >= slotEndAt(session, mine.slot_no)
     const conflict = mine.slot_conflict || (okSlots && !okSlots.includes(mine.slot_no))
-    const late = now >= new Date(session.cancel_deadline)
+    const held = releaseHeld(session, now)
     body = (
       <>
         <p className="massage-status__main">{t('massage_your_slot', { n: mine.slot_no, from: r.from, to: r.to })}</p>
@@ -267,8 +286,10 @@ export function MyStatus({ session, phase, now, mine, signups, leave, busy, run,
                 {t('massage_yield_keep')}
               </Button>
               <Button loading={busy} onClick={() => setConfirm({
-                titleKey: 'massage_confirm_yield_title', descKey: 'massage_confirm_yield_desc',
+                titleKey: 'massage_confirm_yield_title',
                 confirmKey: 'massage_yield_give',
+                descKey: held ? 'massage_confirm_release_held' : 'massage_confirm_yield_desc',
+                params: { time: fmtOpens(session.release_open_at, lang) },
                 onConfirm: () => run('massage_answer_yield', { p_signup_id: mine.id, p_yield: true }, 'massage_toast_yielded'),
               })}>{t('massage_yield_give')}</Button>
             </div>
@@ -284,7 +305,8 @@ export function MyStatus({ session, phase, now, mine, signups, leave, busy, run,
           {!started && (
             <Button variant="danger-outlined" onClick={() => setConfirm({
               titleKey: 'massage_confirm_release_title',
-              descKey: late ? 'massage_confirm_release_late' : 'massage_confirm_release_desc',
+              descKey: held ? 'massage_confirm_release_held' : 'massage_confirm_release_desc',
+              params: { time: fmtOpens(session.release_open_at, lang) },
               confirmKey: 'massage_release', danger: true,
               onConfirm: () => run('massage_release', { p_signup_id: mine.id }, 'massage_toast_released'),
             })}>{t('massage_release')}</Button>
@@ -343,6 +365,63 @@ export function MyStatus({ session, phase, now, mine, signups, leave, busy, run,
   )
 }
 
+/**
+ * 「尚有名額」：釋出開放後還空著、沒有候補可以邀請的時段，任何人都可以搶（先按先得，使用者決定）。
+ * 員工福利頁與首頁都用這一塊。報名不了的原因用使用者挑的提示文字（跟 Slack 一致）。
+ */
+export function OpenSlotsPanel({ session, signups, now, onDone, embedded = false }) {
+  const { t, lang } = useLanguage()
+  const { showToast } = useToast()
+  const [busySlot, setBusySlot] = useState(null)
+  const slots = openSlots(session, signups, now)
+  if (slots.length === 0) return null
+
+  async function grab(n) {
+    setBusySlot(n)
+    const res = await callMassage('massage_grab_slot', { p_session_id: session.id, p_slot_no: n })
+    setBusySlot(null)
+    const r = slotRange(session, n)
+    if (res.ok) {
+      showToast(t('massage_toast_grabbed', { n, from: r.from, to: r.to }))
+    } else {
+      const d = res.data || {}
+      const label = k => t('massage_slot_label', { n: k, ...slotRange(session, k) })
+      const msg = d.code === 'already_has_slot' ? t('massage_grab_has_slot', { slot: label(d.slot_no) })
+        : d.code === 'leave_conflict' ? t('massage_grab_leave', { leave: leaveShort(d.leave, lang) })
+          : d.code === 'slot_taken' ? t('massage_grab_taken')
+            : d.code === 'slot_over' ? t('massage_grab_over')
+              : d.code === 'not_open' ? t('massage_grab_not_open', { time: fmtOpens(session.release_open_at, lang) })
+                : t(res.errorKey)
+      showToast(msg, { tone: 'error' })
+    }
+    onDone?.()
+  }
+
+  const body = (
+    <>
+      <p className="massage-note">{t('massage_open_slots_desc')}</p>
+      <div className="massage-open-slots">
+        {slots.map(n => {
+          const r = slotRange(session, n)
+          return (
+            <div key={n} className="massage-open-slot">
+              <span>{t('massage_slot_label', { n, from: r.from, to: r.to })}</span>
+              <Button size="sm" loading={busySlot === n} disabled={busySlot != null} onClick={() => grab(n)}>{t('massage_signup')}</Button>
+            </div>
+          )
+        })}
+      </div>
+    </>
+  )
+  if (embedded) return <div className="massage-status"><p className="massage-status__main">{t('massage_open_slots_title')}</p>{body}</div>
+  return (
+    <Card className="massage-status">
+      <h3 className="massage-card-title">{t('massage_open_slots_title')}</h3>
+      {body}
+    </Card>
+  )
+}
+
 /** 公開的名單：抽籤前是報名名單，抽籤後是時段表＋候補名單（全公司都看得到） */
 function PublicLists({ session, phase, signups, myId }) {
   const { t, lang } = useLanguage()
@@ -375,6 +454,7 @@ function PublicLists({ session, phase, signups, myId }) {
   }
 
   const waitlist = waitlistOf(signups)
+  const held = new Set(heldSlots(session, signups))
   return (
     <Card className="massage-list" id="massage-lists">
       <h3 className="massage-card-title">{t('massage_slot_table')}</h3>
@@ -390,7 +470,11 @@ function PublicLists({ session, phase, signups, myId }) {
                 <tr key={n}>
                   <td>{n}</td>
                   <td>{r.from}–{r.to}</td>
-                  <td>{h ? `${h.user?.full_name}${you(h)}` : <span className="massage-muted">{t('massage_slot_empty')}</span>}</td>
+                  <td>
+                    {h ? `${h.user?.full_name}${you(h)}`
+                      : held.has(n) ? <span className="massage-muted">{t('massage_slot_held', { time: fmtOpens(session.release_open_at, lang) })}</span>
+                        : <span className="massage-muted">{t('massage_slot_empty')}</span>}
+                  </td>
                   <td>
                     {h?.attendance === 'attended' && <Chip tone="success">{t('massage_attendance_attended')}</Chip>}
                     {offer && <Chip tone="warning">{t('massage_offering', { name: offer.user?.full_name })}</Chip>}

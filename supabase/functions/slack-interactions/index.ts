@@ -1872,6 +1872,7 @@ const MT = {
     me_offer_until: '請在 {time} 前按「我要」。',
     me_yield: '你上一期已經按過摩囉！這期也很幸運地抽中了 🎉 如果你願意，可以把名額讓給還在候補、還沒按到的同仁，讓更多人有機會體驗。要不要讓完全由你決定，選擇保留也完全沒問題。',
     me_released: '你已取消這一期。',
+    me_release_held: '你已釋出{slot}，{time} 前仍可取消釋出名額。',
     me_attended: '✅ 已記錄你有按到。',
     me_no_show: '這一期記錄為未到。',
 
@@ -1889,7 +1890,8 @@ const MT = {
     confirm_withdraw_title: '取消報名？',
     confirm_withdraw_text: '取消後如果想再報名，會排到最後面。',
     confirm_release_title: '釋出名額？',
-    confirm_release_text: '名額會交給候補的同仁，釋出之後不能再改回來。超過取消期限才釋出的，會記為未到。',
+    confirm_release_text: '名額會交給候補或開放其他同仁報名，釋出之後不能再改回來。',
+    confirm_release_text_held: '釋出後，名額會在 {time} 交給候補或開放其他同仁報名；在那之前你都可以取消釋出。確定要釋出嗎？',
     confirm_waitlist_title: '退出候補？',
     confirm_waitlist_text: '退出之後就不會再收到遞補邀請。',
     confirm_yield_title: '讓給候補？',
@@ -1906,8 +1908,20 @@ const MT = {
     ok_signed_up: '✅ 報名成功！',
     ok_partial_leave: '你在按摩時間有部分請假，排時段時會自動避開。',
     ok_withdrew: '已取消報名。',
-    ok_released: '已釋出名額，會由候補的同仁遞補。',
-    ok_released_late: '已釋出名額。因為已超過取消期限，這一期會記為未到。',
+    ok_released: '已釋出名額，會交給候補或開放其他同仁報名。',
+    ok_released_late: '已釋出名額，會交給候補或開放其他同仁報名。',
+    ok_released_held: '已釋出名額。{time} 前仍可取消釋出（卡片或私訊裡的「取消釋出」）。',
+    ok_release_cancelled: '✅ 已取消釋出，{slot}照原本安排。',
+    btn_cancel_release: '取消釋出',
+    cancel_release_closed: '已超過 {time}，無法取消釋出。',
+    cancel_release_taken: '名額已安排給其他同仁，無法取消釋出。',
+    cancel_release_none: '你沒有釋出中的時段。',
+    grab_ok: '✅ 你報名到{slot}了！時段開始前 10 分鐘會再提醒你。',
+    grab_has_slot: '你這期已經有時段囉（{slot}），把機會留給其他同仁吧 😊',
+    grab_leave: '這個時段你剛好請假（{leave}），請好好休息 🙏',
+    grab_taken: '名額已滿。',
+    grab_over: '這個時段已經結束。',
+    grab_not_open: '名額還沒開放（{time} 開放）。',
     ok_left_waitlist: '已退出候補。',
     ok_accepted: '🎉 {slot} 是你的了！',
     ok_kept: '好的，名額幫你保留。',
@@ -1964,6 +1978,7 @@ const MT = {
     me_offer_until: 'Tap "I want it" before {time}.',
     me_yield: "You had a massage last time, and you got lucky again this time 🎉 If you'd like, you can give this spot to a colleague on the waitlist who hasn't had one yet, so more people get a chance. It's entirely your call — keeping it is completely fine too.",
     me_released: 'You cancelled this session.',
+    me_release_held: 'You released {slot}. You can undo the release until {time}.',
     me_attended: '✅ Recorded that you got your massage.',
     me_no_show: 'Recorded as a no-show for this session.',
 
@@ -1981,7 +1996,8 @@ const MT = {
     confirm_withdraw_title: 'Cancel your sign-up?',
     confirm_withdraw_text: 'If you sign up again later, you will be placed last.',
     confirm_release_title: 'Release your spot?',
-    confirm_release_text: 'Your spot goes to the waitlist and cannot be taken back. Releasing after the cancellation deadline counts as a no-show.',
+    confirm_release_text: 'Your spot goes to the waitlist or opens to everyone, and cannot be taken back.',
+    confirm_release_text_held: 'Your spot goes to the waitlist or opens to everyone at {time}; until then you can undo the release. Release it?',
     confirm_waitlist_title: 'Leave the waitlist?',
     confirm_waitlist_text: 'You will not receive any more offers for this session.',
     confirm_yield_title: 'Give your spot away?',
@@ -1998,8 +2014,20 @@ const MT = {
     ok_signed_up: '✅ You are signed up!',
     ok_partial_leave: 'You have leave during part of the session; your slot will avoid it.',
     ok_withdrew: 'Sign-up cancelled.',
-    ok_released: 'Spot released. Someone from the waitlist will take it.',
-    ok_released_late: 'Spot released. Because it is past the cancellation deadline, this counts as a no-show.',
+    ok_released: 'Spot released. It goes to the waitlist or opens to everyone.',
+    ok_released_late: 'Spot released. It goes to the waitlist or opens to everyone.',
+    ok_released_held: 'Spot released. You can undo it until {time} ("Undo release" on the card or in your DMs).',
+    ok_release_cancelled: '✅ Release undone — you keep {slot}.',
+    btn_cancel_release: 'Undo release',
+    cancel_release_closed: 'It is past {time}, so the release can no longer be undone.',
+    cancel_release_taken: 'The slot has already been given to someone else, so the release cannot be undone.',
+    cancel_release_none: 'You have no released slot to undo.',
+    grab_ok: '✅ You got {slot}! You will get a reminder 10 minutes before it starts.',
+    grab_has_slot: 'You already have a slot this time ({slot}) — leave this one for a colleague 😊',
+    grab_leave: 'You are on leave during this slot ({leave}) — enjoy your time off 🙏',
+    grab_taken: 'Already taken.',
+    grab_over: 'This slot is already over.',
+    grab_not_open: 'Not open yet (opens {time}).',
     ok_left_waitlist: 'You left the waitlist.',
     ok_accepted: '🎉 {slot} is yours!',
     ok_kept: 'OK, your spot is kept.',
@@ -2057,8 +2085,9 @@ interface MSession {
   id: string; title: string; session_date: string; start_time: string
   slot_minutes: number; break_minutes: number; slot_count: number
   signup_deadline: string; cancel_deadline: string; drawn_at: string | null
+  release_open_at: string; release_opened_at: string | null
 }
-const M_SESSION_COLS = 'id, title, session_date, start_time, slot_minutes, break_minutes, slot_count, signup_deadline, cancel_deadline, drawn_at'
+const M_SESSION_COLS = 'id, title, session_date, start_time, slot_minutes, break_minutes, slot_count, signup_deadline, cancel_deadline, drawn_at, release_open_at, release_opened_at'
 
 const mToMin = (hhmm: string) => {
   const [h, m] = hhmm.split(':').map(Number)
@@ -2090,6 +2119,32 @@ function mDateTime(lang: Lang, iso: string) {
   return `${mDate(lang, d.toISOString().slice(0, 10))} ${mFmtMin(d.getUTCHours() * 60 + d.getUTCMinutes())}`
 }
 const mSlot = (lang: Lang, s: MSession, n: number) => mt(lang, 'slot', { n, ...mSlotRange(s, n) })
+
+/** 釋出等待期：抽過籤、還沒到釋出開放時間（這段時間釋出的可以取消；跟資料庫的 massage_release_held 同一個判斷） */
+const mHeld = (s: MSession) => !!s.drawn_at && !s.release_opened_at && Date.now() < new Date(s.release_open_at).getTime()
+
+/** 釋出開放時間 →「10/28（三）上午 11:00」（massage-notify 有一份一樣的） */
+function mFmtOpens(lang: Lang, iso: string) {
+  const d = new Date(new Date(iso).getTime() + 8 * 3600_000)
+  const h = d.getUTCHours()
+  const m = String(d.getUTCMinutes()).padStart(2, '0')
+  const date = mDate(lang, d.toISOString().slice(0, 10))
+  if (lang === 'en') return `${date} ${h % 12 || 12}:${m} ${h < 12 ? 'AM' : 'PM'}`
+  return `${date}${h < 12 ? '上午' : '下午'} ${h % 12 || 12}:${m}`
+}
+
+/** 「釋出名額」的確認視窗：等待期間會說明幾點前可以取消釋出 */
+function mReleaseConfirm(lang: Lang, s: MSession) {
+  const text = mHeld(s)
+    ? mt(lang, 'confirm_release_text_held', { time: mFmtOpens(lang, s.release_open_at) })
+    : mt(lang, 'confirm_release_text')
+  return {
+    title: { type: 'plain_text', text: mt(lang, 'confirm_release_title') },
+    text: { type: 'mrkdwn', text },
+    confirm: { type: 'plain_text', text: mt(lang, 'btn_release') },
+    deny: { type: 'plain_text', text: mt(lang, 'confirm_cancel') },
+  }
+}
 
 // ---- 按鈕 ----
 
@@ -2141,7 +2196,14 @@ async function massageCardBlocks(db: SupabaseClient, me: any, lang: Lang): Promi
       : phase === 'closed' ? mt(lang, 'phase_closed', { k: active.length }) : mt(lang, 'phase_drawn'))
 
     const buttons: unknown[] = []
-    if (!mine || mine.released_at) {
+    const releaseHeld = !!mine?.released_at && !!mine.slot_no && !!s.drawn_at
+      && mine.released_at >= s.drawn_at && mHeld(s)
+    if (releaseHeld) {
+      // 等待期間釋出的：還可以取消釋出（使用者決定）
+      const time = mFmtOpens(lang, s.release_open_at)
+      lines.push(mt(lang, 'me_release_held', { slot: mSlot(lang, s, mine!.slot_no!), time }))
+      buttons.push(mButton(mt(lang, 'btn_cancel_release'), 'massage_cancel_release', mine!.id, { style: 'primary' }))
+    } else if (!mine || mine.released_at) {
       if (mine?.released_at && (phase !== 'open')) lines.push(mt(lang, 'me_released'))
       else lines.push(mt(lang, phase === 'open' ? 'me_none_open' : 'me_none'))
       if (phase === 'open') buttons.push(mButton(mt(lang, 'btn_signup'), 'massage_signup', s.id, { style: 'primary' }))
@@ -2167,7 +2229,7 @@ async function massageCardBlocks(db: SupabaseClient, me: any, lang: Lang): Promi
           { confirm: mConfirm(lang, 'confirm_yield_title', 'confirm_yield_text', mt(lang, 'btn_yield_give')) }))
       } else if (now < slotEnd && !mine.attendance) {
         buttons.push(mButton(mt(lang, 'btn_release'), 'massage_release', mine.id,
-          { style: 'danger', confirm: mConfirm(lang, 'confirm_release_title', 'confirm_release_text', mt(lang, 'btn_release')) }))
+          { style: 'danger', confirm: mReleaseConfirm(lang, s) }))
       }
       if (now >= slotStart && !mine.attendance) {
         buttons.push(mButton(mt(lang, 'btn_done'), 'massage_done', mine.id, { style: 'primary' }))
@@ -2262,6 +2324,14 @@ function handleMassageAction(db: SupabaseClient, me: any, lang: Lang, p: Record<
       return
     }
 
+    // 空位通知的「報名」：通知本身不動（massage-notify 會改寫成已額滿），結果只給按的人看
+    if (String(action.action_id).startsWith('massage_grab')) {
+      const { note, changed } = await grabMassageSlot(db, me, lang, action.value)
+      if (changed) pokeMassageNotify()
+      await massageRespond(p.response_url, note, [section(note)], false)
+      return
+    }
+
     const { note, changed } = await runMassageAction(db, me, lang, action.action_id, action.value)
     if (changed) pokeMassageNotify()
 
@@ -2295,6 +2365,47 @@ async function massageRespond(responseUrl: string, text: string, blocks: unknown
   })
 }
 
+async function mSessionOfSignup(db: SupabaseClient, signupId: string): Promise<MSession | null> {
+  const { data: g } = await db.from('massage_signups').select('session_id').eq('id', signupId).maybeSingle()
+  if (!g) return null
+  const { data: s } = await db.from('massage_sessions').select(M_SESSION_COLS).eq('id', g.session_id).maybeSingle()
+  return (s as MSession) ?? null
+}
+
+/**
+ * 空位通知上的「報名」（先搶先贏）。不論在私訊或頻道，結果都只回給按的人看（ephemeral）；
+ * 通知本身由 massage-notify 改寫成「已額滿」。提示文字是使用者挑的版本。
+ */
+async function grabMassageSlot(db: SupabaseClient, me: any, lang: Lang, value: string): Promise<{ note: string; changed: boolean }> {
+  const [sessionId, slotStr] = String(value).split('|')
+  const slot = Number(slotStr)
+  const { data, error } = await db.rpc('massage_grab_slot_as', { p_session_id: sessionId, p_slot_no: slot, p_user_id: me.id })
+  if (error) console.error('massage_grab_slot_as 失敗：', error.message)
+  const res = (data ?? { ok: false }) as Record<string, any>
+  const { data: sRow } = await db.from('massage_sessions').select(M_SESSION_COLS).eq('id', sessionId).maybeSingle()
+  const s = sRow as MSession | null
+  const slotLabel = (n: number) => (s ? mSlot(lang, s, n) : String(n))
+  if (res.ok) return { note: mt(lang, 'grab_ok', { slot: slotLabel(slot) }), changed: true }
+  switch (res.code) {
+    case 'already_has_slot': return { note: mt(lang, 'grab_has_slot', { slot: slotLabel(res.slot_no) }), changed: false }
+    case 'leave_conflict': return { note: mt(lang, 'grab_leave', { leave: mLeaveText(lang, res.leave) }), changed: false }
+    case 'slot_taken': return { note: mt(lang, 'grab_taken'), changed: false }
+    case 'slot_over': return { note: mt(lang, 'grab_over'), changed: false }
+    case 'not_open': return { note: mt(lang, 'grab_not_open', { time: s ? mFmtOpens(lang, s.release_open_at) : '' }), changed: false }
+  }
+  return { note: massageErr(lang, res.code), changed: false }
+}
+
+/** 假單 →「2026/10/27 特休 13:00–18:00」 */
+function mLeaveText(lang: Lang, l: Record<string, any> | null | undefined) {
+  if (!l) return ''
+  const d = (v: string) => String(v).slice(0, 10).replaceAll('-', '/')
+  const dates = l.start_date === l.end_date ? d(l.start_date) : `${d(l.start_date)}–${d(l.end_date)}`
+  const type = (lang === 'en' ? l.leave_type_en : null) ?? l.leave_type ?? ''
+  const time = l.start_date === l.end_date && l.start_time && l.end_time ? ` ${l.start_time}–${l.end_time}` : ''
+  return `${dates} ${type}${time}`.trim()
+}
+
 /** 真正去改資料庫。回傳要顯示的一句話，以及資料有沒有變（有變才需要叫通知那支跑一次）。 */
 async function runMassageAction(db: SupabaseClient, me: any, lang: Lang, actionId: string, id: string) {
   const call = async (fn: string, args: Record<string, unknown>) => {
@@ -2316,10 +2427,24 @@ async function runMassageAction(db: SupabaseClient, me: any, lang: Lang, actionI
     case 'massage_leave_waitlist': {
       const res = await call('massage_release_as', { p_signup_id: id, p_user_id: me.id })
       if (!res.ok) return fail(res)
+      if (res.held && res.opens_at) return { note: mt(lang, 'ok_released_held', { time: mFmtOpens(lang, res.opens_at) }), changed: true }
       const key: MKey = res.phase === 'before_draw' ? 'ok_withdrew'
         : res.late ? 'ok_released_late'
         : actionId === 'massage_leave_waitlist' ? 'ok_left_waitlist' : 'ok_released'
       return { note: mt(lang, key), changed: true }
+    }
+    case 'massage_cancel_release': {
+      const res = await call('massage_cancel_release_as', { p_signup_id: id, p_user_id: me.id })
+      if (res.ok) {
+        const s = await mSessionOfSignup(db, id)
+        return { note: mt(lang, 'ok_release_cancelled', { slot: s ? mSlot(lang, s, res.slot_no) : String(res.slot_no) }), changed: true }
+      }
+      if (res.code === 'cancel_release_closed' && res.opens_at) {
+        return { note: `⚠️ ${mt(lang, 'cancel_release_closed', { time: mFmtOpens(lang, res.opens_at) })}`, changed: false }
+      }
+      if (res.code === 'slot_taken') return { note: `⚠️ ${mt(lang, 'cancel_release_taken')}`, changed: false }
+      if (res.code === 'not_released') return { note: `⚠️ ${mt(lang, 'cancel_release_none')}`, changed: false }
+      return fail(res)
     }
     case 'massage_accept': {
       const res = await call('massage_accept_offer_as', { p_signup_id: id, p_user_id: me.id })
@@ -2388,7 +2513,7 @@ async function remindMassageForLeave(
         : mt(lang, 'hit_line_signed', { title: session.title, date })
     const btn = h.drawn
       ? mButton(mt(lang, 'btn_release'), 'massage_release', h.signup_id,
-        { style: 'danger', confirm: mConfirm(lang, 'confirm_release_title', 'confirm_release_text', mt(lang, 'btn_release')) })
+        { style: 'danger', confirm: mReleaseConfirm(lang, session) })
       : mButton(mt(lang, 'btn_withdraw'), 'massage_withdraw', h.signup_id,
         { confirm: mConfirm(lang, 'confirm_withdraw_title', 'confirm_withdraw_text', mt(lang, 'btn_withdraw')) })
     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: line }, accessory: btn })
