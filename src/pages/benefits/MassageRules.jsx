@@ -37,7 +37,6 @@ function MassageRules({ session, ownerName }) {
     ]],
     ['massage_rules_cancel_h', [
       t('massage_rules_cancel_1', { opens }),
-      t('massage_rules_cancel_2', { opens }),
       t('massage_rules_cancel_3'),
       t('massage_rules_cancel_4'),
     ]],
