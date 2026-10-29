@@ -28,8 +28,7 @@
 //      assigned          → 負責人直接指定某位候補遞補：私訊被指定的人
 //      added             → 負責人把某位同仁直接加進空時段（不一定有報名）：私訊當事人
 //      moved             → 負責人改了某人的時段（交換的話兩個人各一筆）：私訊當事人
-//      released（等待期間）→ 私訊本人，附「取消釋出」；負責人收到「幾點開放」
-//      release_cancelled → 私訊負責人「○○ 已取消釋出」
+//      released（等待期間）→ 私訊本人，附「取消釋出」（負責人不個別通知，看開放時間的總整理）
 //      releases_opened   → 釋出開放時間到了：負責人一則總整理；頻道發時段異動
 //      slot_open         → 沒有候補的空時段：私訊所有可以搶的同仁＋頻道發一則，附「報名」（先搶先贏）
 //      grabbed           → 有人搶到空位：頻道發時段異動；空位通知改寫成「已額滿」（syncNotices）
@@ -129,10 +128,7 @@ const T = {
     owner_released_heading: '💆 *{title}*（{date}）：*{name}* 釋出了{slot}。',
     owner_released_cancel: '在取消期限前取消。',
     owner_released_late: '超過取消期限才釋出（不記未到）。',
-    owner_released_held: '名額會在 {time} 交給候補或開放其他同仁報名；在那之前本人可以取消釋出。',
     owner_released_open_slot: '沒有候補可以邀請，已發空位通知給所有同仁（先搶先贏）。',
-    owner_cancel_text: '💆 有人取消釋出',
-    owner_cancel_heading: '💆 *{title}*（{date}）：*{name}* 已取消釋出，{slot}照原本安排。',
     owner_opened_text: '💆 釋出的名額已開放',
     owner_opened_heading: '💆 *{title}*（{date}）釋出的名額已開放：',
     owner_opened_released: '{slot}・{name} 釋出',
@@ -256,10 +252,7 @@ const T = {
     owner_released_heading: '💆 *{title}* ({date}): *{name}* released {slot}.',
     owner_released_cancel: 'Cancelled before the cancellation deadline.',
     owner_released_late: 'Released after the cancellation deadline (not counted as a no-show).',
-    owner_released_held: 'The spot goes to the waitlist or opens to everyone at {time}; until then they can undo the release.',
     owner_released_open_slot: 'Nobody on the waitlist, so everyone was told the slot is open (first come, first served).',
-    owner_cancel_text: '💆 Someone undid a release',
-    owner_cancel_heading: '💆 *{title}* ({date}): *{name}* undid their release and keeps {slot}.',
     owner_opened_text: '💆 Released spots are now open',
     owner_opened_heading: '💆 *{title}* ({date}): released spots are now open:',
     owner_opened_released: '{slot} (released by {name})',
@@ -599,7 +592,6 @@ async function handleEvent(ctx: Ctx, e: MassageEvent) {
     case 'drawn': await announceDraw(ctx, e); break
     case 'draw_result': if (e.details?.yield_asked) await askYield(ctx, e); break
     case 'released': await notifyOwnerReleased(ctx, e); if (e.details?.held) await sendCancelReleaseDm(ctx, e); break
-    case 'release_cancelled': await notifyOwnerCancelled(ctx, e); break
     case 'releases_opened': await notifyReleasesOpened(ctx, e); break
     case 'offered': await notifyOffer(ctx, e); break
     case 'offer_superseded': await notifySuperseded(ctx, e); break
@@ -778,6 +770,8 @@ async function notifyOffer(ctx: Ctx, e: MassageEvent) {
 /** 抽籤後有人釋出時段 → 私訊負責人（不論從網頁、Slack、提醒或請假提醒釋出） */
 async function notifyOwnerReleased(ctx: Ctx, e: MassageEvent) {
   if (!e.slot_no) return                       // 候補退出（本來就沒有時段）不算
+  // 等待期間的釋出不個別通知：負責人看開放時間的總整理就好（使用者決定）
+  if (e.details?.held) return
   const s = await ctx.session(e.session_id!)
   const owner = await ctx.owner()
   if (!s?.drawn_at || !owner?.slack_user_id || owner.id === e.user_id) return
@@ -798,8 +792,7 @@ async function notifyOwnerReleased(ctx: Ctx, e: MassageEvent) {
       title: s.title, date: fmtDate(lang, s.session_date), name: p?.full_name ?? '—', slot: slotText(lang, s, e.slot_no),
     })),
     section(t(lang, reason)),
-    section(e.details?.held ? t(lang, 'owner_released_held', { time: fmtOpens(lang, e.details.opens_at ?? s.release_open_at) })
-      : offeredTo ? t(lang, 'owner_released_offered', { name: offeredTo.full_name })
+    section(offeredTo ? t(lang, 'owner_released_offered', { name: offeredTo.full_name })
       : openedToAll ? t(lang, 'owner_released_open_slot')
       : t(lang, 'owner_released_no_waitlist')),
   ]
@@ -843,19 +836,6 @@ function cancelReleaseBlocks(s: Session, lang: Lang, signupId: string, slot: num
     blocks.push(contextLine(t(lang, 'release_closed', { time })))
   }
   return blocks
-}
-
-async function notifyOwnerCancelled(ctx: Ctx, e: MassageEvent) {
-  const s = await ctx.session(e.session_id!)
-  const owner = await ctx.owner()
-  if (!s || !e.slot_no || !owner?.slack_user_id || owner.id === e.user_id) return
-  const p = await ctx.person(e.user_id)
-  const lang = normalizeLang(owner.language)
-  await dm(ctx, owner, t(lang, 'owner_cancel_text'), [
-    section(t(lang, 'owner_cancel_heading', {
-      title: s.title, date: fmtDate(lang, s.session_date), name: p?.full_name ?? '—', slot: slotText(lang, s, e.slot_no),
-    })),
-  ])
 }
 
 /**
