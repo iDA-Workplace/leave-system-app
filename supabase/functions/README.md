@@ -389,7 +389,11 @@ Edge function 本身跑在 UTC，pg_cron 也是 UTC，設定排程時要自己�
 1. **資料庫**：依序執行 `migrations/20261019_massage_booking.sql`、`migrations/20261020_massage_slack.sql`、`migrations/20261021_massage_add_to_slot.sql`、`migrations/20261022_massage_hide_sessions.sql`、`migrations/20261023_massage_realtime.sql`、`migrations/20261024_massage_close_signup.sql`、`migrations/20261025_massage_announcements.sql`、`migrations/20261026_massage_release_hold.sql`。
 2. **`slack-interactions`**：點進既有的 function → Code → 整份換成 `slack-interactions/index.ts` → Deploy。
 3. **`massage-notify`**：Deploy a new function → Via Editor → **名稱先改成 `massage-notify`** → 貼上 `massage-notify/index.ts` 全部內容 → Deploy。
-   **Verify JWT 維持開啟（預設值）**：呼叫它的是排程（帶 secret key）、網頁（帶登入者的 token）與 `slack-interactions`（帶 service role key），都有金鑰。
+   ⚠️ **Verify JWT 要關掉**（Settings → Verify JWT with legacy secret → OFF）。正式專案用的是新制金鑰（`sb_secret_...`），
+   它不是 JWT 格式，Verify JWT 開著的話排程每一次都會被擋下，`net._http_response` 會看到
+   `401 {"code":"UNAUTHORIZED_INVALID_JWT_FORMAT","message":"Invalid JWT"}`（2026-11 上線時實際遇到）。
+   關掉沒有資料外洩的風險：這支不回傳任何員工資料（只回「這次處理了幾件事」），被別人叫一次也只是
+   提早做排程本來就會做的事，而且每一則通知都有防重複的紀錄，不會重複發。
 4. **Slack App 不用改設定**：用到的權限（`chat:write`、`im:write`、`im:history`）、Interactivity、`message.im` 事件都是請假功能已經開好的。
 5. **排程（每分鐘一次）**，在 SQL Editor 執行（key 的新舊制差異見上面「四」）：
 
