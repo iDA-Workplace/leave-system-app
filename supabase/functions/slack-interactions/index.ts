@@ -1863,7 +1863,6 @@ const MT = {
 
     card_text: '💆 按摩預約',
     card_empty: '💆 目前沒有開放中的按摩預約。開放報名時會在頻道公告。',
-    btn_refresh: '🔄 更新狀態',
     draw_text: '💆 需要抽籤的期數',
     draw_heading: '💆 *需要抽籤的期數*',
     draw_line: '*{title}*（{date} {from}–{to}）\n報名 {k} 人／名額 {n} 位',
@@ -1979,7 +1978,6 @@ const MT = {
 
     card_text: '💆 Massage booking',
     card_empty: '💆 There is no massage booking open right now. New sessions are announced in the channel.',
-    btn_refresh: '🔄 Refresh',
     draw_text: '💆 Sessions waiting for the draw',
     draw_heading: '💆 *Sessions waiting for the draw*',
     draw_line: '*{title}* ({date} {from}–{to})\n{k} signed up / {n} spots',
@@ -2204,7 +2202,7 @@ async function upcomingMassageSessions(db: SupabaseClient): Promise<MSession[]> 
 
 async function massageCardBlocks(db: SupabaseClient, me: any, lang: Lang): Promise<unknown[]> {
   const sessions = await upcomingMassageSessions(db)
-  if (sessions.length === 0) return [section(mt(lang, 'card_empty')), refreshActions(lang)]
+  if (sessions.length === 0) return [section(mt(lang, 'card_empty'))]
 
   const now = new Date()
   const blocks: unknown[] = []
@@ -2280,16 +2278,8 @@ async function massageCardBlocks(db: SupabaseClient, me: any, lang: Lang): Promi
     // 沒有能做的事（例如報名截止、等待抽籤）就不放按鈕列 —— 空的按鈕列 Slack 會整則拒收
     if (buttons.length) blocks.push({ type: 'actions', block_id: `mcard_act_${s.id}`, elements: buttons })
   }
-  blocks.push(refreshActions(lang))
+  // 「更新狀態」按鈕試過後拿掉了（使用者決定）：要看最新狀態就再打一次「按摩」，或按卡片上任何一顆按鈕
   return blocks
-}
-
-/**
- * 卡片最下面的「更新狀態」（使用者要求）：卡片是打「按摩」那一刻的狀態，不會自己變；
- * 按一下整張換成最新狀態。block_id 一樣用 mcard 開頭，按下去時才認得出是卡片。
- */
-function refreshActions(lang: Lang) {
-  return { type: 'actions', block_id: 'mcard_refresh', elements: [mButton(mt(lang, 'btn_refresh'), 'massage_refresh', 'refresh')] }
 }
 
 /** 名單：抽籤前照報名先後；抽籤後是正取（照時段）＋候補（照順位）。跟網頁上的公開名單一樣。 */
@@ -2403,6 +2393,7 @@ function handleMassageAction(db: SupabaseClient, me: any, lang: Lang, p: Record<
     // 「前往抽籤」是連結按鈕：瀏覽器自己會打開抽籤畫面，Slack 還是會通知我們一次，這裡什麼都不用做
     if (String(action.action_id).startsWith('massage_open_draw')) return
 
+    // 之前發出去的卡片上還有「更新狀態」，按下去照樣換成最新狀態
     if (action.action_id === 'massage_refresh') {
       await massageRespond(p.response_url, mt(lang, 'card_text'), await massageCardBlocks(db, me, lang), true)
       return
