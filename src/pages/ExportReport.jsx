@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/fetchAllRows'
 import * as XLSX from 'xlsx'
 import { Button, Card, PageHeader, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
@@ -50,7 +51,8 @@ function ExportReport() {
 
     setLoading(true)
 
-    const { data } = await supabase
+    // 分批讀：整年、全公司的假單很容易超過 1000 筆（資料庫一次最多給 1000 筆，超過不會報錯）
+    const { data } = await fetchAllRows(() => supabase
       .from('leave_requests')
       .select(`
         *,
@@ -65,6 +67,7 @@ function ExportReport() {
       .gte('start_date', startDate)
       .lte('end_date', endDate)
       .order('start_date')
+      .order('id'))
 
     if (!data || data.length === 0) {
       showToast(t('export_err_no_data'), { tone: 'error' })

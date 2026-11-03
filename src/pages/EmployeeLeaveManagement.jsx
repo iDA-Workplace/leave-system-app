@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/fetchAllRows'
 import { Button, Card, Chip, Dialog, PageHeader, Select, Skeleton, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
@@ -73,7 +74,8 @@ function EmployeeLeaveManagement({ userProfile }) {
     const [u, lt, ent, summary] = await Promise.all([
       supabase.from('users').select('id, full_name, department, job_title, hire_date, is_active').eq('is_active', true).order('full_name'),
       supabase.from('leave_types').select('*').order('name'),
-      supabase.from('user_leave_entitlements').select('*'),
+      // 人數 × 假別，人多之後會超過 1000 筆 → 分批讀
+      fetchAllRows(() => supabase.from('user_leave_entitlements').select('*').order('id')),
       supabase.from('annual_leave_summary').select('*'),
     ])
     setUsers(u.data || [])

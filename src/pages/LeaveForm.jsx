@@ -9,6 +9,7 @@ import {
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import MassageLeaveReminder from '../components/MassageLeaveReminder'
+import { compressImage } from '../lib/compressImage'
 import './LeaveForm.css'
 
 const TIME_OPTIONS = []
@@ -134,13 +135,16 @@ function LeaveForm({ userProfile }) {
     setEntitlementOverrides(await fetchEntitlementOverrides(userProfile.id))
   }
 
-  async function handleFileSelected(file) {
-    if (!file) return
+  async function handleFileSelected(picked) {
+    if (!picked) return
+    setUploading(true)
+    // 照片先縮小再檢查大小：原本超過 5 MB 的照片，縮完通常就上傳得了
+    const file = await compressImage(picked)
     if (file.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
       showToast(t('leaveform_err_file_size', { mb: MAX_ATTACHMENT_MB }), { tone: 'error' })
+      setUploading(false)
       return
     }
-    setUploading(true)
     const path = `${userProfile.id}/${Date.now()}-${file.name}`
     const { error } = await supabase.storage.from('leave-attachments').upload(path, file)
     if (error) {

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../../lib/supabase'
+import { fetchAllRows } from '../../lib/fetchAllRows'
 import { Button, Card, Select, Skeleton, TextField } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
@@ -94,11 +95,12 @@ function MassagePeopleStats() {
     let cancelled = false
     ;(async () => {
       const [{ data: sessions }, { data: signups }] = await Promise.all([
-        supabase.from('massage_sessions').select('id, session_date, slot_count, drawn_at'),
-        supabase.from('massage_signups').select(`
+        // 跨期的報名資料一年就有好幾百筆，幾年後一定超過 1000 筆 → 分批讀
+        fetchAllRows(() => supabase.from('massage_sessions').select('id, session_date, slot_count, drawn_at').order('id')),
+        fetchAllRows(() => supabase.from('massage_signups').select(`
           user_id, session_id, draw_rank, promoted_at, added_at, released_at, released_late, yield_answer, attendance,
           user:users!massage_signups_user_id_fkey(full_name, department)
-        `),
+        `).order('id')),
       ])
       if (!cancelled) setData({ sessions: sessions || [], signups: signups || [] })
     })()
