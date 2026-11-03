@@ -43,6 +43,7 @@
 //                      期數被刪除 → 改成「本期已取消」（使用者決定）
 //      時段開始前 10 分鐘 有時段、沒取消的人 → 私訊「時段快到了」，附「釋出名額」
 //      時段一結束       有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
+//      預計抽籤時間到了  報名已截止卻還沒抽籤 → 私訊負責人提醒一次（使用者決定）
 // d. 任何一則私訊發不出去、原因是收件人的 Slack User ID 無效 → 私訊負責人請他更正
 //    （同一個人的同一個錯誤 ID 只提醒一次；使用者決定）
 //                      沒回覆就不再追，由管理者在網頁的現場面板補登記（使用者決定）
@@ -173,6 +174,10 @@ const T = {
     remind_heading: '💆 *{title}*：你的{slot}快到了（{min} 分鐘後開始），請準時前往。',
     remind_note: '臨時無法前往的話，請按下方按鈕釋出名額，讓候補的同仁遞補。',
 
+    draw_remind_text: '💆 按摩還沒抽籤',
+    draw_remind_heading: '💆 *{title}*（{date}）已經到了預計抽籤時間（{time}），但還沒抽籤。\n目前 {k} 人報名、名額 {n} 位。請到網頁「員工福利 → 按摩預約 → 管理按摩預約」，按「抽籤」。',
+    draw_remind_note: '還沒抽籤之前，同仁看不到時段表，也不會收到任何按摩通知。報名人數沒超過名額時，一樣要按一次（會直接依報名先後排時段）。',
+
     ask_text: '💆 剛剛的按摩有按到嗎？',
     ask_heading: '💆 *{title}*（{date}）你的{slot}剛結束。有按到嗎？',
     ask_note: '有按到請按下面的按鈕；沒按到不用回覆。',
@@ -297,6 +302,10 @@ const T = {
     remind_text: '💆 Your massage slot is coming up',
     remind_heading: '💆 *{title}*: your {slot} starts in {min} minutes. Please be on time.',
     remind_note: "If something came up and you can't make it, release your spot below so someone on the waitlist can take it.",
+
+    draw_remind_text: '💆 The massage draw has not been done',
+    draw_remind_heading: '💆 *{title}* ({date}): the scheduled draw time ({time}) has passed, but the draw has not been done.\n{k} people signed up for {n} spots. Please go to Benefits → Massage → Manage on the website and start the draw.',
+    draw_remind_note: 'Until the draw is done, nobody sees the schedule or gets any massage notifications. Even with no more sign-ups than spots, press it once (slots then follow sign-up order).',
 
     ask_text: '💆 Did you get your massage?',
     ask_heading: '💆 *{title}* ({date}): your {slot} just ended. Did you get your massage?',
@@ -540,6 +549,7 @@ Deno.serve(async req => {
     summary.announcements_updated = await syncAnnouncements(ctx)
     summary.reminded = await remindUpcoming(ctx)
     summary.asked = await askAttendance(ctx)
+    summary.draw_reminded = await remindOwnerToDraw(ctx)
 
     return new Response(JSON.stringify(summary), { headers: { ...CORS, 'Content-Type': 'application/json' } })
   } catch (e) {
@@ -1218,6 +1228,44 @@ async function remindUpcoming(ctx: Ctx) {
       ])
       if (sent) n++
     }
+  }
+  return n
+}
+
+/**
+ * 到了預計抽籤時間、報名也截止了，卻還沒抽籤 → 私訊負責人提醒一次（使用者決定）。
+ * 抽籤一定要負責人按，忘了按的話這一期就停在「報名截止」：沒有時段表、沒有任何通知。
+ * 沒填預計抽籤時間的期數不提醒；按摩已經結束的也不提醒。
+ */
+async function remindOwnerToDraw(ctx: Ctx) {
+  const nowIso = new Date().toISOString()
+  const { data: sessions } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
+    .is('drawn_at', null).not('draw_scheduled_at', 'is', null)
+    .lte('draw_scheduled_at', nowIso).lte('signup_deadline', nowIso)
+    .gte('session_date', taipeiNow().date)
+  let n = 0
+  for (const raw of sessions ?? []) {
+    const s = normalizeSession(raw)
+    if (Date.now() >= new Date(`${s.session_date}T${sessionWindow(s).to}:00+08:00`).getTime()) continue
+    const owner = await ctx.owner()
+    if (!owner?.slack_user_id) return n
+    if (!(await claim(ctx, `draw_reminder:${s.id}`))) continue
+    const { count } = await ctx.db.from('massage_signups')
+      .select('id', { count: 'exact', head: true }).eq('session_id', s.id).is('released_at', null)
+    const lang = normalizeLang(owner.language)
+    const res = await dm(ctx, owner, t(lang, 'draw_remind_text'), [
+      section(t(lang, 'draw_remind_heading', {
+        title: s.title, date: fmtDate(lang, s.session_date), time: fmtDateTime(lang, s.draw_scheduled_at!),
+        k: count ?? 0, n: s.slot_count,
+      })),
+      contextLine(t(lang, 'draw_remind_note')),
+    ])
+    if (!res?.ok) {
+      // 沒送到（例如負責人的 Slack ID 錯了）就放掉，下一分鐘再試
+      await ctx.db.from('massage_jobs').delete().eq('job_key', `draw_reminder:${s.id}`)
+      continue
+    }
+    n++
   }
   return n
 }
