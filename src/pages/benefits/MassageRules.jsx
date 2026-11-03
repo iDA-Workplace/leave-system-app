@@ -23,6 +23,7 @@ function MassageRules({ session, ownerName }) {
     ['massage_rules_basic_h', [
       t('massage_rules_basic_1', { slot, brk }),
       t('massage_rules_basic_2', { n, from: win.from, to: win.to }),
+      t('massage_rules_basic_3'),
     ]],
     ['massage_rules_signup_h', [
       t('massage_rules_signup_1'),
@@ -33,6 +34,7 @@ function MassageRules({ session, ownerName }) {
       t('massage_rules_draw_1', { n }),
       t('massage_rules_draw_2', { n }),
       t('massage_rules_draw_3'),
+      t('massage_rules_draw_5'),
       t('massage_rules_draw_4'),
     ]],
     ['massage_rules_cancel_h', [
