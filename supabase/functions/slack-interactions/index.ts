@@ -499,7 +499,7 @@ function leaveRequestHours(r: { hours: number | null; start_date: string; end_da
 async function resolveUser(db: SupabaseClient, slackUserId: string) {
   const { data } = await db
     .from('users')
-    .select('id, full_name, slack_user_id, default_flow_id, is_active, language, is_finance')
+    .select('id, full_name, slack_user_id, default_flow_id, is_active, language, is_finance, is_admin')
     .eq('slack_user_id', slackUserId)
     .maybeSingle()
   if (!data || data.is_active === false) return null
@@ -1094,7 +1094,12 @@ function handleEvent(db: SupabaseClient, body: Record<string, any>) {
     // 這裡還不知道對方是誰（要等 resolveUser 才知道），所以用哪個語言回覆
     // 只能先看對方打字用的是中文關鍵字還是英文關鍵字來猜；已知身分之後的
     // replyWithBalance 內部會再改用 me.language 為準。
-    if (text.includes('按摩')) {
+    // 「抽籤」要排在「按摩」前面：打「按摩抽籤」的人要的是抽籤
+    if (text.includes('抽籤')) {
+      background(replyDraw(db, event, 'zh'))
+    } else if (/\bdraw\b/.test(lower)) {   // 用整個字比對，不然 withdraw 也會中
+      background(replyDraw(db, event, 'en'))
+    } else if (text.includes('按摩')) {
       background(replyMassage(db, event, 'zh'))
     } else if (lower.includes('massage')) {
       background(replyMassage(db, event, 'en'))
@@ -1859,6 +1864,15 @@ const MT = {
     card_text: '💆 按摩預約',
     card_empty: '💆 目前沒有開放中的按摩預約。開放報名時會在頻道公告。',
     btn_refresh: '🔄 更新狀態',
+    draw_text: '💆 需要抽籤的期數',
+    draw_heading: '💆 *需要抽籤的期數*',
+    draw_line: '*{title}*（{date} {from}–{to}）\n報名 {k} 人／名額 {n} 位',
+    draw_line_no_lottery: '沒有超過名額，按下去會直接依報名先後排時段',
+    draw_none: '💆 目前沒有需要抽籤的期數（報名截止後才能抽籤）。',
+    draw_only_manager: '💆 抽籤只有按摩負責人和管理者可以使用。',
+    draw_no_site: '⚠️ 還沒設定網站網址（Supabase 的 SITE_URL），沒辦法附上抽籤按鈕。請先到網頁「員工福利 → 按摩預約 → 管理按摩預約」抽籤。',
+    draw_note: '按「前往抽籤」會用瀏覽器打開抽籤畫面。要投影給大家看的話，建議用電腦的 Slack 按。',
+    btn_open_draw: '🎱 前往抽籤',
     card_heading: '💆 *{title}*\n{date} {from}–{to}・名額 {n} 位',
     phase_open: '報名中，{deadline} 截止・目前 {k} 人報名',
     phase_closed: '報名已截止，等待抽籤・共 {k} 人報名',
@@ -1966,6 +1980,15 @@ const MT = {
     card_text: '💆 Massage booking',
     card_empty: '💆 There is no massage booking open right now. New sessions are announced in the channel.',
     btn_refresh: '🔄 Refresh',
+    draw_text: '💆 Sessions waiting for the draw',
+    draw_heading: '💆 *Sessions waiting for the draw*',
+    draw_line: '*{title}* ({date} {from}–{to})\n{k} signed up / {n} spots',
+    draw_line_no_lottery: 'No more sign-ups than spots: pressing it just assigns slots in sign-up order',
+    draw_none: '💆 No session is waiting for the draw (the draw opens after sign-up closes).',
+    draw_only_manager: '💆 Only the massage owner and managers can run the draw.',
+    draw_no_site: '⚠️ The website address (SITE_URL in Supabase) is not set, so there is no draw button. Please start the draw on the website under Benefits → Massage → Manage.',
+    draw_note: '"Go to the draw" opens the draw screen in your browser. To project it for everyone, use Slack on a computer.',
+    btn_open_draw: '🎱 Go to the draw',
     card_heading: '💆 *{title}*\n{date} {from}–{to} · {n} spots',
     phase_open: 'Sign-up open until {deadline} · {k} signed up so far',
     phase_closed: 'Sign-up closed, waiting for the draw · {k} signed up',
@@ -2313,6 +2336,53 @@ async function replyMassage(db: SupabaseClient, event: Record<string, any>, fall
   await callSlack('chat.postMessage', { channel: event.channel, text: mt(lang, 'card_text'), blocks: await massageCardBlocks(db, me, lang) })
 }
 
+// ---- 打「抽籤」（負責人／管理者） ----
+
+/** 抽籤畫面的網址。網站網址設在 Supabase 的 Edge Function Secrets：SITE_URL（正式、測試各設各的） */
+function drawPageUrl(sessionId: string): string | null {
+  const site = (Deno.env.get('SITE_URL') ?? '').trim().replace(/\/+$/, '')
+  return site ? `${site}/benefits/massage/draw/${sessionId}` : null
+}
+
+/**
+ * 負責人在私訊打「抽籤」（使用者要求）：列出報名已截止、還沒抽籤的期數，每期一顆「前往抽籤」，
+ * 按下去用瀏覽器打開網頁的抽籤畫面（動畫只能在瀏覽器播）。只有管理員／HR 能用 —— 跟網頁一樣。
+ */
+async function replyDraw(db: SupabaseClient, event: Record<string, any>, fallbackLang: Lang) {
+  const me = await resolveUser(db, event.user)
+  if (!me) {
+    await callSlack('chat.postMessage', {
+      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: [section(t(fallbackLang, 'no_account_heading'))],
+    })
+    return
+  }
+  const lang = normalizeLang(me.language)
+  const post = (blocks: unknown[]) => callSlack('chat.postMessage', { channel: event.channel, text: mt(lang, 'draw_text'), blocks })
+  if (!me.is_admin && !me.is_finance) { await post([section(mt(lang, 'draw_only_manager'))]); return }
+
+  const nowIso = new Date().toISOString()
+  const { data } = await db.from('massage_sessions').select(M_SESSION_COLS)
+    .is('drawn_at', null).lte('signup_deadline', nowIso).gte('session_date', mTaipeiToday()).order('session_date')
+  const sessions = ((data ?? []) as MSession[]).filter(s => new Date() < mAt(s.session_date, mWindow(s).to))
+  if (!sessions.length) { await post([section(mt(lang, 'draw_none'))]); return }
+
+  const blocks: unknown[] = [section(mt(lang, 'draw_heading'))]
+  for (const s of sessions) {
+    const { count } = await db.from('massage_signups').select('id', { count: 'exact', head: true })
+      .eq('session_id', s.id).is('released_at', null)
+    const k = count ?? 0
+    let text = mt(lang, 'draw_line', { title: s.title, date: mDate(lang, s.session_date), ...mWindow(s), k, n: s.slot_count })
+    if (k <= s.slot_count) text += `\n_${mt(lang, 'draw_line_no_lottery')}_`
+    const url = drawPageUrl(s.id)
+    blocks.push(url
+      ? { type: 'section', text: { type: 'mrkdwn', text },
+          accessory: { ...mButton(mt(lang, 'btn_open_draw'), `massage_open_draw_${s.id}`, s.id, { style: 'primary' }), url } }
+      : section(text))
+  }
+  blocks.push({ type: 'context', elements: [{ type: 'mrkdwn', text: mt(lang, drawPageUrl('x') ? 'draw_note' : 'draw_no_site') }] })
+  await post(blocks)
+}
+
 // ---- 按鈕 ----
 
 /**
@@ -2329,6 +2399,9 @@ function handleMassageAction(db: SupabaseClient, me: any, lang: Lang, p: Record<
     const inDm = channelId.startsWith('D')
     const blocksNow: any[] = p.message?.blocks ?? []
     const fromCard = blocksNow.some(b => String(b.block_id ?? '').startsWith('mcard'))
+
+    // 「前往抽籤」是連結按鈕：瀏覽器自己會打開抽籤畫面，Slack 還是會通知我們一次，這裡什麼都不用做
+    if (String(action.action_id).startsWith('massage_open_draw')) return
 
     if (action.action_id === 'massage_refresh') {
       await massageRespond(p.response_url, mt(lang, 'card_text'), await massageCardBlocks(db, me, lang), true)

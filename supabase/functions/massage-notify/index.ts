@@ -43,7 +43,9 @@
 //                      期數被刪除 → 改成「本期已取消」（使用者決定）
 //      時段開始前 10 分鐘 有時段、沒取消的人 → 私訊「時段快到了」，附「釋出名額」
 //      時段一結束       有時段、沒取消、還沒標出席的人 → 私訊「有按到嗎？」
-//      預計抽籤時間到了  報名已截止卻還沒抽籤 → 私訊負責人提醒一次（使用者決定）
+//      報名截止前 10 分鐘 頻道提醒一次，附「報名」與目前報名人數（不 tag 人）
+//      報名一截止       頻道公告「報名已截止」＋人數、要不要抽籤、什麼時候公布（提前截止也是當下發）
+//      預計抽籤時間到了  報名已截止卻還沒抽籤 → 私訊負責人提醒一次，附「前往抽籤」（使用者決定）
 // d. 任何一則私訊發不出去、原因是收件人的 Slack User ID 無效 → 私訊負責人請他更正
 //    （同一個人的同一個錯誤 ID 只提醒一次；使用者決定）
 //                      沒回覆就不再追，由管理者在網頁的現場面板補登記（使用者決定）
@@ -174,6 +176,17 @@ const T = {
     remind_heading: '💆 *{title}*：你的{slot}快到了（{min} 分鐘後開始），請準時前往。',
     remind_note: '臨時無法前往的話，請按下方按鈕釋出名額，讓候補的同仁遞補。',
 
+    closing_text: '💆 {title} 報名即將截止',
+    closing_heading: '💆 *{title}*（{date}）報名將在 {time} 截止，只剩 {min} 分鐘！\n目前 {k} 人報名、名額 {n} 位，還沒報名的同仁把握時間 🙌',
+    closed_text: '💆 {title} 報名已截止',
+    closed_heading: '💆 *{title}*（{date}）報名已截止，共 {k} 人報名、名額 {n} 位。',
+    closed_lottery: '報名人數超過名額，將於 {time} 公開抽籤。',
+    closed_lottery_no_time: '報名人數超過名額，將由負責人公開抽籤。',
+    closed_no_lottery: '沒有超過名額，全部錄取，時段表將於 {time} 公布。',
+    closed_no_lottery_no_time: '沒有超過名額，全部錄取，時段表會在負責人排定後公布。',
+    closed_none: '這期沒有人報名。',
+    btn_open_draw: '🎱 前往抽籤',
+
     draw_remind_text: '💆 按摩還沒抽籤',
     draw_remind_heading: '💆 *{title}*（{date}）已經到了預計抽籤時間（{time}），但還沒抽籤。\n目前 {k} 人報名、名額 {n} 位。請到網頁「員工福利 → 按摩預約 → 管理按摩預約」，按「抽籤」。',
     draw_remind_note: '還沒抽籤之前，同仁看不到時段表，也不會收到任何按摩通知。報名人數沒超過名額時，一樣要按一次（會直接依報名先後排時段）。',
@@ -302,6 +315,17 @@ const T = {
     remind_text: '💆 Your massage slot is coming up',
     remind_heading: '💆 *{title}*: your {slot} starts in {min} minutes. Please be on time.',
     remind_note: "If something came up and you can't make it, release your spot below so someone on the waitlist can take it.",
+
+    closing_text: '💆 {title}: sign-up closes soon',
+    closing_heading: '💆 *{title}* ({date}): sign-up closes at {time} — only {min} minutes left!\n{k} signed up for {n} spots so far. Sign up now if you have not yet 🙌',
+    closed_text: '💆 {title}: sign-up closed',
+    closed_heading: '💆 *{title}* ({date}): sign-up is closed. {k} signed up for {n} spots.',
+    closed_lottery: 'More people signed up than there are spots, so there will be a public draw at {time}.',
+    closed_lottery_no_time: 'More people signed up than there are spots, so the owner will hold a public draw.',
+    closed_no_lottery: 'Everyone is in (no more sign-ups than spots). The schedule will be posted at {time}.',
+    closed_no_lottery_no_time: 'Everyone is in (no more sign-ups than spots). The schedule will be posted once the owner sets it.',
+    closed_none: 'Nobody signed up this time.',
+    btn_open_draw: '🎱 Go to the draw',
 
     draw_remind_text: '💆 The massage draw has not been done',
     draw_remind_heading: '💆 *{title}* ({date}): the scheduled draw time ({time}) has passed, but the draw has not been done.\n{k} people signed up for {n} spots. Please go to Benefits → Massage → Manage on the website and start the draw.',
@@ -547,6 +571,8 @@ Deno.serve(async req => {
     summary.notices_updated = await syncNotices(ctx)
     summary.announced = await announceOpenSessions(ctx)
     summary.announcements_updated = await syncAnnouncements(ctx)
+    summary.closing_posted = await announceSignupClosing(ctx)
+    summary.closed_posted = await announceSignupClosed(ctx)
     summary.reminded = await remindUpcoming(ctx)
     summary.asked = await askAttendance(ctx)
     summary.draw_reminded = await remindOwnerToDraw(ctx)
@@ -1232,6 +1258,76 @@ async function remindUpcoming(ctx: Ctx) {
   return n
 }
 
+/** 抽籤畫面的網址。網站網址設在 Supabase 的 Edge Function Secrets：SITE_URL（slack-interactions 有一份一樣的） */
+function drawPageUrl(sessionId: string): string | null {
+  const site = (Deno.env.get('SITE_URL') ?? '').trim().replace(/\/+$/, '')
+  return site ? `${site}/benefits/massage/draw/${sessionId}` : null
+}
+
+async function activeSignupCount(ctx: Ctx, sessionId: string) {
+  const { count } = await ctx.db.from('massage_signups')
+    .select('id', { count: 'exact', head: true }).eq('session_id', sessionId).is('released_at', null)
+  return count ?? 0
+}
+
+/**
+ * 報名截止前 10 分鐘：頻道提醒一次，附「報名」、寫目前報名人數（不列名字、不 tag 人；使用者決定）。
+ * 開期的時候就已經在截止前 10 分鐘內（例如臨時開的一期），就不另外提醒 —— 開放公告剛發。
+ */
+async function announceSignupClosing(ctx: Ctx) {
+  const now = Date.now()
+  const { data } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
+    .is('drawn_at', null).gt('signup_deadline', new Date(now).toISOString())
+    .lte('signup_deadline', new Date(now + 10 * 60_000).toISOString())
+  let n = 0
+  for (const raw of data ?? []) {
+    const s = normalizeSession(raw)
+    const deadline = new Date(s.signup_deadline).getTime()
+    if (new Date(s.created_at).getTime() > deadline - 10 * 60_000) continue
+    if (!(await claim(ctx, `signup_closing:${s.id}`))) continue
+    const lang = channelLang()
+    const res = await postChannel(t(lang, 'closing_text', { title: s.title }), [
+      section(t(lang, 'closing_heading', {
+        title: s.title, date: fmtDate(lang, s.session_date), time: fmtDateTime(lang, s.signup_deadline),
+        min: Math.max(1, Math.round((deadline - now) / 60_000)), k: await activeSignupCount(ctx, s.id), n: s.slot_count,
+      })),
+      { type: 'actions', elements: [button(t(lang, 'btn_signup'), 'massage_signup', s.id, { style: 'primary' })] },
+    ])
+    if (res?.ok) n++
+  }
+  return n
+}
+
+/**
+ * 報名一截止：頻道公告「報名已截止」＋人數、要不要抽籤、什麼時候公布（使用者決定）。
+ * 「提前截止」會把截止時間改成按下去的那一刻，所以也是當下就發。
+ * 已經抽完籤才輪到這裡（例如提前截止後馬上抽）就不發了 —— 順序會顛倒。
+ * 只看兩小時內截止的：剛部署、或排程停過之後，不會把很久以前的期數拿出來補發。
+ */
+async function announceSignupClosed(ctx: Ctx) {
+  const now = Date.now()
+  const { data } = await ctx.db.from('massage_sessions').select(SESSION_COLS)
+    .is('drawn_at', null).lte('signup_deadline', new Date(now).toISOString())
+    .gte('signup_deadline', new Date(now - 2 * 3600_000).toISOString())
+  let n = 0
+  for (const raw of data ?? []) {
+    const s = normalizeSession(raw)
+    if (now >= new Date(`${s.session_date}T${sessionWindow(s).to}:00+08:00`).getTime()) continue
+    if (!(await claim(ctx, `signup_closed:${s.id}`))) continue
+    const lang = channelLang()
+    const k = await activeSignupCount(ctx, s.id)
+    const time = s.draw_scheduled_at ? fmtDateTime(lang, s.draw_scheduled_at) : null
+    const detail = k === 0 ? t(lang, 'closed_none')
+      : k > s.slot_count ? (time ? t(lang, 'closed_lottery', { time }) : t(lang, 'closed_lottery_no_time'))
+        : (time ? t(lang, 'closed_no_lottery', { time }) : t(lang, 'closed_no_lottery_no_time'))
+    const res = await postChannel(t(lang, 'closed_text', { title: s.title }), [
+      section(`${t(lang, 'closed_heading', { title: s.title, date: fmtDate(lang, s.session_date), k, n: s.slot_count })}\n${detail}`),
+    ])
+    if (res?.ok) n++
+  }
+  return n
+}
+
 /**
  * 到了預計抽籤時間、報名也截止了，卻還沒抽籤 → 私訊負責人提醒一次（使用者決定）。
  * 抽籤一定要負責人按，忘了按的話這一期就停在「報名截止」：沒有時段表、沒有任何通知。
@@ -1253,11 +1349,14 @@ async function remindOwnerToDraw(ctx: Ctx) {
     const { count } = await ctx.db.from('massage_signups')
       .select('id', { count: 'exact', head: true }).eq('session_id', s.id).is('released_at', null)
     const lang = normalizeLang(owner.language)
+    const heading = section(t(lang, 'draw_remind_heading', {
+      title: s.title, date: fmtDate(lang, s.session_date), time: fmtDateTime(lang, s.draw_scheduled_at!),
+      k: count ?? 0, n: s.slot_count,
+    }))
+    // 有設定網站網址就附「前往抽籤」，按下去用瀏覽器打開抽籤畫面（跟 Slack 打「抽籤」那顆一樣）
+    const url = drawPageUrl(s.id)
     const res = await dm(ctx, owner, t(lang, 'draw_remind_text'), [
-      section(t(lang, 'draw_remind_heading', {
-        title: s.title, date: fmtDate(lang, s.session_date), time: fmtDateTime(lang, s.draw_scheduled_at!),
-        k: count ?? 0, n: s.slot_count,
-      })),
+      url ? { ...heading, accessory: button(t(lang, 'btn_open_draw'), `massage_open_draw_${s.id}`, s.id, { style: 'primary', url }) } : heading,
       contextLine(t(lang, 'draw_remind_note')),
     ])
     if (!res?.ok) {
