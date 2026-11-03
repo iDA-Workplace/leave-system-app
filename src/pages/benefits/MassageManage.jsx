@@ -1,0 +1,388 @@
+import { useEffect, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { supabase } from '../../lib/supabase'
+import { Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, Skeleton, TextField } from '../../components/ui'
+import { useToast } from '../../context/ToastContext'
+import { useLanguage } from '../../context/LanguageContext'
+import {
+  callMassage, defaultDeadlines, fetchOwnerName, fmtDate, fromTaipeiInput, phaseTone, pokeMassageNotify,
+  sessionPhase, sessionWindow, toTaipeiInput,
+} from '../../lib/massage'
+import MassagePeopleStats from './MassagePeopleStats'
+
+function blankForm() {
+  return {
+    title: '',
+    session_date: '',
+    start_time: '13:00',
+    slot_minutes: 15,
+    break_minutes: 5,
+    slot_count: 9,
+    signup_deadline: '',
+    draw_scheduled_at: '',
+    cancel_deadline: '',
+    release_open_at: '',
+  }
+}
+
+function formFromSession(s) {
+  return {
+    title: s.title,
+    session_date: s.session_date,
+    start_time: String(s.start_time).slice(0, 5),
+    slot_minutes: s.slot_minutes,
+    break_minutes: s.break_minutes,
+    slot_count: s.slot_count,
+    signup_deadline: toTaipeiInput(s.signup_deadline),
+    draw_scheduled_at: toTaipeiInput(s.draw_scheduled_at),
+    cancel_deadline: toTaipeiInput(s.cancel_deadline),
+    release_open_at: toTaipeiInput(s.release_open_at),
+  }
+}
+
+/** 表單 → 資料庫欄位；有問題回傳錯誤字串的 key */
+function toRow(form, t) {
+  if (!form.session_date || !form.start_time || !form.signup_deadline || !form.cancel_deadline) {
+    return { errorKey: 'massage_form_err_required' }
+  }
+  const [, m, d] = form.session_date.split('-')
+  const row = {
+    title: form.title.trim() || t('massage_default_title', { md: `${Number(m)}/${Number(d)}` }),
+    session_date: form.session_date,
+    start_time: form.start_time,
+    slot_minutes: Number(form.slot_minutes),
+    break_minutes: Number(form.break_minutes),
+    slot_count: Number(form.slot_count),
+    signup_deadline: fromTaipeiInput(form.signup_deadline),
+    draw_scheduled_at: fromTaipeiInput(form.draw_scheduled_at),
+    cancel_deadline: fromTaipeiInput(form.cancel_deadline),
+    // 留空 → 資料庫自動帶按摩當天 11:00
+    release_open_at: fromTaipeiInput(form.release_open_at),
+  }
+  if (![row.slot_minutes, row.break_minutes, row.slot_count].every(Number.isFinite)
+      || row.slot_minutes < 5 || row.slot_count < 1 || row.break_minutes < 0) {
+    return { errorKey: 'massage_form_err_numbers' }
+  }
+  const startAt = new Date(`${row.session_date}T${row.start_time}:00+08:00`)
+  if (new Date(row.signup_deadline) >= startAt) return { errorKey: 'massage_form_err_signup_after_start' }
+  if (new Date(row.cancel_deadline) < new Date(row.signup_deadline)) return { errorKey: 'massage_form_err_cancel_before_signup' }
+  return { row }
+}
+
+function SessionForm({ form, setForm, isNew }) {
+  const { t } = useLanguage()
+  const set = key => e => setForm(f => ({ ...f, [key]: e.target.value }))
+
+  // 新增時：選了日期就自動帶入試算表原本的三個時間（前一天 12:00 截止、16:00 抽籤、當天 12:00 取消期限）
+  function onDate(e) {
+    const date = e.target.value
+    setForm(f => ({ ...f, session_date: date, ...(isNew && date ? defaultDeadlines(date) : {}) }))
+  }
+
+  return (
+    <div className="massage-form">
+      <TextField label={t('massage_form_title')} value={form.title} onChange={set('title')} placeholder={t('massage_default_title_hint')} />
+      <div className="massage-form__row">
+        <TextField label={t('massage_form_date')} type="date" required value={form.session_date} onChange={onDate} />
+        <TextField label={t('massage_form_start')} type="time" required value={form.start_time} onChange={set('start_time')} />
+      </div>
+      <div className="massage-form__row">
+        <TextField label={t('massage_form_slot_minutes')} type="number" min="5" value={form.slot_minutes} onChange={set('slot_minutes')} />
+        <TextField label={t('massage_form_break_minutes')} type="number" min="0" value={form.break_minutes} onChange={set('break_minutes')} />
+        <TextField label={t('massage_form_slot_count')} type="number" min="1" value={form.slot_count} onChange={set('slot_count')} />
+      </div>
+      <div className="massage-form__row">
+        <TextField label={t('massage_signup_deadline')} type="datetime-local" required value={form.signup_deadline} onChange={set('signup_deadline')} />
+        <TextField label={t('massage_draw_time')} type="datetime-local" value={form.draw_scheduled_at} onChange={set('draw_scheduled_at')}
+          helper={t('massage_form_draw_helper')} />
+        <TextField label={t('massage_cancel_deadline')} type="datetime-local" required value={form.cancel_deadline} onChange={set('cancel_deadline')}
+          helper={t('massage_form_cancel_helper')} />
+      </div>
+      <div className="massage-form__row">
+        <TextField label={t('massage_release_open_at')} type="datetime-local" value={form.release_open_at} onChange={set('release_open_at')}
+          helper={t('massage_form_release_helper')} />
+      </div>
+    </div>
+  )
+}
+
+function MassageManage() {
+  const { t, lang } = useLanguage()
+  const { showToast } = useToast()
+  const navigate = useNavigate()
+  const [state, setState] = useState({ loading: true, sessions: [], counts: {}, ownerName: null })
+  const [tick, setTick] = useState(0)
+  const [form, setForm] = useState(blankForm)
+  const [saving, setSaving] = useState(false)
+  const [editing, setEditing] = useState(null)       // { id, form }
+  const [deleting, setDeleting] = useState(null)     // session
+  const [closingEarly, setClosingEarly] = useState(false)
+  const [releaseOpen, setReleaseOpen] = useState(null)   // 抽過籤的期數：{ id, value }
+  const [showHidden, setShowHidden] = useState(false)
+  const reload = () => setTick(n => n + 1)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const [{ data: sessions }, { data: signups }, ownerName] = await Promise.all([
+        supabase.from('massage_sessions').select('*').order('session_date', { ascending: false }),
+        supabase.from('massage_signups').select('session_id').is('released_at', null),
+        fetchOwnerName(),
+      ])
+      const counts = {}
+      for (const s of signups || []) counts[s.session_id] = (counts[s.session_id] || 0) + 1
+      if (!cancelled) setState({ loading: false, sessions: sessions || [], counts, ownerName })
+    })()
+    return () => { cancelled = true }
+  }, [tick])
+
+  async function handleCreate() {
+    const { row, errorKey } = toRow(form, t)
+    if (errorKey) { showToast(t(errorKey), { tone: 'error' }); return }
+    setSaving(true)
+    const { data, error } = await supabase.from('massage_sessions').insert(row).select('id').single()
+    setSaving(false)
+    if (error || !data) { showToast(t('massage_err_save', { msg: error?.message || '' }), { tone: 'error' }); return }
+    showToast(t('massage_toast_session_created'))
+    pokeMassageNotify() // 開放報名公告不用等到下一分鐘
+    setForm(blankForm())
+    navigate(`/benefits/massage/manage/${data.id}`)
+  }
+
+  async function handleSaveEdit() {
+    const { row, errorKey } = toRow(editing.form, t)
+    if (errorKey) { showToast(t(errorKey), { tone: 'error' }); return }
+    setSaving(true)
+    // 被權限或「抽過籤就鎖定」擋下時，update 可能不會報錯只回 0 筆 —— 兩種都要檢查
+    const { data, error } = await supabase.from('massage_sessions').update(row).eq('id', editing.id).select('id')
+    setSaving(false)
+    if (error || !data?.length) {
+      showToast(t('massage_err_save', { msg: error?.message || t('massage_err_not_allowed') }), { tone: 'error' })
+      return
+    }
+    showToast(t('massage_toast_session_updated'))
+    pokeMassageNotify() // 頻道的開放報名公告改寫成最新內容，不用等到下一分鐘
+    setEditing(null)
+    reload()
+  }
+
+  async function handleDelete() {
+    setSaving(true)
+    const { data, error } = await supabase.from('massage_sessions').delete().eq('id', deleting.id).select('id')
+    setSaving(false)
+    if (error || !data?.length) {
+      showToast(t('massage_err_delete', { msg: error?.message || t('massage_err_not_allowed') }), { tone: 'error' })
+    } else {
+      showToast(t('massage_toast_session_deleted'))
+      pokeMassageNotify() // 頻道的開放報名公告改成「本期已取消」
+    }
+    setDeleting(null)
+    reload()
+  }
+
+  /**
+   * 抽過籤的期數只能改「釋出開放時間」（日期、時段、截止時間都鎖住了）。
+   * 使用者決定每期可以設定：平常用預設的按摩當天 11:00，測試時改成幾分鐘後就能馬上看到效果。
+   */
+  async function handleSaveReleaseOpen() {
+    setSaving(true)
+    const { data, error } = await supabase.from('massage_sessions')
+      .update({ release_open_at: fromTaipeiInput(releaseOpen.value) }).eq('id', releaseOpen.id).select('id')
+    setSaving(false)
+    if (error || !data?.length) {
+      showToast(t('massage_err_save', { msg: error?.message || t('massage_err_not_allowed') }), { tone: 'error' })
+      return
+    }
+    showToast(t('massage_toast_release_open_saved'))
+    pokeMassageNotify()
+    setReleaseOpen(null)
+    reload()
+  }
+
+  /** 提前截止：報名截止時間直接設成「現在」（用資料庫的時間），不用自己改日期時間 */
+  async function handleCloseEarly() {
+    setSaving(true)
+    const res = await callMassage('massage_close_signup', { p_session_id: editing.id })
+    setSaving(false)
+    setClosingEarly(false)
+    if (!res.ok) { showToast(t(res.errorKey), { tone: 'error' }); reload(); return }
+    showToast(t('massage_toast_closed_early'))
+    setEditing(null)
+    reload()
+  }
+
+  /** 隱藏／取消隱藏（抽過籤的期數不能刪，只能從列表隱藏；紀錄與統計照常） */
+  async function toggleHidden(s) {
+    const hide = !s.hidden_at
+    const res = await callMassage('massage_set_hidden', { p_session_id: s.id, p_hidden: hide })
+    if (!res.ok) showToast(t(res.errorKey), { tone: 'error' })
+    else showToast(t(hide ? 'massage_toast_hidden' : 'massage_toast_unhidden'))
+    reload()
+  }
+
+  const hiddenCount = state.sessions.filter(s => s.hidden_at).length
+  const listed = state.sessions.filter(s => showHidden || !s.hidden_at)
+
+  return (
+    <div className="massage-page">
+      <div className="massage-toolbar">
+        <Link to="/benefits/massage" className="massage-link">← {t('massage_back_home')}</Link>
+      </div>
+
+      <Card>
+        <h3 className="massage-card-title">{t('massage_manage_title')}</h3>
+        <p className="massage-hint">
+          {state.ownerName
+            ? t('massage_owner_is', { name: state.ownerName })
+            : t('massage_owner_unset')}
+          {' '}{t('massage_owner_where')}
+        </p>
+      </Card>
+
+      <Card>
+        <h3 className="massage-card-title">{t('massage_new_session')}</h3>
+        <SessionForm form={form} setForm={setForm} isNew />
+        <div className="massage-actions">
+          <Button loading={saving} onClick={handleCreate}>{t('massage_create')}</Button>
+        </div>
+      </Card>
+
+      <Card>
+        <div className="massage-toolbar">
+          <h3 className="massage-card-title">{t('massage_sessions')}</h3>
+          {hiddenCount > 0 && (
+            <label className="massage-check">
+              <input type="checkbox" checked={showHidden} onChange={e => setShowHidden(e.target.checked)} />
+              {t('massage_show_hidden', { n: hiddenCount })}
+            </label>
+          )}
+        </div>
+        {state.loading ? <Skeleton height="120px" /> : state.sessions.length === 0 ? (
+          <EmptyState icon="💆" title={t('massage_sessions_empty')} />
+        ) : listed.length === 0 ? (
+          <p className="massage-hint">{t('massage_all_hidden')}</p>
+        ) : (
+          <div className="ui-table-wrap">
+            <table className="ui-table">
+              <thead>
+                <tr>
+                  <th>{t('massage_col_date')}</th><th>{t('massage_col_title')}</th>
+                  <th>{t('massage_col_status')}</th><th>{t('massage_col_count')}</th><th>{t('common_actions')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {listed.map(s => {
+                  const phase = sessionPhase(s)
+                  const win = sessionWindow(s)
+                  return (
+                    <tr key={s.id}>
+                      <td>{fmtDate(s.session_date, lang)}<div className="massage-muted">{win.from}–{win.to}</div></td>
+                      <td>{s.title}</td>
+                      <td>
+                        <Chip tone={phaseTone(phase)}>{t(`massage_phase_${phase}`)}</Chip>
+                        {s.hidden_at && <> <Chip tone="neutral">{t('massage_chip_hidden')}</Chip></>}
+                      </td>
+                      <td>{t('massage_capacity_value', { n: state.counts[s.id] || 0, cap: s.slot_count })}</td>
+                      <td>
+                        <div className="massage-actions massage-actions--tight">
+                          <Button size="sm" onClick={() => navigate(`/benefits/massage/manage/${s.id}`)}>{t('massage_open_panel')}</Button>
+                          {!s.drawn_at && (
+                            <>
+                              <Button size="sm" variant="outlined" onClick={() => navigate(`/benefits/massage/draw/${s.id}`)}>{t('massage_open_draw')}</Button>
+                              <Button size="sm" variant="outlined" onClick={() => setEditing({ id: s.id, form: formFromSession(s) })}>{t('common_edit')}</Button>
+                              <Button size="sm" variant="danger-outlined" onClick={() => setDeleting(s)}>{t('common_delete')}</Button>
+                            </>
+                          )}
+                          {s.drawn_at && phase !== 'finished' && (
+                            <Button size="sm" variant="outlined" onClick={() => setReleaseOpen({ id: s.id, value: toTaipeiInput(s.release_open_at) })}>
+                              {t('massage_set_release_open')}
+                            </Button>
+                          )}
+                          {s.drawn_at && (
+                            <Button size="sm" variant="outlined" onClick={() => toggleHidden(s)}>
+                              {t(s.hidden_at ? 'massage_unhide' : 'massage_hide')}
+                            </Button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
+      {/* 同仁的跨期紀錄（報名、抽中、按到、取消、讓出、連續沒抽中…） */}
+      <MassagePeopleStats />
+
+      {editing && (
+        <Dialog
+          size="lg"
+          title={t('massage_edit_session')}
+          labelledBy="massage-edit-title"
+          onClose={() => setEditing(null)}
+          actions={(
+            <>
+              {(() => {
+                const s = state.sessions.find(x => x.id === editing.id)
+                return s && !s.drawn_at && new Date() < new Date(s.signup_deadline) && (
+                  <Button variant="danger-outlined" disabled={saving} onClick={() => setClosingEarly(true)}>{t('massage_close_early')}</Button>
+                )
+              })()}
+              <Button variant="text" onClick={() => setEditing(null)}>{t('common_cancel')}</Button>
+              <Button loading={saving} onClick={handleSaveEdit}>{t('common_save')}</Button>
+            </>
+          )}
+        >
+          <SessionForm form={editing.form} setForm={f => setEditing(e => ({ ...e, form: typeof f === 'function' ? f(e.form) : f }))} />
+        </Dialog>
+      )}
+
+      {releaseOpen && (
+        <Dialog
+          title={t('massage_set_release_open_title')}
+          labelledBy="massage-release-open-title"
+          onClose={() => setReleaseOpen(null)}
+          actions={(
+            <>
+              <Button variant="text" onClick={() => setReleaseOpen(null)}>{t('common_cancel')}</Button>
+              <Button loading={saving} onClick={handleSaveReleaseOpen}>{t('common_save')}</Button>
+            </>
+          )}
+        >
+          <p className="massage-hint">{t('massage_set_release_open_desc')}</p>
+          <TextField label={t('massage_release_open_at')} type="datetime-local" value={releaseOpen.value}
+            onChange={e => setReleaseOpen(r => ({ ...r, value: e.target.value }))} helper={t('massage_form_release_helper')} />
+        </Dialog>
+      )}
+
+      {closingEarly && editing && (
+        <ConfirmDialog
+          title={t('massage_close_early_title')}
+          description={t('massage_close_early_desc')}
+          confirmLabel={t('massage_close_early')}
+          danger
+          loading={saving}
+          onConfirm={handleCloseEarly}
+          onCancel={() => setClosingEarly(false)}
+        />
+      )}
+
+      {deleting && (
+        <ConfirmDialog
+          title={t('massage_confirm_delete_title')}
+          description={t('massage_confirm_delete_desc', { title: deleting.title, n: state.counts[deleting.id] || 0 })}
+          confirmLabel={t('common_delete')}
+          danger
+          loading={saving}
+          onConfirm={handleDelete}
+          onCancel={() => setDeleting(null)}
+        />
+      )}
+    </div>
+  )
+}
+
+export default MassageManage

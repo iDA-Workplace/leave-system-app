@@ -8,6 +8,8 @@ import {
   leaveTypeName,
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
+import MassageLeaveReminder from '../components/MassageLeaveReminder'
+import { compressImage } from '../lib/compressImage'
 import './LeaveForm.css'
 
 const TIME_OPTIONS = []
@@ -133,13 +135,16 @@ function LeaveForm({ userProfile }) {
     setEntitlementOverrides(await fetchEntitlementOverrides(userProfile.id))
   }
 
-  async function handleFileSelected(file) {
-    if (!file) return
+  async function handleFileSelected(picked) {
+    if (!picked) return
+    setUploading(true)
+    // 照片先縮小再檢查大小：原本超過 5 MB 的照片，縮完通常就上傳得了
+    const file = await compressImage(picked)
     if (file.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
       showToast(t('leaveform_err_file_size', { mb: MAX_ATTACHMENT_MB }), { tone: 'error' })
+      setUploading(false)
       return
     }
-    setUploading(true)
     const path = `${userProfile.id}/${Date.now()}-${file.name}`
     const { error } = await supabase.storage.from('leave-attachments').upload(path, file)
     if (error) {
@@ -244,7 +249,7 @@ function LeaveForm({ userProfile }) {
       ? t('common_days', { n: countWorkdays(form.start_date, form.end_date) })
       : t('common_hours', { n: hours })
 
-    setSuccessInfo({ typeLabel, dateLabel, hoursLabel })
+    setSuccessInfo({ typeLabel, dateLabel, hoursLabel, leaveId: data.id })
   }
 
   const balanceRows = buildBalanceRows({ leaveTypes, leaveStats, annualLeave, overrides: entitlementOverrides })
@@ -462,6 +467,8 @@ function LeaveForm({ userProfile }) {
           <div><strong>{t('leaveform_success_hours')}{t('common_colon')}</strong>{successInfo.hoursLabel}</div>
           <div><strong>{t('leaveform_flow')}{t('common_colon')}</strong>{flowSteps.length > 0 ? flowSteps.map(s => s.approver?.full_name).join(' → ') : t('leaveform_success_no_flow')}</div>
         </div>
+        {/* 這張假單撞到自己的按摩預約時，提醒他釋出名額（沒撞到就不顯示） */}
+        <MassageLeaveReminder leaveId={successInfo.leaveId} />
       </Dialog>
     )}
     </>

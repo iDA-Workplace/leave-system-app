@@ -6,7 +6,7 @@ import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../context/LanguageContext'
 import {
   DashboardIcon, AddNoteIcon, ListIcon,
-  ReviewIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
+  ReviewIcon, BenefitsIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
   BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon, SearchIcon,
 } from './icons'
 import './AppShell.css'
@@ -32,6 +32,8 @@ function buildNavItems(userProfile, t, reviewTodoCount) {
     // 徽章＝有幾位部屬已經交出自評、正等著我評分。只放在側邊選單還不夠直觀，
     // 主管平常不會沒事點進考核管理，數字要在外面就看得到。
     { path: '/review', label: t('nav_review'), icon: ReviewIcon, badge: reviewTodoCount },
+    // 員工福利：按摩預約（之後的員工旅遊等也放這裡，選單才不會越長越多）
+    { path: '/benefits', label: t('nav_benefits'), icon: BenefitsIcon },
   ]
 
   if (userProfile?.is_admin || userProfile?.is_finance) {

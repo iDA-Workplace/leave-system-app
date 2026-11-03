@@ -1,0 +1,207 @@
+import { useEffect, useMemo, useState } from 'react'
+import * as XLSX from 'xlsx'
+import { supabase } from '../../lib/supabase'
+import { fetchAllRows } from '../../lib/fetchAllRows'
+import { Button, Card, Select, Skeleton, TextField } from '../../components/ui'
+import { useToast } from '../../context/ToastContext'
+import { useLanguage } from '../../context/LanguageContext'
+import { fmtDate } from '../../lib/massage'
+
+/**
+ * 同仁的跨期紀錄（管理員與 HR）。
+ *
+ * 只算「已經抽籤」的期數 —— 還在報名中的那一期結果還沒出來，算進去會讓
+ * 「沒抽中」之類的數字失真。
+ *
+ * 「連續沒抽中」：從最近一期往回數，這位同仁有報名、但抽籤當下是候補、
+ * 而且後來也沒有遞補上的期數。中間只要有一期抽中或遞補上就歸零；
+ * 沒報名的期數不算（不會因為沒報名而中斷，也不會累加）。
+ *
+ * 可以選區間（從某年某月到某年某月）：只算區間內的期數，「連續沒抽中」也只在
+ * 區間內的期數裡往回數。年份選「不限」就是那一端不設限。
+ *
+ * 「管理員加入」：管理者直接把人加進空時段（massage_add_to_slot）。這期沒有
+ * 自己報名的（added_at 有值、draw_rank 是 null），不算進「報名」次數。
+ * 「空位先搶到」（grabbed_at）同理：沒報名、搶到空位的不算報名；候補搶到空位的，
+ * 這期算有按摩時段，不算「沒抽中」。
+ */
+function buildPeople(sessions, signups) {
+  const drawn = sessions.filter(s => s.drawn_at)
+  const sessionById = Object.fromEntries(drawn.map(s => [s.id, s]))
+  const byUser = {}
+  for (const g of signups) {
+    const s = sessionById[g.session_id]
+    if (!s) continue
+    const p = (byUser[g.user_id] ||= {
+      userId: g.user_id, name: g.user?.full_name || '', dept: g.user?.department || '',
+      signedUp: 0, selected: 0, waitlisted: 0, promoted: 0, added: 0, grabbed: 0, attended: 0, noShow: 0,
+      cancelled: 0, cancelledLate: 0, yielded: 0, lastAttended: null, history: [],
+    })
+    const inDraw = g.draw_rank != null
+    const wasSelected = inDraw && g.draw_rank <= s.slot_count
+    const promoted = !!g.promoted_at
+    const notSignedUp = (!!g.added_at || !!g.grabbed_at) && g.draw_rank == null
+    if (!notSignedUp) p.signedUp += 1
+    if (g.added_at) p.added += 1
+    if (g.grabbed_at) p.grabbed += 1
+    if (wasSelected) p.selected += 1
+    if (inDraw && !wasSelected) p.waitlisted += 1
+    if (promoted) p.promoted += 1
+    if (g.attendance === 'attended') {
+      p.attended += 1
+      if (!p.lastAttended || s.session_date > p.lastAttended) p.lastAttended = s.session_date
+    }
+    if (g.attendance === 'no_show') p.noShow += 1
+    if (g.yield_answer === 'yielded') p.yielded += 1
+    else if (g.released_at) p.cancelled += 1
+    if (g.released_late) p.cancelledLate += 1
+    if (inDraw) p.history.push({ date: s.session_date, lost: !wasSelected && !promoted && !g.grabbed_at })
+  }
+  for (const p of Object.values(byUser)) {
+    p.history.sort((a, b) => (a.date < b.date ? 1 : -1))
+    let streak = 0
+    for (const h of p.history) { if (!h.lost) break; streak += 1 }
+    p.streak = streak
+  }
+  return Object.values(byUser).sort((a, b) => b.streak - a.streak || a.name.localeCompare(b.name))
+}
+
+const PAGE_SIZE = 10
+
+const COLUMNS = [
+  ['name', 'massage_col_name'],
+  ['dept', 'massage_col_dept'],
+  ['signedUp', 'massage_people_signed_up'],
+  ['selected', 'massage_people_selected'],
+  ['waitlisted', 'massage_people_waitlisted'],
+  ['promoted', 'massage_people_promoted'],
+  ['added', 'massage_people_added'],
+  ['grabbed', 'massage_people_grabbed'],
+  ['attended', 'massage_people_attended'],
+  ['noShow', 'massage_people_no_show'],
+  ['cancelled', 'massage_people_cancelled'],
+  ['cancelledLate', 'massage_people_cancelled_late'],
+  ['yielded', 'massage_people_yielded'],
+  ['streak', 'massage_people_streak'],
+  ['lastAttended', 'massage_people_last_attended'],
+]
+
+function MassagePeopleStats() {
+  const { t, lang } = useLanguage()
+  const { showToast } = useToast()
+  const [data, setData] = useState(null)
+  const [query, setQuery] = useState('')
+  // 區間：年份 '' = 不限；月份 1～12（開始預設 1 月、結束預設 12 月）
+  const [range, setRange] = useState({ fromY: '', fromM: '1', toY: '', toM: '12' })
+  const [page, setPage] = useState(1)
+
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      const [{ data: sessions }, { data: signups }] = await Promise.all([
+        // 跨期的報名資料一年就有好幾百筆，幾年後一定超過 1000 筆 → 分批讀
+        fetchAllRows(() => supabase.from('massage_sessions').select('id, session_date, slot_count, drawn_at').order('id')),
+        fetchAllRows(() => supabase.from('massage_signups').select(`
+          user_id, session_id, draw_rank, promoted_at, added_at, grabbed_at, released_at, released_late, yield_answer, attendance,
+          user:users!massage_signups_user_id_fkey(full_name, department)
+        `).order('id')),
+      ])
+      if (!cancelled) setData({ sessions: sessions || [], signups: signups || [] })
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const years = useMemo(() => (data
+    ? [...new Set(data.sessions.filter(s => s.drawn_at).map(s => s.session_date.slice(0, 4)))].sort().reverse()
+    : []), [data])
+  const ym = (y, m) => `${y}-${String(m).padStart(2, '0')}`
+  const lower = range.fromY ? ym(range.fromY, range.fromM) : null
+  const upper = range.toY ? ym(range.toY, range.toM) : null
+  const rangeInvalid = lower && upper && lower > upper
+  const sessions = useMemo(() => (data
+    ? data.sessions.filter(s => {
+      const key = s.session_date.slice(0, 7)
+      return (!lower || key >= lower) && (!upper || key <= upper)
+    })
+    : []), [data, lower, upper])
+  const people = useMemo(() => (data ? buildPeople(sessions, data.signups) : []), [data, sessions])
+  if (!data) return <Card><Skeleton height="120px" /></Card>
+
+  const drawnCount = sessions.filter(s => s.drawn_at).length
+  const monthLabel = m => t('massage_people_month_n', {
+    m, name: new Date(2000, m - 1, 1).toLocaleString('en', { month: 'short' }),
+  })
+  // 換篩選條件就回到第一頁
+  const set = key => e => { setRange(r => ({ ...r, [key]: e.target.value })); setPage(1) }
+  const yearSelect = (key, label) => (
+    <Select aria-label={label} value={range[key]} onChange={set(key)}>
+      <option value="">{t('massage_people_year_any')}</option>
+      {years.map(y => <option key={y} value={y}>{t('massage_people_year', { y })}</option>)}
+    </Select>
+  )
+  const monthSelect = (key, yearKey, label) => (
+    <Select aria-label={label} value={range[key]} onChange={set(key)} disabled={!range[yearKey]}>
+      {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={String(m)}>{monthLabel(m)}</option>)}
+    </Select>
+  )
+  const q = query.trim()
+  const visible = q ? people.filter(p => p.name.includes(q) || p.dept.includes(q)) : people
+  const cell = (p, key) => (key === 'lastAttended' ? (p.lastAttended ? fmtDate(p.lastAttended, lang) : '—') : p[key])
+
+  // 畫面上一頁 10 筆，不讓表格佔掉整個頁面；匯出 Excel 仍是篩選後的全部
+  const totalPages = Math.max(1, Math.ceil(visible.length / PAGE_SIZE))
+  const currentPage = Math.min(page, totalPages)
+  const pageRows = visible.slice((currentPage - 1) * PAGE_SIZE, currentPage * PAGE_SIZE)
+
+  function exportExcel() {
+    const rows = visible.map(p => Object.fromEntries(COLUMNS.map(([key, label]) => [t(label), cell(p, key)])))
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(rows), t('massage_sheet_people'))
+    const suffix = lower || upper ? `_${lower || ''}~${upper || ''}` : ''
+    XLSX.writeFile(wb, `${t('massage_people_filename')}${suffix}.xlsx`)
+    showToast(t('massage_toast_exported'))
+  }
+
+  return (
+    <Card>
+      <div className="massage-toolbar">
+        <h3 className="massage-card-title">{t('massage_people_title')}</h3>
+        <Button size="sm" variant="outlined" onClick={exportExcel} disabled={visible.length === 0}>{t('massage_export_excel')}</Button>
+      </div>
+      <p className="massage-hint">{t('massage_people_hint', { n: drawnCount })}</p>
+      <div className="massage-search">
+        <span className="massage-muted">{t('massage_people_from')}</span>
+        {yearSelect('fromY', t('massage_people_from_year'))}
+        {monthSelect('fromM', 'fromY', t('massage_people_from_month'))}
+        <span className="massage-muted">{t('massage_people_to')}</span>
+        {yearSelect('toY', t('massage_people_to_year'))}
+        {monthSelect('toM', 'toY', t('massage_people_to_month'))}
+        <TextField aria-label={t('massage_people_search')} placeholder={t('massage_people_search')} value={query} onChange={e => { setQuery(e.target.value); setPage(1) }} />
+      </div>
+      {rangeInvalid && <p className="massage-warn">{t('massage_people_range_invalid')}</p>}
+      {visible.length === 0 ? <p className="massage-hint">{t('massage_people_empty')}</p> : (
+        <div className="ui-table-wrap">
+          <table className="ui-table">
+            <thead><tr>{COLUMNS.map(([key, label]) => <th key={key}>{t(label)}</th>)}</tr></thead>
+            <tbody>
+              {pageRows.map(p => (
+                <tr key={p.userId}>
+                  {COLUMNS.map(([key]) => <td key={key}>{cell(p, key)}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {totalPages > 1 && (
+        <div className="massage-pagination">
+          <Button size="sm" variant="outlined" disabled={currentPage <= 1} onClick={() => setPage(currentPage - 1)}>{t('common_prev_page')}</Button>
+          <span className="massage-muted">{t('common_page_indicator', { page: currentPage, total: totalPages })}</span>
+          <Button size="sm" variant="outlined" disabled={currentPage >= totalPages} onClick={() => setPage(currentPage + 1)}>{t('common_next_page')}</Button>
+        </div>
+      )}
+    </Card>
+  )
+}
+
+export default MassagePeopleStats

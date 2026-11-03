@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
+import BenefitsSettings from './benefits/BenefitsSettings'
 import { supabase } from '../lib/supabase'
 import { invokeFunction } from '../lib/api'
 import ExportReport from './ExportReport'
@@ -17,6 +18,9 @@ import './AdminPanel.css'
 const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor: 'warning', boss: 'info' }
 const ASSIGNABLE_ROLES = ['employee', 'supervisor', 'boss']
 const DEFAULT_PASSWORD = 'Welcome@123'
+// Slack 成員 ID：U（一般成員）或 W（企業版）開頭，後面是大寫英文和數字。空白＝不設定。
+const SLACK_ID_RE = /^[UW][A-Z0-9]{6,}$/
+const isValidSlackId = (v) => !(v || '').trim() || SLACK_ID_RE.test((v || '').trim())
 
 // ===== 員工管理 =====
 // 入職日期 is deliberately absent: it's 財務-owned now (員工假期管理), since
@@ -99,13 +103,18 @@ function UserManagement({ isAdmin, userProfile }) {
   }
 
   async function handleUpdateUser() {
+    // Slack User ID 填錯，Slack 通知會全部送不到、也沒人發現 —— 存檔前先擋格式（使用者決定）
+    if (!isValidSlackId(editing.slack_user_id)) {
+      showToast(t('adminusers_err_slack_id'), { tone: 'error' })
+      return
+    }
     setSaving(true)
     const { data, error } = await invokeFunction('manage-users', {
       action: 'update',
       userId: editing.id,
       full_name: editing.full_name,
       role: editing.role,
-      slack_user_id: editing.slack_user_id,
+      slack_user_id: (editing.slack_user_id || '').trim(),
       is_active: editing.is_active,
       // Passed back unchanged, never edited here -- 入職日期 belongs to
       // 財務 now. Sending the existing value (rather than omitting the
@@ -302,7 +311,8 @@ function UserManagement({ isAdmin, userProfile }) {
               <option value="">{t('adminusers_select_flow')}</option>
               {flows.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
             </Select>
-            <TextField label="Slack User ID" value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} placeholder="U0123ABCD" />
+            <TextField label="Slack User ID" value={editing.slack_user_id || ''} onChange={e => setEditing(p => ({ ...p, slack_user_id: e.target.value }))} placeholder="U0123ABCD"
+              error={isValidSlackId(editing.slack_user_id) ? undefined : t('adminusers_err_slack_id')} />
             <Select label={t('adminusers_col_department')} value={editing.department || ''} onChange={e => setEditing(p => ({ ...p, department: e.target.value }))}>
               <option value="">{t('adminusers_select_department')}</option>
               {departments.map(d => <option key={d} value={d}>{d}</option>)}
@@ -658,6 +668,8 @@ function AdminPanel({ userProfile }) {
   if (isFinance) {
     tabs.push({ key: 'leave-entitlements', path: '/admin/leave-entitlements', label: t('finleave_title') })
   }
+  // 員工福利設定（按摩預約負責人）：管理員與 HR 都是按摩預約的管理者，兩邊都看得到
+  tabs.push({ key: 'benefits', path: '/admin/benefits', label: t('benefits_settings_tab') })
   tabs.push({ key: 'export', path: '/admin/export', label: t('export_tab') })
 
   // Finance-only users have no 員工帳號管理, so the index route can't land there.
@@ -677,6 +689,7 @@ function AdminPanel({ userProfile }) {
         {isAdmin && <Route path="leave-type-names" element={<LeaveTypeNames />} />}
         {isFinance && <Route path="leave-entitlements" element={<EmployeeLeaveManagement userProfile={userProfile} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
+        <Route path="benefits" element={<BenefitsSettings />} />
         <Route path="export" element={<ExportReport />} />
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>

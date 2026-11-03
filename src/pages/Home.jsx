@@ -5,6 +5,7 @@ import { Button, Card, Chip, ConfirmDialog, Skeleton, Textarea } from '../compon
 import { useToast } from '../context/ToastContext'
 import { fetchAnnualLeaveDays, leaveTypeName } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
+import MassageHomeWidget from './benefits/MassageHomeWidget'
 import './Home.css'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
@@ -370,6 +371,9 @@ function Home({ userProfile }) {
         <p className="dash-welcome__subtitle">{t('home_today_is', { date: todayLabel })}{pendingSentence}</p>
       </div>
 
+      {/* 按摩報名期間才會出現（沒有開放中的期數就什麼都不顯示） */}
+      <MassageHomeWidget userProfile={userProfile} />
+
       <div className="dash-top-grid">
         {statsLoading ? <Skeleton height="150px" /> : (
           <StatCard
@@ -457,7 +461,7 @@ function Home({ userProfile }) {
                     <tr key={req.id}>
                       <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{leaveTypeName(req.leave_type, lang)}</Chip></td>
                       <td>{isMultiDay ? `${req.start_date} ~ ${req.end_date}` : req.start_date}</td>
-                      <td>{isMultiDay ? t('common_all_day') : (req.start_time && req.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
+                      <td>{isMultiDay ? t('common_all_day') : (req.start_time && req.end_time ? `${req.start_time.slice(0, 5)} ~ ${req.end_time.slice(0, 5)}` : '—')}</td>
                       <td>{req.hours ? t('common_hours', { n: req.hours }) : (isMultiDay ? t('common_days', { n: calendarDayCount(req.start_date, req.end_date) }) : '—')}</td>
                       <td>
                         <div className="dash-status-cell">

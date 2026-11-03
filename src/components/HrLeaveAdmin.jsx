@@ -1,9 +1,11 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { fetchAllRows } from '../lib/fetchAllRows'
 import { Button, Chip, ConfirmDialog, Dialog, EmptyState, Select, Skeleton, Textarea } from './ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
 import { calcHours, countWorkdays, leaveTypeName } from '../lib/leaveEntitlements'
+import { remindMassageForLeave } from '../lib/massage'
 
 /**
  * HR 的假單管理：修改與刪除。
@@ -73,10 +75,13 @@ function HrLeaveAdmin({ hrUser }) {
     // 舊結果會把新結果蓋掉，畫面顯示的東西跟勾選狀態對不起來。
     let cancelled = false
     ;(async () => {
-      let q = supabase.from('leave_requests').select(SELECT)
-        .order('start_date', { ascending: false }).limit(300)
-      if (onlyDisputed) q = q.not('disputed_at', 'is', null).is('acknowledged_at', null)
-      const { data, error } = await q
+      // 以前只讀最近 300 筆，更早的假單在這裡找不到、也改不了 → 改成分批讀全部
+      const { data, error } = await fetchAllRows(() => {
+        let q = supabase.from('leave_requests').select(SELECT)
+          .order('start_date', { ascending: false }).order('id')
+        if (onlyDisputed) q = q.not('disputed_at', 'is', null).is('acknowledged_at', null)
+        return q
+      })
       if (cancelled) return
       if (error) showToast(t('hradmin_err_fetch', { msg: error.message }), { tone: 'error' })
       setRows(data || [])
@@ -166,6 +171,8 @@ function HrLeaveAdmin({ hrUser }) {
       await supabase.functions.invoke('send-slack-notification', {
         body: { type: 'hr_registered', request_id: editing.id },
       })
+      // 改了日期／時間 → 可能變成撞到按摩，一樣提醒同仁本人
+      remindMassageForLeave(editing.id)
     }
 
     setSaving(false)
