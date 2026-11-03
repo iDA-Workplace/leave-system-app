@@ -22,6 +22,8 @@ import { fmtDate } from '../../lib/massage'
  *
  * 「管理員加入」：管理者直接把人加進空時段（massage_add_to_slot）。這期沒有
  * 自己報名的（added_at 有值、draw_rank 是 null），不算進「報名」次數。
+ * 「空位先搶到」（grabbed_at）同理：沒報名、搶到空位的不算報名；候補搶到空位的，
+ * 這期算有按摩時段，不算「沒抽中」。
  */
 function buildPeople(sessions, signups) {
   const drawn = sessions.filter(s => s.drawn_at)
@@ -32,15 +34,16 @@ function buildPeople(sessions, signups) {
     if (!s) continue
     const p = (byUser[g.user_id] ||= {
       userId: g.user_id, name: g.user?.full_name || '', dept: g.user?.department || '',
-      signedUp: 0, selected: 0, waitlisted: 0, promoted: 0, added: 0, attended: 0, noShow: 0,
+      signedUp: 0, selected: 0, waitlisted: 0, promoted: 0, added: 0, grabbed: 0, attended: 0, noShow: 0,
       cancelled: 0, cancelledLate: 0, yielded: 0, lastAttended: null, history: [],
     })
     const inDraw = g.draw_rank != null
     const wasSelected = inDraw && g.draw_rank <= s.slot_count
     const promoted = !!g.promoted_at
-    const addedOnly = !!g.added_at && g.draw_rank == null
-    if (!addedOnly) p.signedUp += 1
+    const notSignedUp = (!!g.added_at || !!g.grabbed_at) && g.draw_rank == null
+    if (!notSignedUp) p.signedUp += 1
     if (g.added_at) p.added += 1
+    if (g.grabbed_at) p.grabbed += 1
     if (wasSelected) p.selected += 1
     if (inDraw && !wasSelected) p.waitlisted += 1
     if (promoted) p.promoted += 1
@@ -52,7 +55,7 @@ function buildPeople(sessions, signups) {
     if (g.yield_answer === 'yielded') p.yielded += 1
     else if (g.released_at) p.cancelled += 1
     if (g.released_late) p.cancelledLate += 1
-    if (inDraw) p.history.push({ date: s.session_date, lost: !wasSelected && !promoted })
+    if (inDraw) p.history.push({ date: s.session_date, lost: !wasSelected && !promoted && !g.grabbed_at })
   }
   for (const p of Object.values(byUser)) {
     p.history.sort((a, b) => (a.date < b.date ? 1 : -1))
@@ -73,6 +76,7 @@ const COLUMNS = [
   ['waitlisted', 'massage_people_waitlisted'],
   ['promoted', 'massage_people_promoted'],
   ['added', 'massage_people_added'],
+  ['grabbed', 'massage_people_grabbed'],
   ['attended', 'massage_people_attended'],
   ['noShow', 'massage_people_no_show'],
   ['cancelled', 'massage_people_cancelled'],
@@ -98,7 +102,7 @@ function MassagePeopleStats() {
         // 跨期的報名資料一年就有好幾百筆，幾年後一定超過 1000 筆 → 分批讀
         fetchAllRows(() => supabase.from('massage_sessions').select('id, session_date, slot_count, drawn_at').order('id')),
         fetchAllRows(() => supabase.from('massage_signups').select(`
-          user_id, session_id, draw_rank, promoted_at, added_at, released_at, released_late, yield_answer, attendance,
+          user_id, session_id, draw_rank, promoted_at, added_at, grabbed_at, released_at, released_late, yield_answer, attendance,
           user:users!massage_signups_user_id_fkey(full_name, department)
         `).order('id')),
       ])

@@ -30,7 +30,8 @@
 //      moved             → 負責人改了某人的時段（交換的話兩個人各一筆）：私訊當事人
 //      released（等待期間）→ 私訊本人，附「取消釋出」（負責人不個別通知，看開放時間的總整理）
 //      releases_opened   → 釋出開放時間到了：負責人一則總整理；頻道發時段異動
-//      slot_open         → 沒有候補的空時段：私訊所有可以搶的同仁＋頻道發一則，附「報名」（先搶先贏）
+//      slot_open         → 沒有候補的空時段：頻道發一則，附「報名」（先搶先贏），並在討論串 tag 可以搶的同仁
+//                          （使用者選 C：不私訊每個人，只 tag 該通知的人；改成「已額滿」只要改一則）
 //      grabbed           → 有人搶到空位：頻道發時段異動；空位通知改寫成「已額滿」（syncNotices）
 //    另外，抽籤後時段表有變動（有人空出時段、遞補、被加入、改時段／交換）時，
 //    在頻道發一則「時段異動」，附上最新的時段表（使用者決定：選項 C）。
@@ -149,6 +150,7 @@ const T = {
     open_slot_line: '*{slot}*',
     open_slot_full: '~{slot}~ 已額滿',
     open_slots_all_full: '💆 *{title}*（{date}）的空位名額已滿，謝謝大家的關注 🙏',
+    open_slots_tag: '{mentions}\n有空位囉！有興趣的同仁請點上方訊息的「報名」，先按先得 🙌',
     owner_released_yield: '自願讓給候補（上一期有按到），不算未到。',
     owner_released_offered: '系統已邀請候補 *{name}* 遞補。',
     owner_released_no_waitlist: '目前沒有候補可以邀請，這個時段空著；可以到現場面板用「編輯」補人。',
@@ -273,6 +275,7 @@ const T = {
     open_slot_line: '*{slot}*',
     open_slot_full: '~{slot}~ taken',
     open_slots_all_full: '💆 *{title}* ({date}): the open spots are all taken. Thanks for your interest 🙏',
+    open_slots_tag: '{mentions}\nSpots are open! If you are interested, tap "Sign up" in the message above — first come, first served 🙌',
     owner_released_yield: 'Gave it to the waitlist voluntarily (had a massage last time) — not a no-show.',
     owner_released_offered: 'The system offered it to *{name}* from the waitlist.',
     owner_released_no_waitlist: 'Nobody is on the waitlist, so the slot is empty; you can add someone with "Edit" in the live panel.',
@@ -884,10 +887,11 @@ async function notifyReleasesOpened(ctx: Ctx, e: MassageEvent) {
 // ===== 空位通知（先搶先贏）=====
 
 /**
- * 沒有候補可以邀請的空時段 → 私訊所有可以搶的同仁＋頻道發一則（使用者決定）。
- * 同一期同一批的空時段合成一則，每個時段一顆「報名」；每個人只列他可以搶的時段
- * （這期已經有時段的人不發；那個時段在請假的不列）。發出去的每一則都記下來，
- * 之後有人搶走就改寫成「已額滿」（syncNotices）。
+ * 沒有候補可以邀請的空時段 → 頻道發一則「尚有名額」，每個時段一顆「報名」，再在那則訊息的
+ * 討論串裡 tag 可以搶的同仁（使用者選 C）：
+ *   · 只 tag 在職、有 Slack ID、這期還沒有時段、而且至少有一個空時段沒在請假的人；不相關的人不會被吵
+ *   · 只有一則訊息，被搶走時改成「已額滿」只要改一則（syncNotices），人多也不會受 Slack 改寫速度限制
+ * 同一期同一批的空時段合成一則。
  */
 async function broadcastOpenSlots(ctx: Ctx, events: MassageEvent[]) {
   const bySession = new Map<string, Set<number>>()
@@ -905,20 +909,20 @@ async function broadcastOpenSlots(ctx: Ctx, events: MassageEvent[]) {
     const slots = [...slotSet].filter(n => Array.isArray(open) && open.includes(n)).sort((a, b) => a - b)
     if (!slots.length) continue
 
-    const { data: people, error: pErr } = await ctx.db.rpc('massage_open_slot_recipients', { p_session_id: s.id, p_slots: slots })
-    if (pErr) throw new Error(`massage_open_slot_recipients 失敗：${pErr.message}`)
-    for (const r of (people ?? []) as { user_id: string; full_name: string; slack_user_id: string; language: string | null; slots: number[] }[]) {
-      const lang = normalizeLang(r.language)
-      const blocks = openSlotBlocks(s, lang, r.slots, new Set(r.slots))
-      const res = await dm(ctx, { id: r.user_id, full_name: r.full_name, slack_user_id: r.slack_user_id, language: r.language, is_active: true },
-        t(lang, 'open_slots_text', { title: s.title }), blocks)
-      if (res?.ok) await saveOpenNotice(ctx, s.id, r.user_id, res, lang, r.slots, blocks)
-    }
-
     const lang = channelLang()
     const blocks = openSlotBlocks(s, lang, slots, new Set(slots))
     const res = await postChannel(t(lang, 'open_slots_text', { title: s.title }), blocks)
-    if (res?.ok) await saveOpenNotice(ctx, s.id, null, res, lang, slots, blocks)
+    if (!res?.ok) continue
+    await saveOpenNotice(ctx, s.id, null, res, lang, slots, blocks)
+
+    const { data: people, error: pErr } = await ctx.db.rpc('massage_open_slot_recipients', { p_session_id: s.id, p_slots: slots })
+    if (pErr) { console.error('massage_open_slot_recipients 失敗：', pErr.message); continue }
+    const mentions = ((people ?? []) as { slack_user_id: string }[]).map(p => `<@${p.slack_user_id.trim()}>`)
+    if (!mentions.length) continue
+    await callSlack('chat.postMessage', {
+      channel: res.channel, thread_ts: res.ts,
+      text: t(lang, 'open_slots_tag', { mentions: mentions.join(' ') }),
+    })
   }
 }
 
