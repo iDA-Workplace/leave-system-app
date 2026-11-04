@@ -338,7 +338,7 @@ function Layout({ children, userProfile }) {
                 the repo (this session can't extract a pasted chat image to
                 disk) -- swap for <img src="/logo.png" .../> once it lands. */}
             <span className="rail__brand-name">
-              <span className="rail__brand-name-full">iDA Workplace</span>
+              <span className="rail__brand-name-full">iDA Hub</span>
               <span className="rail__brand-name-short">iDA</span>
             </span>
             <span className="rail__brand-caption">{t('app_brand_caption')}</span>

@@ -1,7 +1,7 @@
 {
-  "name": "iDA Workplace",
-  "short_name": "iDA Workplace",
-  "description": "iDA 請假與考核系統",
+  "name": "iDA Hub",
+  "short_name": "iDA Hub",
+  "description": "iDA 員工中心：請假、考核、員工福利",
   "id": "/",
   "start_url": "/",
   "scope": "/",
