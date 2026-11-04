@@ -38,6 +38,7 @@ function UserManagement({ isAdmin, userProfile }) {
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
   const [confirmToggle, setConfirmToggle] = useState(null)
+  const [confirmReset, setConfirmReset] = useState(null)   // 要重設密碼的那位同仁
   const [filterDept, setFilterDept] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
   const { showToast } = useToast()
@@ -168,6 +169,22 @@ function UserManagement({ isAdmin, userProfile }) {
     fetchUsers()
   }
 
+  // 重設密碼（使用者決定）：密碼看不到也撈不回來，只能重設回預設密碼，
+  // 同仁登入後自己到「設定」改。實際改密碼的是後台 function admin-reset-password
+  // （要用 service role 金鑰，只能在伺服器端做）；它會再確認一次呼叫的人是管理員。
+  async function handleResetPassword() {
+    setSaving(true)
+    const { data, error } = await supabase.functions.invoke('admin-reset-password', { body: { user_id: confirmReset.id } })
+    setSaving(false)
+    if (error || !data?.ok) {
+      const key = data?.code === 'self' ? 'adminusers_reset_pw_err_self' : 'adminusers_reset_pw_err'
+      showToast(t(key), { tone: 'error' })
+      return
+    }
+    showToast(t('adminusers_reset_pw_done', { name: confirmReset.full_name, pw: DEFAULT_PASSWORD }))
+    setConfirmReset(null)
+  }
+
   if (loading) return <div><PageHeader title={t('adminusers_title')} /><Skeleton height="200px" /></div>
 
   // 部門沒有自己的資料表，選項是從「現有員工填過的部門」彙整出來的 ——
@@ -290,6 +307,9 @@ function UserManagement({ isAdmin, userProfile }) {
           onClose={() => setEditing(null)}
           actions={(
             <>
+              {editing.id !== userProfile?.id && (
+                <Button variant="outlined" onClick={() => setConfirmReset(editing)}>{t('adminusers_reset_pw')}</Button>
+              )}
               <Button
                 variant={editing.is_active ? 'danger-outlined' : 'outlined'}
                 onClick={() => setConfirmToggle(editing)}
@@ -333,6 +353,17 @@ function UserManagement({ isAdmin, userProfile }) {
             {t('adminusers_also_finance')}
           </label>
         </Dialog>
+      )}
+
+      {confirmReset && (
+        <ConfirmDialog
+          title={t('adminusers_reset_pw')}
+          description={t('adminusers_reset_pw_confirm', { name: confirmReset.full_name, pw: DEFAULT_PASSWORD })}
+          confirmLabel={t('adminusers_reset_pw')}
+          loading={saving}
+          onConfirm={handleResetPassword}
+          onCancel={() => setConfirmReset(null)}
+        />
       )}
 
       {confirmToggle && (

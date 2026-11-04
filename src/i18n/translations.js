@@ -103,6 +103,7 @@ export const translations = {
     login_submitting: '登入中...',
     login_error: '帳號或密碼錯誤，請重新輸入',
     login_remember_me: '記住我的電子郵件',
+    login_forgot: '忘記密碼？請聯絡 Anna',
 
     // ===== 首頁 =====
     home_welcome: '歡迎回來，{name}',
@@ -383,6 +384,11 @@ export const translations = {
     adminusers_created: '員工新增成功！預設密碼為 {pw}',
     adminusers_err_update: '更新失敗：{msg}',
     adminusers_err_slack_id: 'Slack User ID 格式不對：應該是 U（或 W）開頭、後面接大寫英文和數字，例如 U04ABCD1234。取得方式：Slack 點對方頭像 → 個人檔案 → ⋮ → 複製成員 ID。',
+    adminusers_reset_pw: '重設密碼',
+    adminusers_reset_pw_confirm: '把 {name} 的密碼重設成 {pw}？原本的密碼會立刻失效。請對方用 {pw} 登入後，到「設定」改成自己的密碼。',
+    adminusers_reset_pw_done: '已把 {name} 的密碼重設成 {pw}，請對方登入後到「設定」改密碼。',
+    adminusers_reset_pw_err: '重設密碼失敗，請稍後再試一次。',
+    adminusers_reset_pw_err_self: '要改自己的密碼，請到「設定」。',
     adminusers_err_update_fields: '部門/職稱/審核流程/直屬主管/權限設定儲存失敗：{msg}',
     adminusers_updated: '已更新使用者',
     adminusers_err_toggle: '操作失敗：{msg}',
@@ -1288,6 +1294,7 @@ export const translations = {
     login_submit: 'Sign in',
     login_submitting: 'Signing in...',
     login_remember_me: 'Remember my email',
+    login_forgot: 'Forgot your password? Please contact Anna.',
     login_error: 'Incorrect email or password, please try again',
 
     // ===== Home =====
@@ -1571,6 +1578,11 @@ export const translations = {
     adminusers_created: 'Employee added. The default password is {pw}',
     adminusers_err_update: 'Update failed: {msg}',
     adminusers_err_slack_id: 'Invalid Slack User ID: it starts with U (or W) followed by capital letters and digits, e.g. U04ABCD1234. To find it: in Slack, open their profile → ⋮ → Copy member ID.',
+    adminusers_reset_pw: 'Reset password',
+    adminusers_reset_pw_confirm: 'Reset {name}\'s password to {pw}? Their current password stops working right away. Ask them to sign in with {pw} and change it under Settings.',
+    adminusers_reset_pw_done: '{name}\'s password is now {pw}. Ask them to change it under Settings after signing in.',
+    adminusers_reset_pw_err: 'Could not reset the password. Please try again later.',
+    adminusers_reset_pw_err_self: 'To change your own password, go to Settings.',
     adminusers_err_update_fields: 'Could not save department / job title / approval flow / manager / permissions: {msg}',
     adminusers_updated: 'Employee updated',
     adminusers_err_toggle: 'Action failed: {msg}',

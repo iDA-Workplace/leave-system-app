@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase'
-import { Button, Card, TextField } from '../components/ui'
 import { useLanguage } from '../context/LanguageContext'
 import './Login.css'
 
@@ -12,6 +11,12 @@ import './Login.css'
 // 跟我們把密碼寫進 localStorage 是兩回事。
 const REMEMBERED_EMAIL_KEY = 'leave-system-remembered-email'
 
+/**
+ * 登入頁：「品牌紅」版（使用者從 5 種風格裡挑的第 3 款）。
+ *
+ * 整片品牌紅底、淡淡的 IDA 字形壓在背景、白色卡片放表單。登入頁是公司的門面，
+ * 刻意不跟著系統的深色模式變色 —— 顏色全部寫死在 Login.css，不用系統的 token。
+ */
 function Login() {
   const { t } = useLanguage()
   const [email, setEmail] = useState(() => localStorage.getItem(REMEMBERED_EMAIL_KEY) || '')
@@ -42,49 +47,57 @@ function Login() {
 
   return (
     <div className="login-page">
-      <Card className="login-card">
-        <div className="login-card__brand">
-          <img
-            className="login-card__logo"
-            src="/ida-logo-white.png"
-            alt="iDA Workplace"
-            width="900"
-            height="487"
-          />
-        </div>
+      <img className="login-page__mark" src="/ida-icon-white.png" alt="" aria-hidden="true" width="900" height="327" />
 
-        <div className="login-card__body">
-          <h1 className="login-card__title">{t('login_title')}</h1>
-          <p className="login-card__subtitle">{t('login_subtitle')}</p>
+      <header className="login-page__header">
+        <img className="login-page__logo" src="/ida-logo-horizontal-white.png" alt="iDA Workplace" width="2400" height="187" />
+        <span className="login-page__eyebrow">Management Portal</span>
+      </header>
+
+      <main className="login-page__main">
+        <form className="login-card" onSubmit={handleLogin}>
+          <div className="login-card__heading">
+            <h1 className="login-card__title">{t('login_title')}</h1>
+            <p className="login-card__subtitle">{t('login_subtitle')}</p>
+          </div>
 
           {error && <div className="login-card__error" role="alert">{error}</div>}
 
-          <form onSubmit={handleLogin}>
-            <TextField
-              label={t('login_email')}
-              type="email"
-              value={email}
-              onChange={e => setEmail(e.target.value)}
-              required
-              placeholder={t('login_email_placeholder')}
-            />
-
-            <div className="login-card__password-field">
-              <TextField
-                label={t('login_password')}
-                type={showPassword ? 'text' : 'password'}
-                value={password}
-                onChange={e => setPassword(e.target.value)}
+          <div className="login-card__fields">
+            <div className="login-card__field">
+              <label htmlFor="login-email">{t('login_email')}</label>
+              <input
+                id="login-email"
+                className="login-card__input"
+                type="email"
+                autoComplete="username"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
                 required
-                placeholder={t('login_password_placeholder')}
+                placeholder={t('login_email_placeholder')}
               />
-              <button
-                type="button"
-                className="login-card__toggle-password"
-                onClick={() => setShowPassword(!showPassword)}
-              >
-                {showPassword ? t('login_hide') : t('login_show')}
-              </button>
+            </div>
+
+            <div className="login-card__field">
+              <label htmlFor="login-password">{t('login_password')}</label>
+              <div className="login-card__input login-card__input--password">
+                <input
+                  id="login-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={password}
+                  onChange={e => setPassword(e.target.value)}
+                  required
+                  placeholder={t('login_password_placeholder')}
+                />
+                <button
+                  type="button"
+                  className="login-card__toggle-password"
+                  onClick={() => setShowPassword(!showPassword)}
+                >
+                  {showPassword ? t('login_hide') : t('login_show')}
+                </button>
+              </div>
             </div>
 
             <label className="login-card__remember">
@@ -95,13 +108,17 @@ function Login() {
               />
               <span>{t('login_remember_me')}</span>
             </label>
+          </div>
 
-            <Button type="submit" block loading={loading} style={{ marginTop: 'var(--space-100)' }}>
-              {loading ? t('login_submitting') : t('login_submit')}
-            </Button>
-          </form>
-        </div>
-      </Card>
+          <button type="submit" className="login-card__submit" disabled={loading}>
+            {loading ? t('login_submitting') : t('login_submit')}
+          </button>
+
+          <p className="login-card__help">{t('login_forgot')}</p>
+        </form>
+      </main>
+
+      <footer className="login-page__footer">© iDA Workplace</footer>
     </div>
   )
 }
