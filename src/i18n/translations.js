@@ -1277,7 +1277,7 @@ export const translations = {
     theme_system: 'System',
 
     // ===== Login =====
-    login_title: 'Employee Hub',
+    login_title: 'Management Portal',
     login_subtitle: 'Please sign in to your account',
     login_email: 'Email',
     login_email_placeholder: 'Enter your email',
