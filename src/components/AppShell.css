@@ -362,7 +362,8 @@ button:focus-visible {
 
 .rail__brand-caption {
   color: var(--sys-color-on-surface-variant);
-  font: var(--type-label-small-size)/1.2 var(--font-family-base);
+  /* 行高 1.2 搭配 overflow: hidden 會把 g、p 這種下伸的字母切掉（英文版的 Management Portal） */
+  font: var(--type-label-small-size)/1.5 var(--font-family-base);
   white-space: nowrap;
   overflow: hidden;
   display: none;

@@ -130,7 +130,7 @@
 | 名稱 | 貼哪個檔案 | Verify JWT |
 |---|---|---|
 | `slack-interactions` | `functions/slack-interactions/index.ts` | **關掉** |
-| `massage-notify` | `functions/massage-notify/index.ts` | 維持開啟 |
+| `massage-notify` | `functions/massage-notify/index.ts` | **關掉**（排程用新制 `sb_secret_` key 時一定要關，否則每次都 401 Invalid JWT） |
 | `send-slack-notification` | `functions/send-slack-notification/standalone.ts` | 維持開啟 |
 
 （`send-slack-notification` 是請假通知；要在測試環境試「請假 → 提醒釋出按摩名額」才需要。）
