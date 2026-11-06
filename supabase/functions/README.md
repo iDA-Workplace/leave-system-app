@@ -436,3 +436,15 @@ curl -X POST 'https://<ref>.supabase.co/functions/v1/massage-notify' \
 - **通知只看 2 天內的異動**：排程停了很久之後重新開，不會把一堆過時的通知一口氣補發。
 - **發送失敗會重試**：Slack 或網路暫時有問題時，5 分鐘後重試，最多 3 次。代價是極少數情況下同一則可能收到兩次 —— 比起漏發遞補邀請好。
 - **「有按到嗎？」只問當天的**：排程如果停過，不會隔天才補問「剛剛的按摩」。
+
+## 管理員重設同仁密碼（`admin-reset-password`）
+
+「管理後台 → 員工帳號 → 編輯」的「重設密碼」按鈕呼叫這支：把同仁的密碼改回新員工的預設密碼
+（`Welcome@123`，跟 `src/pages/AdminPanel.jsx` 的 `DEFAULT_PASSWORD` 一致），同仁登入後自己到「設定」改。
+密碼是加密存的，任何人都看不到原本的密碼，忘記了只能重設。
+
+- **部署**：Deploy a new function → Via Editor → 名稱 `admin-reset-password` → 貼上 `admin-reset-password/index.ts` → Deploy。
+- **Verify JWT 要關掉**：身分檢查在函式裡做（用 token 向 Supabase 確認是誰、再查他是不是管理員），
+  正式專案的新制金鑰會被閘道的 Verify JWT 擋下。
+- 只有管理員（`users.is_admin`）能用；不能拿來改自己的密碼；密碼寫死在函式裡、不接受網頁傳來的值。
+- 每次重設都會在這支 function 的 Logs 留一行「誰幫誰重設」，不記密碼。

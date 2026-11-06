@@ -25,8 +25,10 @@ body {
   min-height: 100svh;
 }
 
+/* 全站數字一律等寬，上下排才會對齊（Jost 預設數字寬度不一）。
+ * 用 !important：各頁 CSS 的 `font:` 簡寫會把這個設定重設回 normal，沒有它會被蓋掉。 */
 * {
-  font-variant-numeric: tabular-nums;
+  font-variant-numeric: tabular-nums !important;
 }
 
 @media (prefers-reduced-motion: reduce) {
