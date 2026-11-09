@@ -102,6 +102,7 @@ export const translations = {
     login_submit: '登入',
     login_submitting: '登入中...',
     login_error: '帳號或密碼錯誤，請重新輸入',
+    login_disabled: '這個帳號已停用，無法登入。如有疑問請聯絡 Anna',
     login_remember_me: '記住我的電子郵件',
     login_forgot: '忘記密碼？請聯絡 Anna',
 
@@ -392,6 +393,10 @@ export const translations = {
     adminusers_err_update_fields: '部門/職稱/審核流程/直屬主管/權限設定儲存失敗：{msg}',
     adminusers_updated: '已更新使用者',
     adminusers_err_toggle: '操作失敗：{msg}',
+    manageusers_err_not_signed_in: '登入狀態已過期，請重新登入後再試一次',
+    manageusers_err_not_allowed: '只有管理員或 HR 可以管理員工帳號',
+    manageusers_err_not_found: '找不到這位員工',
+    manageusers_err_ban_failed: '資料已更新，但封鎖／解除封鎖登入失敗，請再試一次',
     adminusers_deleted_toast: '已刪除帳號',
     adminusers_restored_toast: '已恢復帳號',
 
@@ -1296,6 +1301,7 @@ export const translations = {
     login_remember_me: 'Remember my email',
     login_forgot: 'Forgot your password? Please contact Anna.',
     login_error: 'Incorrect email or password, please try again',
+    login_disabled: 'This account has been deactivated. Please contact Anna if you have questions.',
 
     // ===== Home =====
     home_welcome: 'Welcome back, {name}',
@@ -1586,6 +1592,10 @@ export const translations = {
     adminusers_err_update_fields: 'Could not save department / job title / approval flow / manager / permissions: {msg}',
     adminusers_updated: 'Employee updated',
     adminusers_err_toggle: 'Action failed: {msg}',
+    manageusers_err_not_signed_in: 'Your sign-in has expired. Please sign in again and retry.',
+    manageusers_err_not_allowed: 'Only admins or HR can manage employee accounts.',
+    manageusers_err_not_found: 'This employee could not be found.',
+    manageusers_err_ban_failed: 'Saved, but blocking/unblocking sign-in failed. Please try again.',
     adminusers_deleted_toast: 'Account deleted',
     adminusers_restored_toast: 'Account restored',
 

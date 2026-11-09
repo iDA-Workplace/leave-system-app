@@ -11,6 +11,20 @@ import './Login.css'
 // 跟我們把密碼寫進 localStorage 是兩回事。
 const REMEMBERED_EMAIL_KEY = 'leave-system-remembered-email'
 
+// 被系統登出時要在登入頁說明原因（目前只有「帳號已停用」）。App.jsx 登出前寫入
+// 翻譯的 key，登入頁讀一次就清掉。
+export const LOGIN_NOTICE_KEY = 'leave-system-login-notice'
+
+function takeLoginNotice() {
+  try {
+    const key = sessionStorage.getItem(LOGIN_NOTICE_KEY)
+    sessionStorage.removeItem(LOGIN_NOTICE_KEY)
+    return key
+  } catch {
+    return null
+  }
+}
+
 /**
  * 登入頁：「品牌紅」版（使用者從 5 種風格裡挑的第 3 款）。
  *
@@ -22,7 +36,7 @@ function Login() {
   const [email, setEmail] = useState(() => localStorage.getItem(REMEMBERED_EMAIL_KEY) || '')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
-  const [error, setError] = useState('')
+  const [error, setError] = useState(() => { const key = takeLoginNotice(); return key ? t(key) : '' })
   const [showPassword, setShowPassword] = useState(false)
   // 上次有記住 email 的話，勾選框預設就是勾起來的，跟畫面上帶出來的 email 一致
   const [remember, setRemember] = useState(() => !!localStorage.getItem(REMEMBERED_EMAIL_KEY))
@@ -35,7 +49,9 @@ function Login() {
     const { error } = await supabase.auth.signInWithPassword({ email, password })
 
     if (error) {
-      setError(t('login_error'))
+      // 停用的帳號在後台被封鎖登入，Supabase 回 user_banned —— 要講清楚是「停用」，
+      // 不然本人會以為密碼打錯一直重試。
+      setError(error.code === 'user_banned' ? t('login_disabled') : t('login_error'))
       setLoading(false)
       return
     }

@@ -18,6 +18,15 @@ import './AdminPanel.css'
 const roleTone = { employee: 'neutral', deputy_supervisor: 'warning', supervisor: 'warning', boss: 'info' }
 const ASSIGNABLE_ROLES = ['employee', 'supervisor', 'boss']
 const DEFAULT_PASSWORD = 'Welcome@123'
+
+// manage-users 失敗時回的是代碼（例如 not_allowed），認得的翻成中文／英文；
+// 其他（例如 Supabase 回的原文錯誤）照原樣顯示。
+const MANAGE_USERS_CODES = ['not_signed_in', 'not_allowed', 'not_found', 'ban_failed']
+function manageUsersError(t, data, error) {
+  const code = data?.error || error?.message || ''
+  return MANAGE_USERS_CODES.includes(code) ? t(`manageusers_err_${code}`) : code
+}
+
 // Slack 成員 ID：U（一般成員）或 W（企業版）開頭，後面是大寫英文和數字。空白＝不設定。
 const SLACK_ID_RE = /^[UW][A-Z0-9]{6,}$/
 const isValidSlackId = (v) => !(v || '').trim() || SLACK_ID_RE.test((v || '').trim())
@@ -73,7 +82,7 @@ function UserManagement({ isAdmin, userProfile }) {
       password: DEFAULT_PASSWORD,
       hire_date: null
     })
-    if (error || data?.error) { showToast(t('adminusers_err_create', { msg: data?.error || error.message }), { tone: 'error' }); setSaving(false); return }
+    if (error || data?.error) { showToast(t('adminusers_err_create', { msg: manageUsersError(t, data, error) }), { tone: 'error' }); setSaving(false); return }
     if (data?.user?.id) {
       // .select() after .update() so a zero-row result is visible in
       // `updated` -- Postgres RLS silently reports success with 0 rows
@@ -122,7 +131,7 @@ function UserManagement({ isAdmin, userProfile }) {
       // field) keeps the edge function from treating it as "clear this".
       hire_date: editing.hire_date || null
     })
-    if (error || data?.error) { showToast(t('adminusers_err_update', { msg: data?.error || error.message }), { tone: 'error' }); setSaving(false); return }
+    if (error || data?.error) { showToast(t('adminusers_err_update', { msg: manageUsersError(t, data, error) }), { tone: 'error' }); setSaving(false); return }
     // .select() after .update() so a zero-row result is visible in
     // `updated` -- Postgres RLS silently reports success with 0 rows
     // affected when its policy excludes every targeted row, it does not
@@ -161,7 +170,7 @@ function UserManagement({ isAdmin, userProfile }) {
       is_active: !confirmToggle.is_active,
       hire_date: confirmToggle.hire_date || null
     })
-    if (error || data?.error) { showToast(t('adminusers_err_toggle', { msg: data?.error || error.message }), { tone: 'error' }); setSaving(false); return }
+    if (error || data?.error) { showToast(t('adminusers_err_toggle', { msg: manageUsersError(t, data, error) }), { tone: 'error' }); setSaving(false); return }
     setSaving(false)
     showToast(confirmToggle.is_active ? t('adminusers_deleted_toast') : t('adminusers_restored_toast'))
     setConfirmToggle(null)

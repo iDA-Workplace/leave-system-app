@@ -2,7 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 
-import Login from './pages/Login'
+import Login, { LOGIN_NOTICE_KEY } from './pages/Login'
 import Home from './pages/Home'
 import LeaveForm from './pages/LeaveForm'
 import MyLeaves from './pages/MyLeaves'
@@ -43,6 +43,14 @@ function App() {
     .eq('id', userId)
     .single()
   console.log('userProfile data:', data)
+  // 已停用（離職）的帳號：直接登出，登入頁顯示「帳號已停用」。
+  // 停用時後台也會封鎖登入（manage-users），這裡是第二道關卡：擋住封鎖前就已經
+  // 登入、還留著登入狀態的人。
+  if (data?.is_active === false) {
+    try { sessionStorage.setItem(LOGIN_NOTICE_KEY, 'login_disabled') } catch { /* 無痕模式等存不了就算了 */ }
+    await supabase.auth.signOut()
+    return
+  }
   setUserProfile(data)
   setLoading(false)
 }
