@@ -12,8 +12,13 @@
 --
 -- 用法：在「正式」專案的 SQL Editor
 --   1. 先只執行【步驟 1】，確認名單就是已刪除的那幾位
---   2. 再執行【步驟 2】
+--   2. 再把【步驟 2】那一行開頭的「-- 」拿掉，執行
 --   3. 再執行一次【步驟 1】，「封鎖到」那一欄應該都有日期了
+--
+-- ⚠️ 2026-11 出過事：步驟 2 原本拆成 5 行，說明卻寫「拿掉 4 行的 --」，照做的結果是
+--    最後一行「只封鎖已停用的人」沒有生效 → 所有人都被封鎖。現在步驟 2 寫成一行，
+--    條件跟指令在同一行，不會只拿掉一半。
+--    如果真的又全部被封鎖：執行最下面的【救援】那一行（只解除在職同仁的封鎖）。
 
 -- 【步驟 1】預覽：哪些人已停用、目前有沒有被封鎖
 select u.full_name   as 姓名,
@@ -24,9 +29,8 @@ select u.full_name   as 姓名,
  where u.is_active = false
  order by u.full_name;
 
--- 【步驟 2】封鎖登入
--- update auth.users a
---    set banned_until = now() + interval '100 years'
---   from public.users u
---  where u.id = a.id
---    and u.is_active = false;
+-- 【步驟 2】封鎖登入（只有一行；把開頭的「-- 」拿掉再執行）
+-- update auth.users a set banned_until = now() + interval '100 years' from public.users u where u.id = a.id and u.is_active = false;
+
+-- 【救援】在職同仁被誤封鎖時用：只解除在職同仁的封鎖（一行；把開頭的「-- 」拿掉再執行）
+-- update auth.users a set banned_until = null from public.users u where u.id = a.id and u.is_active = true;
