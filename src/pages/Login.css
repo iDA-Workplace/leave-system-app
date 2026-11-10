@@ -23,13 +23,17 @@
   font-family: 'Jost', var(--font-family-base);
 }
 
-/* 背景淡淡的 IDA 字形，只是裝飾 */
+/* 背景淡淡的 IDA 字形，只是裝飾（使用者決定的擺法）：
+ * - 整個 IDA 都要看得到（以前往左推出畫面，最左邊的 I 整根不見）
+ * - 左邊跟上方 Logo、下方「© iDA Workplace」對齊；底部跟「© iDA Workplace」那行字對齊
+ * - 大小同時看寬度和高度：取「畫面寬 70%」「1000px」「依畫面高度算出、不會碰到
+ *   上方 Logo 列的寬度」三者最小。900 / 327 是圖的寬高比；180px = 上方 Logo 列
+ *   約 100px + 底部 32px + 留白約 48px。 */
 .login-page__mark {
   position: absolute;
-  left: -6%;
-  bottom: -8%;
-  width: 78%;
-  max-width: 1180px;
+  left: clamp(24px, 4vw, 64px);
+  bottom: 32px;
+  width: min(70vw, 1000px, calc((100svh - 180px) * 900 / 327));
   height: auto;
   opacity: 0.16;
   pointer-events: none;
@@ -242,13 +246,39 @@
   color: var(--login-ink-soft);
 }
 
+/* ----- 比較矮的筆電（例如 1366×768、1280×720）-----
+ * 原本的間距整頁會比螢幕高、要往下捲。縮小留白讓整頁剛好塞進一個畫面；
+ * 860px 以上的螢幕不受影響。 */
+@media (min-width: 641px) and (max-height: 860px) {
+  .login-page__header { padding-top: 24px; padding-bottom: 24px; }
+  .login-page__main { padding-top: 8px; padding-bottom: 24px; }
+  .login-page__footer { padding-bottom: 24px; }
+  .login-card { padding: 36px 40px; gap: 22px; }
+  .login-page__mark {
+    bottom: 24px;
+    width: min(70vw, 1000px, calc((100svh - 130px) * 900 / 327));
+  }
+}
+
 /* ----- 手機 ----- */
 @media (max-width: 640px) {
   .login-page__header { padding: 28px 20px; }
   .login-page__eyebrow { font-size: 12px; }
   .login-page__main { justify-content: center; padding: 8px 16px 40px; }
   .login-page__footer { padding: 0 20px 24px; }
-  .login-page__mark { width: 130%; left: -20%; bottom: -4%; }
+  /* 卡片和「© iDA Workplace」之間，那行字的正上方（使用者指定的位置與大小） */
+  .login-page__mark { width: 150px; left: 20px; bottom: 46px; }
   .login-card { padding: 36px 24px; gap: 24px; }
   .login-card__title { font-size: 28px; }
+}
+
+/* ----- 比較矮的手機（畫面高 740px 以下，例如 iPhone SE）-----
+ * 卡片下面沒有空間放 Logo，就不顯示（使用者決定），只留「© iDA Workplace」；
+ * 間距也縮小，讓整頁剛好塞進一個畫面、不用捲就看得到那行字。 */
+@media (max-width: 640px) and (max-height: 740px) {
+  .login-page__mark { display: none; }
+  .login-page__header { padding-top: 20px; padding-bottom: 16px; }
+  .login-page__main { padding-bottom: 20px; }
+  .login-page__footer { padding-bottom: 16px; }
+  .login-card { padding: 28px 24px; gap: 20px; }
 }
