@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/fetchAllRows'
-import { computeLeaveStats } from '../lib/leaveStats'
+import { computeLeaveStats, leaveDayParts } from '../lib/leaveStats'
 import { leaveTypeName, HOURS_PER_DAY } from '../lib/leaveEntitlements'
 import { Button, Card, EmptyState, Select, Skeleton } from './ui'
 import { useLanguage } from '../context/LanguageContext'
@@ -31,19 +31,28 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
       setState(s => ({ ...s, loading: true, error: null }))
       let usersQ = supabase.from('users').select('id, full_name, department, manager_id').eq('is_active', true).order('full_name')
       if (managerId) usersQ = usersQ.eq('manager_id', managerId)
-      const [usersRes, leavesRes, summaryRes, typesRes, overridesRes] = await Promise.all([
+      const year = new Date().getFullYear()
+      const [usersRes, leavesRes, summaryRes, typesRes, overridesRes, annualLeavesRes] = await Promise.all([
         usersQ,
         // 分批讀：整年、全公司的假單很容易超過 1000 筆
         fetchAllRows(() => supabase.from('leave_requests')
           .select('id, requester_id, proxy_user_id, registered_by, disputed_at, hours, start_date, end_date, status, leave_type:leave_types(id, name, name_en, is_wfh, is_annual)')
           .eq('status', 'approved').lte('start_date', endDate).gte('end_date', startDate)
           .order('start_date').order('id')),
-        supabase.from('annual_leave_summary').select('user_id, entitled_days, used_days'),
+        supabase.from('annual_leave_summary').select('user_id, entitled_days'),
         supabase.from('leave_types').select('id, name, name_en, is_annual, is_wfh').order('id'),
         fetchAllRows(() => supabase.from('user_leave_entitlements').select('user_id, leave_type_id, mode, quota_hours').eq('mode', 'manual').order('user_id')),
+        // 特休已用：統計只算「已核准」（使用者 2026-11 決定）。annual_leave_summary 的 used_days
+        // 連審核中的也算（那是給同仁看餘額用的），所以這裡自己算；年度區間、天數算法跟那個 view 一樣：
+        // 今年開始的特休假單，有時數 → 時數 ÷ 8，沒時數 → 數週一～週五。
+        fetchAllRows(() => supabase.from('leave_requests')
+          .select('id, requester_id, hours, start_date, end_date, leave_type:leave_types!inner(is_annual)')
+          .eq('status', 'approved').eq('leave_type.is_annual', true)
+          .gte('start_date', `${year}-01-01`).lte('start_date', `${year}-12-31`)
+          .order('id')),
       ])
       if (cancelled) return
-      const error = usersRes.error || leavesRes.error
+      const error = usersRes.error || leavesRes.error || annualLeavesRes.error
       if (error) { setState({ loading: false, error: error.message, data: null }); return }
 
       // 特休：HR 在「員工假期管理」手動調整過的，以調整後的天數為準（跟首頁、假單管理一致）
@@ -51,10 +60,15 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
       const overrides = new Map((overridesRes.data || [])
         .filter(o => o.leave_type_id === annualTypeId && o.quota_hours != null)
         .map(o => [o.user_id, Number(o.quota_hours) / HOURS_PER_DAY]))
+      const approvedAnnual = new Map()
+      for (const lr of annualLeavesRes.data || []) {
+        const days = leaveDayParts(lr).reduce((s, x) => s + x.days, 0)
+        approvedAnnual.set(lr.requester_id, (approvedAnnual.get(lr.requester_id) ?? 0) + days)
+      }
       const annual = (summaryRes.data || []).map(r => ({
         user_id: r.user_id,
         entitled: overrides.get(r.user_id) ?? r.entitled_days,
-        used: r.used_days,
+        used: approvedAnnual.get(r.user_id) ?? 0,
       }))
 
       // 假別顏色：照假別建立的順序固定給色（換期間也不會變色）；前 7 個各一色，其餘歸「其他」
