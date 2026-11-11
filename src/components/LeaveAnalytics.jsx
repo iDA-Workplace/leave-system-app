@@ -274,6 +274,9 @@ function PersonDetail({ stats, typeLabel, dept, pct, t }) {
         <Tile label={t('stats_col_count')} value={p.count} unit={t('stats_unit_count')} />
         <Tile label={t('stats_col_wfh')} value={p.wfhDays} unit={t('stats_unit_days')} />
         <Tile label={t('stats_col_proxy')} value={p.proxyCount} unit={t('stats_unit_times')} />
+        {/* 12 HR 代登、提出異議（使用者 2026-11 要求放在個人請假狀況裡） */}
+        <Tile label={t('stats_col_hr_registered')} value={p.hrRegistered} unit={t('stats_unit_times')} />
+        <Tile label={t('stats_col_disputed')} value={p.disputed} unit={t('stats_unit_times')} />
       </div>
       {annual && (
         <p className="stats__card-sub">{t('stats_person_annual', { entitled: annual.entitled, used: annual.used, remaining: annual.remaining, pct: pct(annual.rate) })}</p>
