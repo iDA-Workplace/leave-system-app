@@ -1094,8 +1094,13 @@ function handleEvent(db: SupabaseClient, body: Record<string, any>) {
     // 這裡還不知道對方是誰（要等 resolveUser 才知道），所以用哪個語言回覆
     // 只能先看對方打字用的是中文關鍵字還是英文關鍵字來猜；已知身分之後的
     // replyWithBalance 內部會再改用 me.language 為準。
+    // 「名單」排最前面：打「按摩名單」「抽籤名單」的人要的是名單（使用者要求的關鍵字）
     // 「抽籤」要排在「按摩」前面：打「按摩抽籤」的人要的是抽籤
-    if (text.includes('抽籤')) {
+    if (text.includes('名單')) {
+      background(replyRoster(db, event, 'zh'))
+    } else if (/\broster\b/.test(lower)) {
+      background(replyRoster(db, event, 'en'))
+    } else if (text.includes('抽籤')) {
       background(replyDraw(db, event, 'zh'))
     } else if (/\bdraw\b/.test(lower)) {   // 用整個字比對，不然 withdraw 也會中
       background(replyDraw(db, event, 'en'))
@@ -1863,6 +1868,15 @@ const MT = {
 
     card_text: '💆 按摩預約',
     card_empty: '💆 目前沒有開放中的按摩預約。開放報名時會在頻道公告。',
+    roster_text: '💆 這個月的按摩名單',
+    roster_none: '💆 這個月（{m} 月）沒有按摩。',
+    roster_heading: '💆 *{title}*\n{date} {from}–{to}',
+    roster_signups_h: '*報名名單（{k} 人）*',
+    roster_no_signups: '還沒有人報名',
+    roster_slots_h: '*時段表*',
+    roster_waitlist_h: '*候補*',
+    roster_empty_slot: '（空）',
+    roster_you: '（你）',
     draw_text: '💆 需要抽籤的期數',
     draw_heading: '💆 *需要抽籤的期數*',
     draw_line: '*{title}*（{date} {from}–{to}）\n報名 {k} 人／名額 {n} 位',
@@ -1978,6 +1992,15 @@ const MT = {
 
     card_text: '💆 Massage booking',
     card_empty: '💆 There is no massage booking open right now. New sessions are announced in the channel.',
+    roster_text: "💆 This month's massage lists",
+    roster_none: '💆 There is no massage this month.',
+    roster_heading: '💆 *{title}*\n{date} {from}–{to}',
+    roster_signups_h: '*Sign-ups ({k})*',
+    roster_no_signups: 'No one has signed up yet',
+    roster_slots_h: '*Schedule*',
+    roster_waitlist_h: '*Waitlist*',
+    roster_empty_slot: '(empty)',
+    roster_you: ' (you)',
     draw_text: '💆 Sessions waiting for the draw',
     draw_heading: '💆 *Sessions waiting for the draw*',
     draw_line: '*{title}* ({date} {from}–{to})\n{k} signed up / {n} spots',
@@ -2313,6 +2336,64 @@ async function massageListBlocks(db: SupabaseClient, lang: Lang, sessionId: stri
 }
 
 // ---- 打「按摩」 ----
+
+/**
+ * 私訊打「名單」（使用者要求）：列出「這個月」每一期的按摩名單（一個月開兩次就兩期都列）。
+ * 跟網頁上大家都看得到的名單一樣：還沒抽籤 → 報名名單（依報名先後）；抽過籤 → 時段表＋候補。
+ * 所有同仁都可以用。
+ */
+async function replyRoster(db: SupabaseClient, event: Record<string, any>, fallbackLang: Lang) {
+  const me = await resolveUser(db, event.user)
+  if (!me) {
+    await callSlack('chat.postMessage', {
+      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: [section(t(fallbackLang, 'no_account_heading'))],
+    })
+    return
+  }
+  const lang = normalizeLang(me.language)
+  const [y, m] = mTaipeiToday().split('-').map(Number)
+  const first = `${y}-${String(m).padStart(2, '0')}-01`
+  const next = m === 12 ? `${y + 1}-01-01` : `${y}-${String(m + 1).padStart(2, '0')}-01`
+  const { data } = await db.from('massage_sessions').select(M_SESSION_COLS)
+    .gte('session_date', first).lt('session_date', next).order('session_date').order('start_time')
+  const sessions = (data ?? []) as MSession[]
+  if (sessions.length === 0) {
+    const none = mt(lang, 'roster_none', { m })
+    await callSlack('chat.postMessage', { channel: event.channel, text: none, blocks: [section(none)] })
+    return
+  }
+
+  type Row = { id: string; user_id: string; signed_up_at: string; draw_rank: number | null; slot_no: number | null; user: { full_name: string } | null }
+  const blocks: unknown[] = []
+  for (const s of sessions) {
+    const { data: rows } = await db.from('massage_signups')
+      .select('id, user_id, signed_up_at, draw_rank, slot_no, user:users!massage_signups_user_id_fkey(full_name)')
+      .eq('session_id', s.id).is('released_at', null)
+    const active = (rows ?? []) as unknown as Row[]
+    const name = (g: Row) => `${g.user?.full_name ?? '—'}${g.user_id === me.id ? mt(lang, 'roster_you') : ''}`
+    const lines = [mt(lang, 'roster_heading', { title: s.title, date: mDate(lang, s.session_date), ...mWindow(s) })]
+    if (!s.drawn_at) {
+      const list = [...active].sort((a, b) => a.signed_up_at.localeCompare(b.signed_up_at))
+      lines.push(mt(lang, 'roster_signups_h', { k: list.length }))
+      lines.push(list.length ? list.map((g, i) => `${i + 1}. ${name(g)}`).join('\n') : mt(lang, 'roster_no_signups'))
+    } else {
+      lines.push(mt(lang, 'roster_slots_h'))
+      lines.push(Array.from({ length: s.slot_count }, (_, i) => i + 1).map(n => {
+        const g = active.find(x => x.slot_no === n)
+        return `\`${mSlotRange(s, n).from}\` ${g ? name(g) : mt(lang, 'roster_empty_slot')}`
+      }).join('\n'))
+      const waitlist = active.filter(g => !g.slot_no && g.draw_rank != null)
+        .sort((a, b) => (a.draw_rank ?? 0) - (b.draw_rank ?? 0))
+      if (waitlist.length) {
+        lines.push(mt(lang, 'roster_waitlist_h'))
+        lines.push(waitlist.map((g, i) => `${i + 1}. ${name(g)}`).join('\n'))
+      }
+    }
+    if (blocks.length) blocks.push({ type: 'divider' })
+    blocks.push(section(lines.join('\n')))
+  }
+  await callSlack('chat.postMessage', { channel: event.channel, text: mt(lang, 'roster_text'), blocks })
+}
 
 async function replyMassage(db: SupabaseClient, event: Record<string, any>, fallbackLang: Lang) {
   const me = await resolveUser(db, event.user)
