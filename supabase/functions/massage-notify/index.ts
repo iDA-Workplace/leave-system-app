@@ -19,7 +19,9 @@
 // a. 過期的遞補邀請 → 改問下一位（massage_expire_offers）
 // b. 還沒發過通知的異動紀錄，依種類：
 //      drawn             → 抽籤結果公告到頻道（SLACK_LEAVE_CHANNEL）
-//      draw_result       → 被詢問「要不要讓給候補」的人：私訊，附兩顆按鈕
+//      draw_result       → 每位報名者一則私訊（使用者決定：抽中、候補都發，不抽籤也發）：
+//                          抽中 → 時段＋「釋出名額」；候補 → 第幾位；
+//                          被詢問「要不要讓給候補」的人 → 只發那一則（已寫明時段，附兩顆按鈕）
 //      released          → 抽籤後有人釋出時段（任何管道）：私訊負責人，寫明是誰、哪個時段、
 //                          一般取消／逾期取消（記為未到）／讓給候補，以及接著邀請了誰（使用者決定）
 //      offered           → 被邀請遞補的候補：私訊，附「我要」；同時私訊負責人
@@ -109,6 +111,14 @@ const T = {
     drawn_waitlist_h: '*候補*（依順位）',
     drawn_footer: '時段跟會議衝突的話，請自行跟其他同仁協調交換，換好後告訴負責人。無法出席請在 {deadline} 前取消，之後才取消視同未到。',
 
+    draw_won_text: '🎉 你抽中按摩了！',
+    draw_won_heading: '🎉 *{title}*（{date}）抽籤結果：你抽中了！\n你的{slot}。',
+    draw_assigned_text: '💆 你的按摩時段',
+    draw_assigned_heading: '💆 *{title}*（{date}）報名人數沒有超過名額，不用抽籤。\n你的{slot}。',
+    draw_won_note: '不能來請盡早按下方「釋出名額」，讓候補的同仁遞補；請勿私下轉讓。時段開始前 10 分鐘會再提醒你。',
+    draw_wait_text: '💆 按摩抽籤結果：候補',
+    draw_wait_heading: '💆 *{title}*（{date}）抽籤結果：這次沒抽中，你是*候補第 {n} 位*。',
+    draw_wait_note: '有人釋出名額時，系統會依候補順序私訊通知你，請留意 Slack。',
     yield_text: '💆 要不要把按摩名額讓給候補？',
     yield_heading: '💆 *{title}*（{date}）你的{slot}。\n你上一期已經按過摩囉！這期也很幸運地抽中了 🎉 如果你願意，可以把名額讓給還在候補、還沒按到的同仁，讓更多人有機會體驗。要不要讓完全由你決定，選擇保留也完全沒問題。',
     btn_yield_keep: '這次我想保留',
@@ -252,6 +262,14 @@ const T = {
     drawn_waitlist_h: '*Waitlist* (in order)',
     drawn_footer: 'If your slot clashes with a meeting, swap with a colleague and let the organizer know. If you cannot make it, cancel before {deadline}; cancelling after that counts as a no-show.',
 
+    draw_won_text: '🎉 You got a massage spot!',
+    draw_won_heading: '🎉 *{title}* ({date}) draw result: you got a spot!\nYour {slot}.',
+    draw_assigned_text: '💆 Your massage slot',
+    draw_assigned_heading: '💆 *{title}* ({date}): sign-ups did not exceed the spots, so there was no draw.\nYour {slot}.',
+    draw_won_note: "If you can't make it, please tap \"Release spot\" below as early as possible so someone on the waitlist can take it. Please don't hand it over privately. You'll get a reminder 10 minutes before your slot.",
+    draw_wait_text: '💆 Massage draw result: waitlist',
+    draw_wait_heading: '💆 *{title}* ({date}) draw result: no spot this time — you are *#{n} on the waitlist*.',
+    draw_wait_note: "When someone releases a spot, the system will DM people on the waitlist in order. Keep an eye on Slack.",
     yield_text: '💆 Would you give your massage spot to the waitlist?',
     yield_heading: "💆 *{title}* ({date}): your {slot}.\nYou had a massage last time, and you got lucky again this time 🎉 If you'd like, you can give this spot to a colleague on the waitlist who hasn't had one yet, so more people get a chance. It's entirely your call — keeping it is completely fine too.",
     btn_yield_keep: "I'd like to keep it",
@@ -674,7 +692,7 @@ async function handleEvent(ctx: Ctx, e: MassageEvent) {
   if (!e.session_id) return
   switch (e.event) {
     case 'drawn': await announceDraw(ctx, e); break
-    case 'draw_result': if (e.details?.yield_asked) await askYield(ctx, e); break
+    case 'draw_result': await notifyDrawResult(ctx, e); break
     case 'released': await notifyOwnerReleased(ctx, e); if (e.details?.held) await sendCancelReleaseDm(ctx, e); break
     case 'releases_opened': await notifyReleasesOpened(ctx, e); break
     case 'offered': await notifyOffer(ctx, e); break
@@ -784,6 +802,52 @@ async function announceDraw(ctx: Ctx, e: MassageEvent) {
   if (waitlist.length) blocks.push(section(`${t(lang, 'drawn_waitlist_h')}\n${waitlist.join('\n')}`))
   blocks.push(contextLine(t(lang, 'drawn_footer', { deadline: fmtDateTime(lang, s.cancel_deadline) })))
   await postChannel(t(lang, 'drawn_text', { title: s.title }), blocks)
+}
+
+/**
+ * 抽籤結果私訊（使用者決定）：抽中的人＋候補的人都發；人數沒超過名額（不抽籤）也發。
+ *   · 抽中：時段＋「釋出名額」按鈕
+ *   · 候補：第幾位
+ *   · 被問「要不要讓給候補」的人：只發那一則（裡面已經寫了他的時段）＝ 合併成一則
+ */
+async function notifyDrawResult(ctx: Ctx, e: MassageEvent) {
+  if (e.details?.yield_asked) { await askYield(ctx, e); return }
+  const s = await ctx.session(e.session_id!)
+  const p = await ctx.person(e.user_id)
+  if (!s || !p?.slack_user_id || !e.signup_id) return
+  // 處理到這筆時可能已經釋出了（例如網頁上秒按），就不用再發
+  const { data: g } = await ctx.db.from('massage_signups')
+    .select('slot_no, released_at').eq('id', e.signup_id).maybeSingle()
+  if (!g || g.released_at) return
+  const lang = normalizeLang(p.language)
+  const date = fmtDate(lang, s.session_date)
+
+  // 同一期每個人的抽籤結果（判斷有沒有抽籤、候補排第幾）
+  const { data: results } = await ctx.db.from('massage_events')
+    .select('details').eq('session_id', s.id).eq('event', 'draw_result')
+  const all = (results ?? []).map(r => r.details ?? {})
+
+  if (e.details?.result === 'selected') {
+    const slot = g.slot_no ?? e.slot_no
+    const lottery = all.some(d => d.result !== 'selected')
+    const blocks: unknown[] = [
+      section(t(lang, lottery ? 'draw_won_heading' : 'draw_assigned_heading',
+        { title: s.title, date, slot: slot ? slotText(lang, s, slot) : '—' })),
+      contextLine(t(lang, 'draw_won_note')),
+    ]
+    if (slot && Date.now() < new Date(`${s.session_date}T${slotRange(s, slot).from}:00+08:00`).getTime()) {
+      blocks.push({ type: 'actions', elements: [button(t(lang, 'btn_release'), 'massage_release', e.signup_id,
+        { style: 'danger', confirm: releaseConfirm(lang, s) })] })
+    }
+    await dm(ctx, p, t(lang, lottery ? 'draw_won_text' : 'draw_assigned_text'), blocks)
+  } else {
+    const myRank = Number(e.details?.rank ?? 0)
+    const n = all.filter(d => d.result !== 'selected' && Number(d.rank ?? 0) < myRank).length + 1
+    await dm(ctx, p, t(lang, 'draw_wait_text'), [
+      section(t(lang, 'draw_wait_heading', { title: s.title, date, n })),
+      contextLine(t(lang, 'draw_wait_note')),
+    ])
+  }
 }
 
 async function askYield(ctx: Ctx, e: MassageEvent) {
