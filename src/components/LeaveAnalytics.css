@@ -155,27 +155,7 @@
   .stats__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
-/* 圖例 */
-.stats__legend { list-style: none; margin: var(--space-200) 0 0; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 16px;
-  font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base); color: var(--sys-color-on-surface-variant); }
-.stats__legend li { display: inline-flex; align-items: center; gap: 6px; }
-.stats__swatch { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
-
-/* A：每人一條、依假別分色。段與段之間留 2px 縫（看得出邊界，不只靠顏色） */
-.stats__stack { list-style: none; margin: var(--space-200) 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-.stats__stack li {
-  display: grid;
-  grid-template-columns: minmax(64px, 7em) minmax(0, 1fr) 4.5em;
-  align-items: center;
-  gap: 10px;
-  font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base);
-}
-.stats__stack-track { display: flex; gap: 2px; height: 14px; min-width: 4px; }
-.stats__stack-seg { display: block; height: 100%; min-width: 2px; }
-.stats__stack-seg:last-child { border-radius: 0 4px 4px 0; }
-.stats__stack li > .stats__bar-value { text-align: right; }
-
-/* C：選一位同仁 */
+/* 個人請假狀況：選一位同仁 */
 .stats__person-head { display: flex; justify-content: space-between; align-items: center; gap: var(--space-200); flex-wrap: wrap; }
 .stats__person-pick { min-width: 220px; }
 .stats__tiles--small { margin-top: var(--space-200); }

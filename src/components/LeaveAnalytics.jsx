@@ -201,12 +201,7 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
             </Card>
           </div>
 
-          {/* 2 每人統計：A 全部人一起比（依假別分色）、C 選一位看個人 */}
-          <Card>
-            <h3 className="stats__card-title">{t('stats_s_people_chart')}</h3>
-            <p className="stats__card-sub">{t('stats_people_chart_sub')}</p>
-            <PeopleStack stats={stats} typeLabel={typeLabel} t={t} />
-          </Card>
+          {/* 2 個人請假狀況：選一位同仁看他的圖表 */}
           <PersonDetail stats={stats} typeLabel={typeLabel} dept={dept} pct={pct} t={t} />
 
           {/* 2 每人統計表（含 12 HR 代登、異議） */}
@@ -284,75 +279,7 @@ function typeColor(slot) {
   return `var(--viz-type-${slot})`
 }
 
-/** 圖例：只列這次資料裡有出現的假別，順序跟顏色順序一致；「其他」放最後 */
-function Legend({ items }) {
-  return (
-    <ul className="stats__legend">
-      {items.map(it => (
-        <li key={it.key}><span className="stats__swatch" style={{ background: typeColor(it.slot) }} />{it.label}</li>
-      ))}
-    </ul>
-  )
-}
-
-function legendItems(stats, typeLabel, t) {
-  const seen = new Map()
-  for (const x of stats.byType) {
-    const slot = stats.typeSlot(x.id)
-    if (slot === 'other') {
-      const o = seen.get('other') ?? { key: 'other', slot: 'other', names: [] }
-      o.names.push(typeLabel(x.type))
-      seen.set('other', o)
-    } else {
-      seen.set(x.id, { key: x.id, slot, label: typeLabel(x.type) })
-    }
-  }
-  const items = [...seen.values()].filter(x => x.slot !== 'other').sort((a, b) => a.slot - b.slot)
-  const other = seen.get('other')
-  if (other) items.push({ key: 'other', slot: 'other', label: t('stats_other_types', { names: other.names.join('、') }) })
-  return items
-}
-
-/** A：每人一條、依假別分色（堆疊橫條）；條尾寫總天數，滑過每一段顯示假別與天數 */
-function PeopleStack({ stats, typeLabel, t }) {
-  const rows = stats.perPerson.filter(p => p.days > 0)
-  const max = Math.max(0, ...rows.map(p => p.days))
-  const names = new Map(stats.byType.map(x => [x.id, typeLabel(x.type)]))
-  return (
-    <>
-      <Legend items={legendItems(stats, typeLabel, t)} />
-      <ul className="stats__stack">
-        {rows.map(p => {
-          // 同一個「其他」顏色的假別併成一段，順序照顏色順序
-          const segs = new Map()
-          for (const [id, days] of Object.entries(p.byType)) {
-            const slot = stats.typeSlot(id)
-            const seg = segs.get(slot) ?? { slot, days: 0, parts: [] }
-            seg.days += days
-            seg.parts.push(`${names.get(id) ?? id} ${days}`)
-            segs.set(slot, seg)
-          }
-          const ordered = [...segs.values()].sort((a, b) => (a.slot === 'other') - (b.slot === 'other') || a.slot - b.slot)
-          return (
-            <li key={p.user.id}>
-              <span className="stats__bar-label">{p.user.full_name}</span>
-              <span className="stats__stack-track" style={{ width: `${(p.days / max) * 100}%` }}>
-                {ordered.map(seg => (
-                  <span key={seg.slot} className="stats__stack-seg"
-                    style={{ flexGrow: seg.days, background: typeColor(seg.slot) }}
-                    title={`${p.user.full_name}・${seg.parts.join('、')} ${t('stats_unit_days')}`} />
-                ))}
-              </span>
-              <span className="stats__bar-value">{p.days} {t('stats_unit_days')}</span>
-            </li>
-          )
-        })}
-      </ul>
-    </>
-  )
-}
-
-/** C：選一位同仁，看他每個月請了幾天、請了哪些假 */
+/** 個人請假狀況：選一位同仁，看他每個月請了幾天、請了哪些假 */
 function PersonDetail({ stats, typeLabel, dept, pct, t }) {
   const people = [...stats.perPerson].sort((a, b) => (a.user.full_name || '').localeCompare(b.user.full_name || ''))
   const [picked, setPicked] = useState(null)
