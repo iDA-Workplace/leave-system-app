@@ -154,6 +154,9 @@ const T = {
     open_slot_full: '~{slot}~ 已額滿',
     open_slots_all_full: '💆 *{title}*（{date}）的空位名額已滿，謝謝大家的關注 🙏',
     open_slots_tag: '{mentions}\n有空位囉！有興趣的同仁請點上方訊息的「報名」，先按先得 🙌',
+    test_label_channel: '🧪 *測試模式*｜這則只發到測試頻道，不會通知任何同仁',
+    test_label_dm: '🧪 *測試模式*｜這則原本要私訊給 *{name}*，改發給你（負責人）。下面的按鈕是以你的身分操作，不一定能用',
+    test_tag_list: '🧪 *測試模式*｜沒有真的 tag 任何人。正式上線後會 tag 這些同仁：{names}',
     owner_released_yield: '自願讓給候補（上一期有按到），不算未到。',
     owner_released_offered: '系統已邀請候補 *{name}* 遞補。',
     owner_released_no_waitlist: '目前沒有候補可以邀請，這個時段空著；可以到現場面板用「編輯」補人。',
@@ -294,6 +297,9 @@ const T = {
     open_slot_full: '~{slot}~ taken',
     open_slots_all_full: '💆 *{title}* ({date}): the open spots are all taken. Thanks for your interest 🙏',
     open_slots_tag: '{mentions}\nSpots are open! If you are interested, tap "Sign up" in the message above — first come, first served 🙌',
+    test_label_channel: '🧪 *Test mode* | Posted to the test channel only; no one is notified',
+    test_label_dm: '🧪 *Test mode* | This DM was meant for *{name}* and was sent to you (the owner) instead. Buttons act as you and may not work',
+    test_tag_list: '🧪 *Test mode* | No one was tagged. Once live, these people will be tagged: {names}',
     owner_released_yield: 'Gave it to the waitlist voluntarily (had a massage last time) — not a no-show.',
     owner_released_offered: 'The system offered it to *{name}* from the waitlist.',
     owner_released_no_waitlist: 'Nobody is on the waitlist, so the slot is empty; you can add someone with "Edit" in the live panel.',
@@ -471,6 +477,19 @@ const confirm = (lang: Lang, title: MsgKey, text: MsgKey, ok: string) => ({
  * 私訊按摩負責人請他更正（使用者決定）；同一個人的同一個錯誤 ID 只提醒一次。
  */
 async function dm(ctx: Ctx, p: Person, text: string, blocks: unknown[]) {
+  // 測試模式：給同仁的私訊一律改發給負責人，註明原本要給誰（使用者決定：選項 B）
+  if (TEST.on && p.id !== TEST.owner?.id) {
+    const owner = TEST.owner
+    if (!owner?.slack_user_id) {
+      console.log(`測試模式：原本要私訊 ${p.full_name}，沒有負責人可以轉發，略過`)
+      return { ok: true, skipped: true }   // 當作送到了：不要讓「時間到才發」的私訊一直重試
+    }
+    const lang = normalizeLang(owner.language)
+    return callSlack('chat.postMessage', {
+      channel: owner.slack_user_id, text: `🧪 ${text}`,
+      blocks: [contextLine(t(lang, 'test_label_dm', { name: p.full_name })), ...blocks],
+    })
+  }
   const res = await callSlack('chat.postMessage', { channel: p.slack_user_id, text, blocks })
   if (!res.ok && BAD_SLACK_ID_ERRORS.includes(res.error)) await reportBadSlackId(ctx, p, text)
   return res
@@ -497,9 +516,34 @@ async function reportBadSlackId(ctx: Ctx, p: Person, missed: string) {
   })
 }
 function postChannel(text: string, blocks: unknown[]) {
+  // 測試模式：只發到測試頻道；沒填測試頻道 → 改私訊負責人；兩個都沒有就不發
+  if (TEST.on) {
+    const target = TEST.channel ?? TEST.owner?.slack_user_id ?? null
+    if (!target) { console.log('測試模式：沒有測試頻道也沒有負責人，頻道公告略過'); return null }
+    return callSlack('chat.postMessage', {
+      channel: target, text: `🧪 ${text}`,
+      blocks: [contextLine(t(channelLang(), 'test_label_channel')), ...blocks],
+    })
+  }
   const channel = Deno.env.get('SLACK_LEAVE_CHANNEL')
   if (!channel) { console.error('沒有設定 SLACK_LEAVE_CHANNEL，頻道公告略過'); return null }
   return callSlack('chat.postMessage', { channel, text, blocks })
+}
+
+// ===== 測試模式 =====
+// 上線前在正式站測試用（使用者決定：選項 B）。開關在網頁「管理後台 → 員工福利設定」，
+// 存在 massage_settings.test_mode / test_channel（migration 20261111_massage_test_mode.sql）。
+// 開著的時候：頻道公告只發到測試頻道、給同仁的私訊改發給負責人、空位討論串不 tag 人。
+// 每次執行開頭讀一次（loadTestMode）。讀不到設定（例如 migration 還沒跑）一律當成「開著」——
+// 寧可少發，也不要不小心通知到全公司。
+interface TestMode { on: boolean; channel: string | null; owner: Person | null }
+let TEST: TestMode = { on: true, channel: null, owner: null }
+
+async function loadTestMode(ctx: Ctx) {
+  const { data, error } = await ctx.db.from('massage_settings').select('test_mode, test_channel').maybeSingle()
+  if (error) console.error('讀取測試模式設定失敗，當作測試模式處理：', error.message)
+  const on = error ? true : data?.test_mode !== false
+  TEST = { on, channel: on ? (data?.test_channel || null) : null, owner: on ? await ctx.owner() : null }
 }
 
 // ===== 資料 =====
@@ -554,8 +598,9 @@ Deno.serve(async req => {
     const db = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!,
       { auth: { persistSession: false } })
     const ctx = new Ctx(db)
+    await loadTestMode(ctx)
     const body = await req.json().catch(() => ({}))
-    const summary: Record<string, unknown> = {}
+    const summary: Record<string, unknown> = { test_mode: TEST.on }
 
     if (body?.type === 'leave_reminder' && body.leave_id) {
       summary.leave_reminder = await leaveReminder(ctx, req, String(body.leave_id))
@@ -953,12 +998,13 @@ async function broadcastOpenSlots(ctx: Ctx, events: MassageEvent[]) {
 
     const { data: people, error: pErr } = await ctx.db.rpc('massage_open_slot_recipients', { p_session_id: s.id, p_slots: slots })
     if (pErr) { console.error('massage_open_slot_recipients 失敗：', pErr.message); continue }
-    const mentions = ((people ?? []) as { slack_user_id: string }[]).map(p => `<@${p.slack_user_id.trim()}>`)
-    if (!mentions.length) continue
-    await callSlack('chat.postMessage', {
-      channel: res.channel, thread_ts: res.ts,
-      text: t(lang, 'open_slots_tag', { mentions: mentions.join(' ') }),
-    })
+    const list = (people ?? []) as { slack_user_id: string; full_name: string }[]
+    if (!list.length) continue
+    // 測試模式：不 tag（tag 就會通知到本人），只列出名字讓負責人確認名單對不對
+    const text = TEST.on
+      ? t(lang, 'test_tag_list', { names: list.map(p => p.full_name).join('、') })
+      : t(lang, 'open_slots_tag', { mentions: list.map(p => `<@${p.slack_user_id.trim()}>`).join(' ') })
+    await callSlack('chat.postMessage', { channel: res.channel, thread_ts: res.ts, text })
   }
 }
 

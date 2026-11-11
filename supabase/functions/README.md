@@ -466,3 +466,21 @@ curl -X POST 'https://<ref>.supabase.co/functions/v1/massage-notify' \
 - **Verify JWT 要關掉**：理由同 `admin-reset-password`，身分檢查在函式裡做。
 - 以前就停用的同仁要另外跑一次 `../maintenance/ban_inactive_users.sql` 補封鎖。
 - 每次新增、停用、恢復都會在 Logs 留一行「誰對誰做了什麼」。
+
+## 按摩通知：測試模式（2026-11）
+
+上線前在正式站測試按摩時，「尚有名額」討論串 tag 到了全公司同仁（正式資料庫就是真實同仁的 Slack ID）。
+所以加了「測試模式」（使用者決定：選項 B）：
+
+- **開關**：網頁「管理後台 → 員工福利設定 → 按摩通知：測試模式」，存在 `massage_settings.test_mode / test_channel`
+  （`migrations/20261111_massage_test_mode.sql`，**跑完就是開著**）。關掉時會再確認一次。
+- **開著時 `massage-notify` 的行為**：頻道公告只發到測試頻道（沒填 → 私訊負責人）並標 🧪；給同仁的私訊改發給負責人、
+  註明原本要給誰；「尚有名額」討論串不 tag，只列出名字。讀不到設定（例如 migration 還沒跑）一律當成開著。
+- `slack-interactions` 不用改：它只回覆「正在操作的那個人」，不會主動通知別人。
+- **部署順序**：先跑 migration，再部署 `massage-notify`。
+
+## 改了 massage-notify 之後怎麼確認訊息發去哪裡
+
+不需要真的 Slack：用假的 Supabase 與假的 Slack 執行一次 `massage-notify`、列出每一則訊息的目的地，
+三種情況（測試模式＋測試頻道、測試模式沒填頻道、正式）都要跑。2026-11 的測試腳本在對話紀錄裡，
+概念是：攔下 `fetch`（slack.com 回 ok、Supabase 回假資料）、攔下 `Deno.serve` 拿到處理函式，再呼叫一次。
