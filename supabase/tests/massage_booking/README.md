@@ -36,6 +36,10 @@ psql -d mt -f supabase/migrations/20261023_massage_realtime.sql
 psql -d mt -f supabase/migrations/20261025_massage_announcements.sql
 psql -d mt -f supabase/migrations/20261026_massage_release_hold.sql
 psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/60_release_hold_tests.sql
+
+# 按摩通知測試模式的開關（20261111_massage_test_mode.sql），10 項；只需要 00_stub＋20261019，不用接 10_tests
+psql -d mt -f supabase/migrations/20261111_massage_test_mode.sql
+psql -d mt -v ON_ERROR_STOP=1 -f supabase/tests/massage_booking/70_test_mode_tests.sql
 ```
 
 每支測試最後的兩個查詢都會列出每一項的結果與「N / N 通過」。

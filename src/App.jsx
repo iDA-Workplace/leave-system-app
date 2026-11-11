@@ -19,6 +19,12 @@ function App() {
   const [session, setSession] = useState(null)
   const [userProfile, setUserProfile] = useState(null)
   const [loading, setLoading] = useState(true)
+  // 「哪一個帳號的個人資料已經讀完了」。剛登入的那一刻已經有登入狀態、但個人資料還在讀，
+  // 這時候如果先把頁面畫出來，會被當成「沒有管理權限」：例如從 Slack「前往抽籤」點進來、
+  // 在登入頁登入後，抽籤頁會以為你不是管理者而把你轉回按摩首頁（2026-11 的 bug）。
+  // 所以個人資料讀完之前一律顯示「載入中」。用帳號 id 判斷而不是 true/false：
+  // 登入狀態每小時自動更新一次（同一個帳號），不會因此閃一下載入畫面。
+  const [profileFor, setProfileFor] = useState(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -52,13 +58,14 @@ function App() {
     return
   }
   setUserProfile(data)
+  setProfileFor(userId)
   setLoading(false)
 }
 
   // 斷網時卡在「載入中…」是最糟的一種畫面 —— 使用者不知道是自己網路的問題還是
   // 系統壞了。裝成 App 之後這個情境會變常見（點圖示就開，不像瀏覽器會先報錯），
   // 所以這裡直接把原因寫出來。
-  if (loading) return (
+  if (loading || (session && profileFor !== session.user.id)) return (
     <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: '100vh', padding: '24px', textAlign: 'center' }}>
       <p>{navigator.onLine === false ? t('offline_banner') : t('common_loading')}</p>
     </div>
