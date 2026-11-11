@@ -74,7 +74,7 @@ export function computeLeaveStats({ leaves, users, start, end, annual = [], holi
   const monthCount = Math.max(1, months.length)
 
   const person = new Map(users.map(u => [u.id, {
-    user: u, count: 0, days: 0, byType: {}, wfhDays: 0, wfhCount: 0,
+    user: u, count: 0, days: 0, byType: {}, byMonth: Object.fromEntries(months.map(m => [m, 0])), wfhDays: 0, wfhCount: 0,
     hrRegistered: 0, disputed: 0, proxyCount: 0, proxyDays: 0,
   }]))
   const types = new Map()
@@ -111,7 +111,10 @@ export function computeLeaveStats({ leaves, users, start, end, annual = [], holi
     const ty = types.get(typeId)
     ty.count += 1
     ty.days += days
-    for (const x of parts) byMonth.get(x.date.slice(0, 7)).days += x.days
+    for (const x of parts) {
+      byMonth.get(x.date.slice(0, 7)).days += x.days
+      p.byMonth[x.date.slice(0, 7)] += x.days
+    }
     totalDays += days
     leaveCount += 1
 
@@ -128,6 +131,7 @@ export function computeLeaveStats({ leaves, users, start, end, annual = [], holi
     proxyDays: round1(p.proxyDays),
     perMonth: round1(p.count / monthCount),
     byType: Object.fromEntries(Object.entries(p.byType).map(([k, v]) => [k, round1(v)])),
+    byMonth: months.map(m => ({ month: m, days: round1(p.byMonth[m]) })),
   })).sort((a, b) => b.days - a.days || (a.user.full_name || '').localeCompare(b.user.full_name || ''))
 
   const byType = [...types.entries()].map(([id, ty]) => ({

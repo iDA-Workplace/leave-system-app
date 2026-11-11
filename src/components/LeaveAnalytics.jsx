@@ -4,7 +4,7 @@ import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/fetchAllRows'
 import { computeLeaveStats } from '../lib/leaveStats'
 import { leaveTypeName, HOURS_PER_DAY } from '../lib/leaveEntitlements'
-import { Button, Card, EmptyState, Skeleton } from './ui'
+import { Button, Card, EmptyState, Select, Skeleton } from './ui'
 import { useLanguage } from '../context/LanguageContext'
 import './LeaveAnalytics.css'
 
@@ -39,7 +39,7 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
           .eq('status', 'approved').lte('start_date', endDate).gte('end_date', startDate)
           .order('start_date').order('id')),
         supabase.from('annual_leave_summary').select('user_id, entitled_days, used_days'),
-        supabase.from('leave_types').select('id, is_annual'),
+        supabase.from('leave_types').select('id, name, name_en, is_annual, is_wfh').order('id'),
         fetchAllRows(() => supabase.from('user_leave_entitlements').select('user_id, leave_type_id, mode, quota_hours').eq('mode', 'manual').order('user_id')),
       ])
       if (cancelled) return
@@ -57,9 +57,16 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
         used: r.used_days,
       }))
 
+      // 假別顏色：照假別建立的順序固定給色（換期間也不會變色）；前 7 個各一色，其餘歸「其他」
+      const slot = new Map()
+      for (const ty of (typesRes.data || []).filter(x => !x.is_wfh)) slot.set(String(ty.id), slot.size < TYPE_COLORS ? slot.size : 'other')
+
       setState({
         loading: false, error: null,
-        data: computeLeaveStats({ leaves: leavesRes.data || [], users: usersRes.data || [], start: startDate, end: endDate, annual }),
+        data: {
+          ...computeLeaveStats({ leaves: leavesRes.data || [], users: usersRes.data || [], start: startDate, end: endDate, annual }),
+          typeSlot: id => slot.get(String(id)) ?? 'other',
+        },
       })
     })()
     return () => { cancelled = true }
@@ -180,6 +187,14 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
             </Card>
           </div>
 
+          {/* 2 每人統計：A 全部人一起比（依假別分色）、C 選一位看個人 */}
+          <Card>
+            <h3 className="stats__card-title">{t('stats_s_people_chart')}</h3>
+            <p className="stats__card-sub">{t('stats_people_chart_sub')}</p>
+            <PeopleStack stats={stats} typeLabel={typeLabel} t={t} />
+          </Card>
+          <PersonDetail stats={stats} typeLabel={typeLabel} dept={dept} pct={pct} t={t} />
+
           {/* 2 每人統計表（含 12 HR 代登、異議） */}
           <Card>
             <h3 className="stats__card-title">{t('stats_s_people')}</h3>
@@ -248,6 +263,129 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
   )
 }
 
+const TYPE_COLORS = 7
+
+/** 假別的色塊樣式（顏色定義在 LeaveAnalytics.css 的 --viz-type-0…6、--viz-type-other） */
+function typeColor(slot) {
+  return `var(--viz-type-${slot})`
+}
+
+/** 圖例：只列這次資料裡有出現的假別，順序跟顏色順序一致；「其他」放最後 */
+function Legend({ items }) {
+  return (
+    <ul className="stats__legend">
+      {items.map(it => (
+        <li key={it.key}><span className="stats__swatch" style={{ background: typeColor(it.slot) }} />{it.label}</li>
+      ))}
+    </ul>
+  )
+}
+
+function legendItems(stats, typeLabel, t) {
+  const seen = new Map()
+  for (const x of stats.byType) {
+    const slot = stats.typeSlot(x.id)
+    if (slot === 'other') {
+      const o = seen.get('other') ?? { key: 'other', slot: 'other', names: [] }
+      o.names.push(typeLabel(x.type))
+      seen.set('other', o)
+    } else {
+      seen.set(x.id, { key: x.id, slot, label: typeLabel(x.type) })
+    }
+  }
+  const items = [...seen.values()].filter(x => x.slot !== 'other').sort((a, b) => a.slot - b.slot)
+  const other = seen.get('other')
+  if (other) items.push({ key: 'other', slot: 'other', label: t('stats_other_types', { names: other.names.join('、') }) })
+  return items
+}
+
+/** A：每人一條、依假別分色（堆疊橫條）；條尾寫總天數，滑過每一段顯示假別與天數 */
+function PeopleStack({ stats, typeLabel, t }) {
+  const rows = stats.perPerson.filter(p => p.days > 0)
+  const max = Math.max(0, ...rows.map(p => p.days))
+  const names = new Map(stats.byType.map(x => [x.id, typeLabel(x.type)]))
+  return (
+    <>
+      <Legend items={legendItems(stats, typeLabel, t)} />
+      <ul className="stats__stack">
+        {rows.map(p => {
+          // 同一個「其他」顏色的假別併成一段，順序照顏色順序
+          const segs = new Map()
+          for (const [id, days] of Object.entries(p.byType)) {
+            const slot = stats.typeSlot(id)
+            const seg = segs.get(slot) ?? { slot, days: 0, parts: [] }
+            seg.days += days
+            seg.parts.push(`${names.get(id) ?? id} ${days}`)
+            segs.set(slot, seg)
+          }
+          const ordered = [...segs.values()].sort((a, b) => (a.slot === 'other') - (b.slot === 'other') || a.slot - b.slot)
+          return (
+            <li key={p.user.id}>
+              <span className="stats__bar-label">{p.user.full_name}</span>
+              <span className="stats__stack-track" style={{ width: `${(p.days / max) * 100}%` }}>
+                {ordered.map(seg => (
+                  <span key={seg.slot} className="stats__stack-seg"
+                    style={{ flexGrow: seg.days, background: typeColor(seg.slot) }}
+                    title={`${p.user.full_name}・${seg.parts.join('、')} ${t('stats_unit_days')}`} />
+                ))}
+              </span>
+              <span className="stats__bar-value">{p.days} {t('stats_unit_days')}</span>
+            </li>
+          )
+        })}
+      </ul>
+    </>
+  )
+}
+
+/** C：選一位同仁，看他每個月請了幾天、請了哪些假 */
+function PersonDetail({ stats, typeLabel, dept, pct, t }) {
+  const people = [...stats.perPerson].sort((a, b) => (a.user.full_name || '').localeCompare(b.user.full_name || ''))
+  const [picked, setPicked] = useState(null)
+  const p = people.find(x => x.user.id === picked) ?? stats.perPerson[0]
+  if (!p) return null
+  const annual = stats.annual.find(a => a.user.id === p.user.id)
+  const types = Object.entries(p.byType)
+    .map(([id, days]) => ({ id, days, slot: stats.typeSlot(id), type: stats.byType.find(x => String(x.id) === String(id))?.type }))
+    .sort((a, b) => b.days - a.days)
+  return (
+    <Card>
+      <div className="stats__person-head">
+        <h3 className="stats__card-title">{t('stats_s_person')}</h3>
+        <div className="stats__person-pick">
+          <Select value={p.user.id} onChange={e => setPicked(e.target.value)} aria-label={t('stats_pick_person')}>
+            {people.map(x => <option key={x.user.id} value={x.user.id}>{x.user.full_name}（{dept(x.user.department)}）</option>)}
+          </Select>
+        </div>
+      </div>
+      <div className="stats__tiles stats__tiles--small">
+        <Tile label={t('stats_col_days')} value={p.days} unit={t('stats_unit_days')} />
+        <Tile label={t('stats_col_count')} value={p.count} unit={t('stats_unit_count')} />
+        <Tile label={t('stats_col_wfh')} value={p.wfhDays} unit={t('stats_unit_days')} />
+        <Tile label={t('stats_col_proxy')} value={p.proxyCount} unit={t('stats_unit_times')} />
+      </div>
+      {annual && (
+        <p className="stats__card-sub">{t('stats_person_annual', { entitled: annual.entitled, used: annual.used, remaining: annual.remaining, pct: pct(annual.rate) })}</p>
+      )}
+      <div className="stats__grid stats__grid--inner">
+        <div>
+          <h4 className="stats__sub-title">{t('stats_person_months')}</h4>
+          <MonthColumns rows={p.byMonth} unit={t('stats_unit_days')} monthSuffix={t('stats_month_suffix')} />
+        </div>
+        <div>
+          <h4 className="stats__sub-title">{t('stats_person_types')}</h4>
+          {types.length === 0 ? <p className="stats__card-sub">{t('stats_person_none')}</p> : (
+            <Bars rows={types.map(x => ({
+              key: x.id, label: typeLabel(x.type), value: x.days, color: typeColor(x.slot),
+              text: `${x.days} ${t('stats_unit_days')}`,
+            }))} />
+          )}
+        </div>
+      </div>
+    </Card>
+  )
+}
+
 function Tile({ label, value, unit }) {
   return (
     <div className="stats__tile">
@@ -266,7 +404,7 @@ function Bars({ rows }) {
         <li key={r.key} title={`${r.label}：${r.text}`}>
           <span className="stats__bar-label">{r.label}</span>
           <span className="stats__bar-track">
-            <span className="stats__bar" style={{ width: max ? `${Math.max(2, (r.value / max) * 100)}%` : 0 }} />
+            <span className="stats__bar" style={{ width: max ? `${Math.max(2, (r.value / max) * 100)}%` : 0, ...(r.color ? { background: r.color } : {}) }} />
           </span>
           <span className="stats__bar-value">{r.text}</span>
         </li>
