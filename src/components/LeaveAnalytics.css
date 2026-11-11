@@ -1,0 +1,150 @@
+/* 請假統計（LeaveAnalytics.jsx）。
+ * 圖表只有一個系列，用同一個藍色（dataviz 預設色盤第 1 色，淺色／深色模式各一個，都驗證過對比 ≥ 3:1）；
+ * 刻意不用品牌紅：紅色在這個系統裡代表「重要／警告」，拿來畫請假天數會讓人以為是異常。
+ * 數字一律直接寫在條旁邊，不只靠顏色。 */
+.stats {
+  --viz-bar: #2a78d6;
+  --viz-track: var(--sys-color-surface-container);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-300);
+  transition: opacity 0.15s;
+}
+:root[data-theme='dark'] .stats {
+  --viz-bar: #3987e5;
+}
+.stats--busy { opacity: 0.6; }
+
+.stats__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: var(--space-200);
+  flex-wrap: wrap;
+}
+.stats__title {
+  margin: 0;
+  font: 600 var(--type-title-large-size, 22px) / 1.3 var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+.stats__rules, .stats__note, .stats__card-sub {
+  margin: var(--space-050, 2px) 0 0;
+  font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+.stats__note { margin-top: calc(var(--space-200) * -1); }
+
+/* 總覽數字 */
+.stats__tiles {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-200);
+}
+.stats__tile {
+  background: var(--sys-color-surface-container-lowest);
+  border-radius: var(--shape-corner-large);
+  box-shadow: var(--sys-elevation-1);
+  padding: var(--space-200) var(--space-250, 20px);
+}
+.stats__tile-label {
+  font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+}
+.stats__tile-value {
+  margin-top: var(--space-100);
+  font: 600 32px / 1.1 var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+.stats__tile-value span {
+  margin-left: 4px;
+  font-size: 14px;
+  font-weight: 400;
+  color: var(--sys-color-on-surface-variant);
+}
+
+.stats__grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-300);
+}
+.stats__card-title {
+  margin: 0;
+  font: 600 var(--type-title-medium-size, 16px) / 1.4 var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
+.stats__card-title + .stats__bars,
+.stats__card-title + .stats__cols,
+.stats__card-sub + .stats__bars,
+.stats__card-sub + .stats__table-wrap,
+.stats__card-title + .stats__table-wrap { margin-top: var(--space-200); }
+
+/* 橫條 */
+.stats__bars { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.stats__bars li {
+  display: grid;
+  grid-template-columns: minmax(64px, 7em) minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base);
+}
+.stats__bar-label { color: var(--sys-color-on-surface); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats__bar-track { height: 12px; display: block; }
+.stats__bar { display: block; height: 100%; background: var(--viz-bar); border-radius: 0 4px 4px 0; }
+.stats__bar-value { color: var(--sys-color-on-surface-variant); white-space: nowrap; }
+
+/* 月份直條 */
+.stats__cols {
+  display: grid;
+  gap: 6px;
+  align-items: end;
+  height: 180px;
+  min-width: 0;
+}
+.stats__col {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  justify-items: center;
+  align-items: end;
+  min-width: 0;
+}
+.stats__col-value { font: 12px/1.4 var(--font-family-base); color: var(--sys-color-on-surface-variant); }
+.stats__col-bar { width: min(28px, 70%); background: var(--viz-bar); border-radius: 4px 4px 0 0; align-self: end; }
+.stats__col-label {
+  margin-top: 4px;
+  font: 12px/1.4 var(--font-family-base);
+  color: var(--sys-color-on-surface-variant);
+  border-top: 1px solid var(--sys-color-outline-variant);
+  width: 100%;
+  text-align: center;
+  padding-top: 4px;
+}
+
+/* 表格 */
+.stats__table-wrap { overflow-x: auto; }
+.stats__table { width: 100%; border-collapse: collapse; font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base); }
+.stats__table th, .stats__table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--sys-color-outline-variant);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--sys-color-on-surface);
+}
+.stats__table th { color: var(--sys-color-on-surface-variant); font-weight: 500; background: var(--sys-color-surface-container); }
+.stats__table .num { text-align: right; }
+.stats__table .strong { font-weight: 600; }
+.stats__meter { display: inline-block; width: 80px; height: 8px; border-radius: 4px; background: var(--viz-track); vertical-align: middle; overflow: hidden; }
+.stats__meter span { display: block; height: 100%; background: var(--viz-bar); }
+.stats__meter-text { margin-left: 8px; color: var(--sys-color-on-surface-variant); }
+
+/* 月份很多（例如整年 12 個月）時手機放不下：數字縮小、月份只寫數字 */
+@media (max-width: 600px) {
+  .stats__cols { gap: 3px; }
+  .stats__col-value { font-size: 10px; }
+  .stats__col-label { font-size: 11px; }
+  .stats__col-unit { display: none; }
+}
+@media (max-width: 900px) {
+  .stats__grid { grid-template-columns: minmax(0, 1fr); }
+  .stats__tiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
