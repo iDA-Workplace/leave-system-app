@@ -13,6 +13,7 @@ HR 改到職日、切換語言、Slack／排程等後台程式）都照常可以
 createdb sect
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/00_stub.sql
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/10_tests.sql   # 要在 repo 根目錄執行（裡面用 \i 載入 migration）
+psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/20_hr_admin_tests.sql   # 接著跑：20261112 HR 擁有管理員功能（共 71 項）
 ```
 
 最後會列出每一項 PASS／FAIL；有任何 FAIL 會以錯誤結束。
