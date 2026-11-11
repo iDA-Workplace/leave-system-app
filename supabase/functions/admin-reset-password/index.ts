@@ -8,7 +8,8 @@
 // ⚠️ 自給自足的單一檔案（不 import _shared），可以整支貼進 Supabase 網頁編輯器。
 //
 // ── 誰可以用 ────────────────────────────────────────────────────
-// 只有「管理員」（users.is_admin）。員工帳號管理本來就只有管理員看得到（AdminPanel.jsx）。
+// 在職的「管理員」或「HR」（users.is_admin / users.is_finance）—— 2026-11 起 HR 擁有管理員的
+// 所有功能，員工帳號管理兩種身分都看得到（AdminPanel.jsx）。
 // 不能用來改自己的密碼（自己的請到「設定」改：登入狀態下輸入新密碼兩次即可，不用輸入舊密碼）。
 //
 // ── 怎麼確認呼叫的人是誰 ──────────────────────────────────────────
@@ -46,8 +47,8 @@ Deno.serve(async req => {
     const { data: auth } = token ? await db.auth.getUser(token) : { data: { user: null } }
     if (!auth?.user) return reply({ ok: false, code: 'not_signed_in' })
 
-    const { data: caller } = await db.from('users').select('id, is_admin, is_active').eq('id', auth.user.id).maybeSingle()
-    if (!caller?.is_admin || caller.is_active === false) return reply({ ok: false, code: 'not_allowed' })
+    const { data: caller } = await db.from('users').select('id, is_admin, is_finance, is_active').eq('id', auth.user.id).maybeSingle()
+    if (!caller || caller.is_active === false || !(caller.is_admin || caller.is_finance)) return reply({ ok: false, code: 'not_allowed' })
 
     const body = await req.json().catch(() => ({}))
     const targetId = typeof body?.user_id === 'string' ? body.user_id : ''

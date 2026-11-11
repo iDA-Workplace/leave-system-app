@@ -446,9 +446,9 @@ curl -X POST 'https://<ref>.supabase.co/functions/v1/massage-notify' \
 密碼是加密存的，任何人都看不到原本的密碼，忘記了只能重設。
 
 - **部署**：Deploy a new function → Via Editor → 名稱 `admin-reset-password` → 貼上 `admin-reset-password/index.ts` → Deploy。
-- **Verify JWT 要關掉**：身分檢查在函式裡做（用 token 向 Supabase 確認是誰、再查他是不是管理員），
+- **Verify JWT 要關掉**：身分檢查在函式裡做（用 token 向 Supabase 確認是誰、再查他是不是管理員或 HR），
   正式專案的新制金鑰會被閘道的 Verify JWT 擋下。
-- 只有管理員（`users.is_admin`）能用；不能拿來改自己的密碼；密碼寫死在函式裡、不接受網頁傳來的值。
+- 在職的管理員或 HR（`users.is_admin` / `users.is_finance`，2026-11 起 HR 有管理員的所有功能）能用；不能拿來改自己的密碼；密碼寫死在函式裡、不接受網頁傳來的值。
 - 每次重設都會在這支 function 的 Logs 留一行「誰幫誰重設」，不記密碼。
 
 ## 員工帳號的新增／修改／停用（`manage-users`）

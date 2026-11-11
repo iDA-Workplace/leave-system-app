@@ -693,16 +693,16 @@ function AdminPanel({ userProfile }) {
 
   if (!isAdmin && !isFinance) return <Navigate to="/" replace />
 
-  // 管理員 owns the system settings; 財務 owns 假期/入職日期. The two sets
-  // are disjoint apart from 匯出報表, which both need. Someone flagged as
-  // both simply sees the union.
+  // 2026-11 使用者決定：HR 擁有管理員的所有功能（員工帳號管理含重設密碼、簽核流程、
+  // 通知對象、假別英文名稱）；資料（員工假期管理、匯出報表與請假統計）只給 HR。
+  // 管理員只管系統。兩種都勾的人看到的是聯集。
+  const canManageSystem = isAdmin || isFinance
   const tabs = []
-  if (isAdmin) {
+  if (canManageSystem) {
     tabs.push({ key: 'users', path: '/admin', label: t('adminusers_title') })
     tabs.push({ key: 'flows', path: '/admin/flows', label: t('adminflows_tab') })
     tabs.push({ key: 'notifications', path: '/admin/notifications', label: t('adminnotify_tab') })
-    // 假別的英文名是「用字對不對」的問題，不是假期制度的問題，所以歸管理員。
-    // 財務的「員工假期管理」也還看得到同一張卡片，兩邊共用同一個元件。
+    // HR 的「員工假期管理」裡也有同一張卡片；使用者要求 HR 也有這個分頁（2026-11）
     tabs.push({ key: 'leave-type-names', path: '/admin/leave-type-names', label: t('ltnames_title') })
   }
   if (isFinance) {
@@ -713,21 +713,16 @@ function AdminPanel({ userProfile }) {
   // 匯出報表與請假統計：只有 HR 看得到（使用者決定 2026-11：管理員只管系統，資料只給 HR）
   if (isFinance) tabs.push({ key: 'export', path: '/admin/export', label: t('export_tab') })
 
-  // Finance-only users have no 員工帳號管理, so the index route can't land there.
-  const indexElement = isAdmin
-    ? <UserManagement isAdmin={isAdmin} userProfile={userProfile} />
-    : <Navigate to="/admin/leave-entitlements" replace />
-
   return (
     <div>
       <PageHeader title={t('nav_admin')} />
       <Tabs tabs={tabs.map(t => ({ ...t, to: t.path, active: location.pathname === t.path }))} />
 
       <Routes>
-        <Route index element={indexElement} />
-        {isAdmin && <Route path="flows" element={<FlowManagement isAdmin={isAdmin} />} />}
-        {isAdmin && <Route path="notifications" element={<NotificationTargets isAdmin={isAdmin} />} />}
-        {isAdmin && <Route path="leave-type-names" element={<LeaveTypeNames />} />}
+        <Route index element={<UserManagement isAdmin={canManageSystem} userProfile={userProfile} />} />
+        <Route path="flows" element={<FlowManagement isAdmin={canManageSystem} />} />
+        <Route path="notifications" element={<NotificationTargets isAdmin={canManageSystem} />} />
+        <Route path="leave-type-names" element={<LeaveTypeNames />} />
         {isFinance && <Route path="leave-entitlements" element={<EmployeeLeaveManagement userProfile={userProfile} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
         <Route path="benefits" element={<BenefitsSettings />} />
