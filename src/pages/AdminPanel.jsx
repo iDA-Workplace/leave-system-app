@@ -710,7 +710,8 @@ function AdminPanel({ userProfile }) {
   }
   // 員工福利設定（按摩預約負責人）：管理員與 HR 都是按摩預約的管理者，兩邊都看得到
   tabs.push({ key: 'benefits', path: '/admin/benefits', label: t('benefits_settings_tab') })
-  tabs.push({ key: 'export', path: '/admin/export', label: t('export_tab') })
+  // 匯出報表與請假統計：只有 HR 看得到（使用者決定 2026-11：管理員只管系統，資料只給 HR）
+  if (isFinance) tabs.push({ key: 'export', path: '/admin/export', label: t('export_tab') })
 
   // Finance-only users have no 員工帳號管理, so the index route can't land there.
   const indexElement = isAdmin
@@ -730,7 +731,7 @@ function AdminPanel({ userProfile }) {
         {isFinance && <Route path="leave-entitlements" element={<EmployeeLeaveManagement userProfile={userProfile} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
         <Route path="benefits" element={<BenefitsSettings />} />
-        <Route path="export" element={<ExportReport />} />
+        {isFinance && <Route path="export" element={<ExportReport />} />}
         <Route path="*" element={<Navigate to="/admin" replace />} />
       </Routes>
     </div>

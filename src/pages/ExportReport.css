@@ -1,10 +1,25 @@
 .export-report-page {
-  max-width: 500px;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-300);
 }
+.export-report-page > .ui-card { max-width: 640px; }
+
+.export-report-quick { display: flex; gap: var(--space-100); flex-wrap: wrap; margin-bottom: var(--space-200); }
+.export-report-chip {
+  border: 1px solid var(--sys-color-outline-variant);
+  background: transparent;
+  color: var(--sys-color-on-surface);
+  border-radius: var(--shape-corner-full);
+  padding: 6px 14px;
+  font: var(--type-body-medium-size) / var(--type-body-medium-line) var(--font-family-base);
+  cursor: pointer;
+}
+.export-report-chip.is-active { background: var(--sys-color-secondary-container); border-color: transparent; }
 
 .export-report-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: var(--space-150);
   margin-bottom: var(--space-200);
 }
@@ -17,3 +32,9 @@
   font: var(--type-body-small-size)/var(--type-body-small-line) var(--font-family-base);
   color: var(--sys-color-on-surface-variant);
 }
+
+/* 手機：日期欄位上下排，不要撐破畫面 */
+@media (max-width: 520px) {
+  .export-report-grid { grid-template-columns: minmax(0, 1fr); }
+}
+.export-report-grid input { width: 100%; min-width: 0; box-sizing: border-box; }

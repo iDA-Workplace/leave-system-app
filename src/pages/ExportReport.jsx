@@ -6,6 +6,7 @@ import { Button, Card, PageHeader, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
 import { leaveTypeName } from '../lib/leaveEntitlements'
+import LeaveAnalytics from '../components/LeaveAnalytics'
 import './ExportReport.css'
 
 function toISODate(d) {
@@ -32,6 +33,16 @@ function safeSheetName(rawName, existingNames) {
     const candidate = base.slice(0, 31 - suffix.length) + suffix
     if (!existingNames.includes(candidate)) return candidate
   }
+}
+
+/** 快速選擇的期間：本月、本季、今年（使用者要求） */
+function quickRange(kind) {
+  const now = new Date()
+  const y = now.getFullYear()
+  const m = now.getMonth()
+  if (kind === 'month') return [toISODate(new Date(y, m, 1)), toISODate(new Date(y, m + 1, 0))]
+  if (kind === 'quarter') { const q = Math.floor(m / 3) * 3; return [toISODate(new Date(y, q, 1)), toISODate(new Date(y, q + 3, 0))] }
+  return [toISODate(new Date(y, 0, 1)), toISODate(new Date(y, 11, 31))]
 }
 
 function ExportReport() {
@@ -144,6 +155,18 @@ function ExportReport() {
       <PageHeader title={t('export_title')} />
 
       <Card>
+        <div className="export-report-quick" role="group" aria-label={t('export_quick')}>
+          {['month', 'quarter', 'year'].map(k => {
+            const [s, e] = quickRange(k)
+            return (
+              <button key={k} type="button"
+                className={`export-report-chip ${startDate === s && endDate === e ? 'is-active' : ''}`}
+                onClick={() => { setStartDate(s); setEndDate(e) }}>
+                {t(`export_quick_${k}`)}
+              </button>
+            )
+          })}
+        </div>
         <div className="export-report-grid">
           <TextField label={t('export_start_date')} type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
           <TextField label={t('export_end_date')} type="date" value={endDate} min={startDate} onChange={e => setEndDate(e.target.value)} />
@@ -151,10 +174,12 @@ function ExportReport() {
 
         <div className="export-report-hint">{t('export_hint')}</div>
 
-        <Button block loading={loading} onClick={handleExport}>
+        <Button loading={loading} onClick={handleExport}>
           {loading ? t('export_exporting') : t('export_button')}
         </Button>
       </Card>
+
+      <LeaveAnalytics startDate={startDate} endDate={endDate} />
     </div>
   )
 }
