@@ -202,38 +202,8 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
           </div>
 
           {/* 2 個人請假狀況：選一位同仁看他的圖表 */}
+          {/* 網頁上不放每人統計表（使用者 2026-11 決定拿掉）；完整的每人數字在「匯出統計總表」的 Excel 裡 */}
           <PersonDetail stats={stats} typeLabel={typeLabel} dept={dept} pct={pct} t={t} />
-
-          {/* 2 每人統計表（含 12 HR 代登、異議） */}
-          <Card>
-            <h3 className="stats__card-title">{t('stats_s_people')}</h3>
-            <div className="stats__table-wrap">
-              <table className="stats__table">
-                <thead>
-                  <tr>
-                    <th>{t('stats_col_name')}</th><th>{t('stats_col_department')}</th>
-                    <th className="num">{t('stats_col_count')}</th><th className="num">{t('stats_col_days')}</th>
-                    {stats.typeColumns.map(c => <th key={c.id} className="num">{typeLabel(c.type)}</th>)}
-                    <th className="num">{t('stats_col_wfh')}</th><th className="num">{t('stats_col_per_month')}</th>
-                    <th className="num">{t('stats_col_proxy')}</th><th className="num">{t('stats_col_hr_registered')}</th>
-                    <th className="num">{t('stats_col_disputed')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {stats.perPerson.map(p => (
-                    <tr key={p.user.id}>
-                      <td>{p.user.full_name}</td><td>{dept(p.user.department)}</td>
-                      <td className="num">{p.count}</td><td className="num strong">{p.days}</td>
-                      {stats.typeColumns.map(c => <td key={c.id} className="num">{p.byType[c.id] ?? '—'}</td>)}
-                      <td className="num">{p.wfhDays || '—'}</td><td className="num">{p.perMonth}</td>
-                      <td className="num">{p.proxyCount || '—'}</td><td className="num">{p.hrRegistered || '—'}</td>
-                      <td className="num">{p.disputed || '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
         </>
       )}
 
