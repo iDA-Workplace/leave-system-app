@@ -7,6 +7,7 @@ import ExportReport from './ExportReport'
 import EmployeeLeaveManagement from './EmployeeLeaveManagement'
 import LeaveTypeNames from './LeaveTypeNames'
 import HolidayManagement from './HolidayManagement'
+import ResignedStaffDialog from '../components/ResignedStaffDialog'
 import { Button, Card, Chip, ConfirmDialog, Dialog, PageHeader, Select, Skeleton, Tabs, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
@@ -38,7 +39,7 @@ const isValidSlackId = (v) => !(v || '').trim() || SLACK_ID_RE.test((v || '').tr
 // set it; finance fills it in after the account is created.
 const emptyNewUser = { email: '', full_name: '', role: 'employee', default_flow_id: '', is_admin: false, is_finance: false, department: '', job_title: '', manager_id: '' }
 
-function UserManagement({ isAdmin, userProfile }) {
+function UserManagement({ isAdmin, isHr, userProfile }) {
   const { t } = useLanguage()
   const [users, setUsers] = useState([])
   const [flows, setFlows] = useState([])
@@ -51,6 +52,7 @@ function UserManagement({ isAdmin, userProfile }) {
   const [confirmReset, setConfirmReset] = useState(null)   // 要重設密碼的那位同仁
   const [filterDept, setFilterDept] = useState('')
   const [filterStatus, setFilterStatus] = useState('')
+  const [showResigned, setShowResigned] = useState(false)   // 離職同仁專區（只有 HR）
   const { showToast } = useToast()
 
   useEffect(() => { fetchUsers(); fetchFlows() }, [])
@@ -161,7 +163,22 @@ function UserManagement({ isAdmin, userProfile }) {
   // stay intact, the account just stops appearing as selectable elsewhere.
   // Re-activating is still possible from the same place if needed.
   async function handleToggleActive() {
+    const deactivating = confirmToggle.is_active
+    // 刪除時必填最後工作日（使用者決定 2026-11，管理員與 HR 都要填）。先存日期再停用：
+    // 停用失敗的話日期留著也無害；反過來的話會出現「已停用、卻沒有最後工作日」。
+    if (deactivating && !confirmToggle.last_day_input) {
+      showToast(t('adminusers_err_last_day'), { tone: 'error' }); return
+    }
     setSaving(true)
+    if (deactivating) {
+      const { data: updated, error: dayError } = await supabase.from('users')
+        .update({ last_working_day: confirmToggle.last_day_input }).eq('id', confirmToggle.id).select()
+      if (dayError || !updated?.length) {
+        showToast(t('adminusers_err_toggle', { msg: dayError?.message || t('admin_no_write_permission') }), { tone: 'error' })
+        setSaving(false); return
+      }
+    }
+    // 恢復帳號時最後工作日保留不清除（使用者決定 2026-11）
     const { data, error } = await invokeFunction('manage-users', {
       action: 'update',
       userId: confirmToggle.id,
@@ -228,6 +245,7 @@ function UserManagement({ isAdmin, userProfile }) {
           <option value="">{t('adminusers_active')}</option>
           <option value="deleted">{t('adminusers_deleted')}</option>
         </Select>
+        {isHr && <Button variant="outlined" onClick={() => setShowResigned(true)}>{t('resigned_title')}</Button>}
       </div>
 
       {visibleUsers.length === 0 ? (
@@ -236,7 +254,7 @@ function UserManagement({ isAdmin, userProfile }) {
         <div className="ui-table-wrap">
           <table className="ui-table">
             <thead>
-              <tr><th>{t('adminusers_col_name')}</th><th>{t('adminusers_col_department')}</th><th>{t('adminusers_col_title')}</th><th>{t('adminusers_col_role')}</th><th>Slack ID</th><th>{t('adminusers_col_flow')}</th><th>{t('adminusers_col_manager')}</th>{isAdmin && <th>{t('common_actions')}</th>}</tr>
+              <tr><th>{t('adminusers_col_name')}</th><th>{t('adminusers_col_department')}</th><th>{t('adminusers_col_title')}</th><th>{t('adminusers_col_role')}</th><th>Slack ID</th><th>{t('adminusers_col_flow')}</th><th>{t('adminusers_col_manager')}</th>{filterStatus === 'deleted' && <th>{t('resigned_last_day')}</th>}{isAdmin && <th>{t('common_actions')}</th>}</tr>
             </thead>
             <tbody>
               {visibleUsers.map(user => (
@@ -253,8 +271,13 @@ function UserManagement({ isAdmin, userProfile }) {
                   <td>{user.slack_user_id || '—'}</td>
                   <td>{user.default_flow?.name || '—'}</td>
                   <td>{user.manager_id ? (managerNameById[user.manager_id] || '—') : '—'}</td>
+                  {filterStatus === 'deleted' && <td className="tabular">{user.last_working_day || '—'}</td>}
                   {isAdmin && (
-                    <td><Button size="sm" variant="outlined" onClick={() => setEditing({ ...user })}>{t('common_edit')}</Button></td>
+                    <td className="admin-cell-actions" style={{ whiteSpace: 'nowrap' }}>
+                      <Button size="sm" variant="outlined" onClick={() => setEditing({ ...user })}>{t('common_edit')}</Button>
+                      {/* 已刪除的帳號：操作欄直接有「恢復帳號」（使用者決定 2026-11） */}
+                      {!user.is_active && <>{' '}<Button size="sm" variant="outlined" onClick={() => setConfirmToggle(user)}>{t('adminusers_restore_account')}</Button></>}
+                    </td>
                   )}
                 </tr>
               ))}
@@ -376,18 +399,38 @@ function UserManagement({ isAdmin, userProfile }) {
         />
       )}
 
-      {confirmToggle && (
+      {confirmToggle && confirmToggle.is_active && (
+        // 刪除：要填最後工作日才能按刪除
+        <Dialog
+          title={t('adminusers_delete_account')}
+          labelledBy="delete-user-dialog-title"
+          onClose={() => setConfirmToggle(null)}
+          actions={(
+            <>
+              <Button variant="text" onClick={() => setConfirmToggle(null)}>{t('common_cancel')}</Button>
+              <Button variant="danger" loading={saving} disabled={!confirmToggle.last_day_input} onClick={handleToggleActive}>{t('common_delete')}</Button>
+            </>
+          )}
+        >
+          <p className="admin-form-card__hint">{t('adminusers_delete_confirm', { name: confirmToggle.full_name })}</p>
+          <TextField label={t('resigned_last_day')} type="date" required value={confirmToggle.last_day_input || ''}
+            onChange={e => setConfirmToggle(p => ({ ...p, last_day_input: e.target.value }))} />
+        </Dialog>
+      )}
+
+      {confirmToggle && !confirmToggle.is_active && (
         <ConfirmDialog
-          title={confirmToggle.is_active ? t('adminusers_delete_account') : t('adminusers_restore_account')}
-          description={confirmToggle.is_active
-            ? t('adminusers_delete_confirm', { name: confirmToggle.full_name })
-            : t('adminusers_restore_confirm', { name: confirmToggle.full_name })}
-          confirmLabel={confirmToggle.is_active ? t('common_delete') : t('adminusers_restore')}
-          danger={confirmToggle.is_active}
+          title={t('adminusers_restore_account')}
+          description={t('adminusers_restore_confirm', { name: confirmToggle.full_name })}
+          confirmLabel={t('adminusers_restore')}
           loading={saving}
           onConfirm={handleToggleActive}
           onCancel={() => setConfirmToggle(null)}
         />
+      )}
+
+      {isHr && showResigned && (
+        <ResignedStaffDialog users={users} onClose={() => setShowResigned(false)} onChanged={fetchUsers} />
       )}
     </div>
   )
@@ -722,7 +765,7 @@ function AdminPanel({ userProfile }) {
       <Tabs tabs={tabs.map(t => ({ ...t, to: t.path, active: location.pathname === t.path }))} />
 
       <Routes>
-        <Route index element={<UserManagement isAdmin={canManageSystem} userProfile={userProfile} />} />
+        <Route index element={<UserManagement isAdmin={canManageSystem} isHr={isFinance} userProfile={userProfile} />} />
         <Route path="flows" element={<FlowManagement isAdmin={canManageSystem} />} />
         <Route path="notifications" element={<NotificationTargets isAdmin={canManageSystem} />} />
         <Route path="leave-type-names" element={<LeaveTypeNames />} />

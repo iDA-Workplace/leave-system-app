@@ -1,0 +1,27 @@
+/* 離職同仁專區（ResignedStaffDialog.jsx） */
+.resigned-filters { flex-wrap: wrap; }
+.resigned-filters select { min-width: 140px; }
+.resigned-row { cursor: pointer; }
+.resigned-row:hover td { background: var(--sys-color-surface-container); }
+.resigned-row.is-selected td { background: var(--sys-color-secondary-container, var(--sys-color-surface-container-high)); font-weight: 600; }
+.resigned-record { display: flex; flex-direction: column; gap: var(--space-200); margin-top: var(--space-300); }
+.resigned-info {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-150, 12px) var(--space-200);
+  margin: var(--space-200) 0;
+}
+.resigned-info dt { font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base); color: var(--sys-color-on-surface-variant); }
+.resigned-info dd { margin: 2px 0 0; color: var(--sys-color-on-surface); overflow-wrap: anywhere; }
+.resigned-lastday { display: flex; align-items: flex-end; gap: var(--space-100); flex-wrap: wrap; }
+.resigned-lastday .ui-field { min-width: 200px; }
+.resigned-settle { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-200); margin: var(--space-200) 0 var(--space-100); }
+.resigned-settle > div { background: var(--sys-color-surface-container); border-radius: var(--shape-corner-medium, 12px); padding: var(--space-150, 12px) var(--space-200); }
+.resigned-settle span { display: block; font: var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base); color: var(--sys-color-on-surface-variant); }
+.resigned-settle strong { font-size: 22px; margin-right: 4px; }
+.resigned-settle .is-key { outline: 2px solid var(--sys-color-primary); outline-offset: -2px; }
+.resigned-scroll { max-height: 320px; overflow-y: auto; }
+@media (max-width: 700px) {
+  .resigned-info, .resigned-settle { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .resigned-hide-m { display: none; }
+}
