@@ -80,7 +80,10 @@ export function parseCalendar(text: string, year: number): Day[] {
 
 // ── 去政府網站抓 ───────────────────────────────────────────────────
 
-/** 資料集的每個檔案：從 API 的回應裡把「說明 + 下載網址」找出來（不假設確切的欄位層級） */
+/**
+ * 資料集的每個檔案：從 API 的回應裡把「說明 + 下載網址」找出來（不假設確切的欄位層級）。
+ * 2026-11-12 正式環境實測可用（找到 115、116 年）。
+ */
 function collectResources(node: unknown, out: { text: string; url: string }[] = []) {
   if (Array.isArray(node)) { node.forEach(n => collectResources(n, out)); return out }
   if (node && typeof node === 'object') {
