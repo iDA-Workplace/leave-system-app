@@ -47,7 +47,7 @@ function LeaveForm({ userProfile }) {
   const [loading, setLoading] = useState(false)
   const [dragActive, setDragActive] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [attachment, setAttachment] = useState(null) // { name, url }
+  const [attachment, setAttachment] = useState(null) // { name, path }
   const [successInfo, setSuccessInfo] = useState(null)
   const [form, setForm] = useState({
     leave_type_id: '',
@@ -152,8 +152,8 @@ function LeaveForm({ userProfile }) {
       setUploading(false)
       return
     }
-    const { data } = supabase.storage.from('leave-attachments').getPublicUrl(path)
-    setAttachment({ name: file.name, url: data.publicUrl })
+    // 附件不公開（2026-11）：只存路徑，要看的時候再產生有時效的連結（components/AttachmentLink.jsx）
+    setAttachment({ name: file.name, path })
     setUploading(false)
   }
 
@@ -210,7 +210,7 @@ function LeaveForm({ userProfile }) {
         // WFH 不指定代理人：先選了人才改成 WFH 的話，這裡要把殘留值清掉
         proxy_user_id: selectedLeaveType?.is_wfh ? null : (form.proxy_user_id || null),
         reason: form.reason,
-        attachment_url: attachment?.url || null,
+        attachment_path: attachment?.path || null,
         attachment_name: attachment?.name || null,
         status: 'pending',
         current_step: 1

@@ -40,3 +40,17 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* 假單附件「查看附件」（components/AttachmentLink.jsx） */
+.attachment-link {
+  border: none;
+  background: none;
+  padding: 0;
+  margin-left: 6px;
+  color: var(--sys-color-primary);
+  font: 500 var(--type-body-small-size) / var(--type-body-small-line) var(--font-family-base);
+  text-decoration: underline;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.attachment-link:disabled { opacity: 0.6; cursor: progress; }

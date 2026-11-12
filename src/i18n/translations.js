@@ -427,6 +427,8 @@ export const translations = {
     adminusers_delete_account: '刪除帳號',
     adminusers_restore_account: '恢復帳號',
     adminusers_restore: '恢復',
+    attachment_view: '查看附件',
+    attachment_err_open: '附件打不開（可能沒有權限，或檔案已被刪除）',
     // 離職同仁專區（2026-11）
     adminusers_err_last_day: '請填最後工作日',
     resigned_title: '離職同仁專區',
@@ -1805,6 +1807,8 @@ export const translations = {
     adminusers_delete_account: 'Delete Account',
     adminusers_restore_account: 'Restore Account',
     adminusers_restore: 'Restore',
+    attachment_view: 'Attachment',
+    attachment_err_open: 'Could not open the attachment (no permission, or the file was deleted)',
     // Former employees (2026-11)
     adminusers_err_last_day: 'Please enter the last working day',
     resigned_title: 'Former employees',

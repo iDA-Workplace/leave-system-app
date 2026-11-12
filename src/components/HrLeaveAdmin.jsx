@@ -6,6 +6,7 @@ import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
 import { calcHours, countWorkdays, leaveTypeName } from '../lib/leaveEntitlements'
 import { remindMassageForLeave } from '../lib/massage'
+import AttachmentLink from './AttachmentLink'
 
 /**
  * HR 的假單管理：修改與刪除。
@@ -42,7 +43,7 @@ for (let h = 8; h <= 18; h++) {
 const PAGE_SIZE = 10
 
 const SELECT = `
-  id, start_date, end_date, start_time, end_time, hours, reason, status,
+  id, start_date, end_date, start_time, end_time, hours, reason, status, attachment_path, attachment_url, attachment_name,
   registered_by, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason, ack_deadline,
   requester:users!leave_requests_requester_id_fkey(id, full_name),
   registrar:users!leave_requests_registered_by_fkey(full_name),
@@ -242,7 +243,7 @@ function HrLeaveAdmin({ hrUser }) {
                   return (
                     <tr key={l.id}>
                       <td>{l.requester?.full_name || '—'}</td>
-                      <td>{leaveTypeName(l.leave_type, lang)}</td>
+                      <td>{leaveTypeName(l.leave_type, lang)}<AttachmentLink leave={l} /></td>
                       <td>
                         {multi ? `${l.start_date} ~ ${l.end_date}` : l.start_date}
                         {!multi && l.start_time && l.end_time && (
