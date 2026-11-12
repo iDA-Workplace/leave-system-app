@@ -1,4 +1,5 @@
 import { supabase } from './supabase'
+import { countWorkdays } from './holidays'
 
 // The app has always treated a full leave day as 8 hours (LeaveForm records
 // same-day leave in hours; multi-day leave is counted as workdays x 8), so
@@ -119,18 +120,8 @@ export function calcHours(start, end) {
   return Math.max(0, total / 60)
 }
 
-/** 跨日請假的工作天數（不含週六日）。 */
-export function countWorkdays(startDate, endDate) {
-  let count = 0
-  const current = new Date(startDate)
-  const end = new Date(endDate)
-  while (current <= end) {
-    const day = current.getDay()
-    if (day !== 0 && day !== 6) count++
-    current.setDate(current.getDate() + 1)
-  }
-  return count
-}
+/** 跨日請假的上班日天數（不含週六日與國定假日）。實作在 lib/holidays.js。 */
+export { countWorkdays }
 
 /** 一張假單佔用的時數：跨日的算工作天 x 8，單日的用 hours 欄位。 */
 export function leaveRequestHours(leave) {

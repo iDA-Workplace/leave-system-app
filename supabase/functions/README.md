@@ -8,6 +8,7 @@
 | `daily-leave-digest` | 上午 9:00 發「今日請假名單」；前一天下午 4:00 發「下個上班日」的預告。沒人請假時也會發一則「沒有人請假」 | 排程（pg_cron），兩個時段各一條 |
 | `daily-leave-job` | 待審假單逾期 7 天自動退回；未逾期的每天提醒該簽核的主管 | 排程（pg_cron） |
 | `slack-interactions` | 在 Slack 裡送假單、在 Slack 裡核准／駁回 | Slack（事件與互動） |
+| `import-holidays` | 匯入人事行政總處的國定假日（網頁按鈕、每月排程） | 網頁（管理員、HR）、排程（pg_cron） |
 
 ## `slack-interactions` 的資安模型
 
@@ -486,3 +487,49 @@ curl -X POST 'https://<ref>.supabase.co/functions/v1/massage-notify' \
 不需要真的 Slack：用假的 Supabase 與假的 Slack 執行一次 `massage-notify`、列出每一則訊息的目的地，
 三種情況（測試模式＋測試頻道、測試模式沒填頻道、正式）都要跑。2026-11 的測試腳本在對話紀錄裡，
 概念是：攔下 `fetch`（slack.com 回 ok、Supabase 回假資料）、攔下 `Deno.serve` 拿到處理函式，再呼叫一次。
+
+## 國定假日（2026-11）
+
+### 匯入（`import-holidays`）
+
+從行政院人事行政總處的「政府行政機關辦公日曆表」（政府資料開放平台資料集 14718）抓某一年的日曆，
+把「週一～週五、是否放假 = 2」的日子寫進 `holidays`。公司不補班，所以補班的週六不記；「調整放假」的平日照放。
+
+- **部署**：Deploy a new function → Via Editor → 名稱 `import-holidays` → 貼上 `import-holidays/index.ts` → Deploy。
+- **Verify JWT 要關掉**：網頁呼叫時身分檢查在函式裡做（管理員或 HR 才能預覽／匯入）；排程呼叫的
+  `{ "action": "auto" }` 不需要身分 —— 被別人叫也無害：只寫官方公布的日子，已經有的日期一律不動。
+- **已經有的日期一律不動**：HR 改過名稱、刪掉的日子（刪掉會留一列 `is_holiday = false` 當記號）都保留 HR 的版本。
+- 抓不到政府網站時，網頁可以上傳從 data.gov.tw 下載的 CSV（UTF-8 或 Big5 都可以），同一支解析。
+  檔案會整份檢查（欄位、年份、天數），不對就整份不收。
+- ⚠️ 政府資料開放平台 API 的實際回應格式在開發環境連不到、沒辦法實測（2026-11）；程式是在回應裡
+  找「民國年 + CSV」的檔案。第一次在網頁按「從人事行政總處匯入」時如果出現「找不到」或「格式不對」，
+  請先用上傳 CSV 的方式，並把錯誤訊息告訴開發者。
+
+**排程（每月 1 號台北 09:10 檢查一次，今年與明年有公布就匯入）**，在 SQL Editor 執行：
+
+```sql
+select cron.schedule(
+  'import-holidays',
+  '10 1 1 * *',                        -- UTC 01:10 = 台北 09:10，每月 1 號
+  $$
+  select net.http_post(
+    url     := 'https://<你的專案ref>.supabase.co/functions/v1/import-holidays',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'apikey',        '<你的 secret key（新制）或 service_role key（舊制）>',
+      'Authorization', 'Bearer <同一把 key>'
+    ),
+    body    := '{"action":"auto"}'::jsonb
+  );
+  $$
+);
+```
+
+### 其他 function 怎麼用到假日
+
+- `_shared/leave.ts` 的 `loadHolidays(db)`：每支 function 開始處理前先讀一次，之後 `countWorkdays`（通知裡的「N 天」）、
+  `nextWorkday`（下午 4 點預告跳過假日）、`isWorkday` 都扣掉國定假日。
+- `daily-leave-digest`：國定假日當天 9:00 與 16:00 兩則都不發（使用者決定）。
+- `slack-interactions`：在 Slack 請假、HR 在 Slack 代登時，整張都落在假日（或週末）會擋下；天數扣掉國定假日。
+  它不 import `_shared`，有自己一份同樣的算法（10 分鐘內共用一次讀取）。
+- 改完 `_shared/` 要跑 `node supabase/functions/build-standalone.mjs` 更新三支的 `standalone.ts`。

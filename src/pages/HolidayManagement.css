@@ -1,0 +1,10 @@
+/* 國定假日（HolidayManagement.jsx） */
+.hol-row { flex-wrap: wrap; align-items: center; }
+.hol-row .ui-field, .hol-row select { min-width: 110px; }
+.hol-date { white-space: nowrap; }
+.hol-actions { white-space: nowrap; }
+/* 手機：來源欄拿掉（不影響操作），日期與按鈕不換行 */
+@media (max-width: 600px) {
+  .hol-col-source { display: none; }
+}
+.hol-row .admin-hint { margin: 0; }

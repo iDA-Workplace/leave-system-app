@@ -6,7 +6,7 @@
 //   · 離職（停用）的同仁不列入
 //   · WFH 另外統計，不算進請假天數
 //   · 跨月的假單：每一天算在它所在的月份；查詢期間外的天數不算
-//   · 一天 = 8 小時；跨日假單算週一～週五（之後加國定假日設定時，從 holidays 參數排除）
+//   · 一天 = 8 小時；跨日假單只算上班日（週一～週五、扣掉國定假日 —— holidays 參數，2026-11 起）
 
 export const HOURS_PER_DAY = 8
 
@@ -66,7 +66,7 @@ const round1 = n => Math.round(n * 10) / 10
  *                hours、start_date、end_date、leave_type（id、name、name_en、is_wfh）
  * @param users   在職同仁（id、full_name、department）—— 統計的母體；不在這裡面的人的假單不算
  * @param annual  今年特休：[{ user_id, entitled, used }]（天）
- * @param holidays Set<'YYYY-MM-DD'>（目前還沒有國定假日設定，傳空的）
+ * @param holidays Set<'YYYY-MM-DD'>：國定假日（lib/holidays.js 的 getHolidays()）
  */
 export function computeLeaveStats({ leaves, users, start, end, annual = [], holidays = new Set() }) {
   const people = new Map(users.map(u => [u.id, u]))

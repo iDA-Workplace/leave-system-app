@@ -1,6 +1,7 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
+import { loadHolidays } from './lib/holidays'
 
 import Login, { LOGIN_NOTICE_KEY } from './pages/Login'
 import Home from './pages/Home'
@@ -43,11 +44,11 @@ function App() {
   }, [])
 
   async function fetchProfile(userId) {
-  const { data } = await supabase
-    .from('users')
-    .select('*')
-    .eq('id', userId)
-    .single()
+  // 國定假日跟個人資料一起讀：畫面出來時算請假天數一定已經扣掉假日（lib/holidays.js）
+  const [{ data }] = await Promise.all([
+    supabase.from('users').select('*').eq('id', userId).single(),
+    loadHolidays(),
+  ])
   console.log('userProfile data:', data)
   // 已停用（離職）的帳號：直接登出，登入頁顯示「帳號已停用」。
   // 停用時後台也會封鎖登入（manage-users），這裡是第二道關卡：擋住封鎖前就已經

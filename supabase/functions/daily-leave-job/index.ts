@@ -15,7 +15,7 @@
 // 語言：每則私訊都照收件人（申請人／簽核人）自己 users.language 的設定發。
 
 import {
-  adminClient, currentApprovers, leaveDetailLines, LEAVE_SELECT, type LeaveRow,
+  adminClient, currentApprovers, leaveDetailLines, loadHolidays, LEAVE_SELECT, type LeaveRow,
 } from '../_shared/leave.ts'
 import { dmMany, dmManyLocalized, section, contextLine } from '../_shared/slack.ts'
 import { normalizeLang, t } from '../_shared/i18n.ts'
@@ -33,6 +33,7 @@ function waitedDays(leave: LeaveRow): number {
 Deno.serve(async () => {
   try {
     const db = adminClient()
+    await loadHolidays(db)   // 提醒裡的「N 天」要扣國定假日
     const cutoff = new Date(Date.now() - EXPIRE_DAYS * DAY_MS).toISOString()
 
     const { data, error } = await db

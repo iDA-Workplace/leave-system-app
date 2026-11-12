@@ -26,19 +26,37 @@ export function taipeiToday(): string {
   return taipeiNow().toISOString().slice(0, 10)
 }
 
+// ── 國定假日（2026-11）────────────────────────────────────────────
+// 公司不補班：上班日 = 週一～週五，而且不在 holidays 資料表裡（is_holiday = true）。
+// 每支 function 開始處理前先 await loadHolidays(db)，之後 countWorkdays / nextWorkday /
+// isWorkday 都是同步的。holidays 一年十幾筆，整份讀進來就好。讀失敗就當作沒有假日
+// （只扣週末），不讓整個通知因此發不出去。
+let HOLIDAYS = new Set<string>()
+
+export async function loadHolidays(db: SupabaseClient): Promise<void> {
+  const { data, error } = await db.from('holidays').select('date').eq('is_holiday', true)
+  if (error) { console.error('讀取國定假日失敗：', error.message); return }
+  HOLIDAYS = new Set((data ?? []).map((r: { date: string }) => r.date))
+}
+
+/** 這一天要不要上班（YYYY-MM-DD） */
+export function isWorkday(date: string): boolean {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay()
+  return dow !== 0 && dow !== 6 && !HOLIDAYS.has(date)
+}
+
 /**
- * 從某一天往後找「下一個上班日」，跳過週六與週日。
+ * 從某一天往後找「下一個上班日」，跳過週末與國定假日（要先 loadHolidays）。
  *
- * 用在下午 4 點的預告：週一到週四找到的是明天，週五找到的是下週一 —— 週五
+ * 用在下午 4 點的預告：週一到週四通常是明天，週五找到的是下週一 —— 週五
  * 下班前預告「明天（週六）」沒有意義，大家真正想先知道的是週一誰不在。
- * 國定假日不在這裡處理：系統裡沒有行事曆資料，硬猜只會猜錯；那些日子本來
- * 就沒人請假，最後會是一則「沒有人請假」的公告，無害。
+ * 遇到國定假日也一樣跳過（使用者決定 2026-11）。
  */
 export function nextWorkday(fromDate: string): string {
   const d = new Date(`${fromDate}T00:00:00Z`)
   do {
     d.setUTCDate(d.getUTCDate() + 1)
-  } while (d.getUTCDay() === 0 || d.getUTCDay() === 6)
+  } while (!isWorkday(d.toISOString().slice(0, 10)))
   return d.toISOString().slice(0, 10)
 }
 
@@ -105,14 +123,13 @@ export interface Recipient {
 // 每個函式都收一個 lang 參數：訊息要用「收件人」的語言組出來，同一則訊息
 // 絕對不會中英夾雜。
 
-/** 跨日請假的工作天數（不含週六日）。與網頁版 lib/leaveEntitlements.js 同一套算法。 */
+/** 跨日請假的上班日天數（扣掉週末與國定假日，要先 loadHolidays）。與網頁版 lib/holidays.js 同一套算法。 */
 export function countWorkdays(startDate: string, endDate: string): number {
   let count = 0
-  const current = new Date(startDate)
-  const end = new Date(endDate)
+  const current = new Date(`${startDate.slice(0, 10)}T00:00:00Z`)
+  const end = new Date(`${(endDate || startDate).slice(0, 10)}T00:00:00Z`)
   while (current <= end) {
-    const day = current.getUTCDay()
-    if (day !== 0 && day !== 6) count++
+    if (isWorkday(current.toISOString().slice(0, 10))) count++
     current.setUTCDate(current.getUTCDate() + 1)
   }
   return count

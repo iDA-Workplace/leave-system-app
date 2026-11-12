@@ -14,7 +14,7 @@
 // 人，語言固定，見 SLACK_CHANNEL_LANGUAGE（未設定＝中文，行為與改版前一致）。
 
 import {
-  adminClient, currentApprovers, notificationTargetRecipients,
+  adminClient, currentApprovers, notificationTargetRecipients, loadHolidays,
   leaveDetailLines, digestLine, taipeiNow, taipeiToday, DIGEST_HOUR,
   LEAVE_SELECT, type LeaveRow, type Recipient,
 } from '../_shared/leave.ts'
@@ -46,6 +46,7 @@ Deno.serve(async (req) => {
     const db = adminClient()
 
     if (!request_id) return json({ error: '缺少 request_id' }, 400)
+    await loadHolidays(db)   // 通知裡的「N 天」要扣國定假日
 
     const { data, error } = await db
       .from('leave_requests').select(LEAVE_SELECT).eq('id', request_id).single()
