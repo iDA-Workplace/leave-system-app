@@ -6,6 +6,7 @@ import { useLanguage } from '../context/LanguageContext'
 import { useToast } from '../context/ToastContext'
 import { Button, Card, Chip, Dialog, EmptyState, Select, Skeleton, TextField } from './ui'
 import LeaveAnalytics from './LeaveAnalytics'
+import AttachmentLink from './AttachmentLink'
 import './ResignedStaffDialog.css'
 
 /**
@@ -102,7 +103,7 @@ function PersonRecord({ user, managerName, onChanged }) {
     let cancelled = false
     Promise.all([
       fetchAllRows(() => supabase.from('leave_requests')
-        .select('id, start_date, end_date, hours, status, reason, registered_by, leave_type:leave_types(name, name_en, is_wfh)')
+        .select('id, start_date, end_date, hours, status, reason, registered_by, attachment_path, attachment_url, attachment_name, leave_type:leave_types(name, name_en, is_wfh)')
         .eq('requester_id', user.id).order('start_date', { ascending: false }).order('id')),
       supabase.from('annual_review_participants').select('*, review:annual_reviews(title, year)').eq('user_id', user.id),
       supabase.rpc('annual_leave_settlement', { p_user_id: user.id }),
@@ -200,7 +201,7 @@ function PersonRecord({ user, managerName, onChanged }) {
                       {data.leaves.map(l => (
                         <tr key={l.id}>
                           <td className="tabular">{l.start_date}{l.end_date && l.end_date !== l.start_date ? ` ~ ${l.end_date}` : ''}</td>
-                          <td>{leaveTypeName(l.leave_type, lang)}{l.registered_by && <> <Chip tone="info">{t('resigned_hr_registered')}</Chip></>}</td>
+                          <td>{leaveTypeName(l.leave_type, lang)}{l.registered_by && <> <Chip tone="info">{t('resigned_hr_registered')}</Chip></>}<AttachmentLink leave={l} /></td>
                           <td>{l.hours != null ? t('common_hours', { n: Number(l.hours) }) : t('common_days', { n: countWorkdays(l.start_date, l.end_date) })}</td>
                           <td>{statusText(l.status)}</td>
                         </tr>

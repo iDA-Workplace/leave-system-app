@@ -11,6 +11,7 @@ import { useLanguage } from '../context/LanguageContext'
 import HrRegisterLeaveDialog from '../components/HrRegisterLeaveDialog'
 import HrLeaveAdmin from '../components/HrLeaveAdmin'
 import './MyLeaves.css'
+import AttachmentLink from '../components/AttachmentLink'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 
@@ -174,7 +175,7 @@ function MyLeaves({ userProfile }) {
       .select(`
         *,
         request:leave_requests(
-          start_date, end_date, start_time, end_time, hours,
+          start_date, end_date, start_time, end_time, hours, attachment_path, attachment_url, attachment_name,
           leave_type:leave_types(*),
           proxy:users!leave_requests_proxy_user_id_fkey(full_name),
           requester:users!leave_requests_requester_id_fkey(full_name)
@@ -417,6 +418,7 @@ function MyLeaves({ userProfile }) {
                             )}
                           </td>
                           <td>
+                            <AttachmentLink leave={leave} />{' '}
                             {leave.status === 'pending' && (
                               <Button variant="tonal" size="sm" onClick={() => setWithdrawTarget(leave)}>{t('myleaves_withdraw')}</Button>
                             )}
@@ -469,7 +471,10 @@ function MyLeaves({ userProfile }) {
                           <td>{isMultiDay ? t('common_all_day') : (req?.start_time && req?.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
                           <td>{req ? hoursFor(req, t) : '—'}</td>
                           <td>{req?.proxy?.full_name || '—'}</td>
-                          <td><Chip tone={a.action === 'approved' ? 'success' : 'error'}>{a.action === 'approved' ? t('myleaves_action_approved') : t('myleaves_action_rejected')}</Chip></td>
+                          <td>
+                            <Chip tone={a.action === 'approved' ? 'success' : 'error'}>{a.action === 'approved' ? t('myleaves_action_approved') : t('myleaves_action_rejected')}</Chip>
+                            {req && <AttachmentLink leave={req} />}
+                          </td>
                         </tr>
                       )
                     })}

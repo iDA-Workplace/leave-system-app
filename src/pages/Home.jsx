@@ -7,6 +7,7 @@ import { fetchAnnualLeaveDays, leaveTypeName } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import MassageHomeWidget from './benefits/MassageHomeWidget'
 import './Home.css'
+import AttachmentLink from '../components/AttachmentLink'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 const STATUS_TONES = {
@@ -193,12 +194,8 @@ function Home({ userProfile }) {
     const monthEndDate = new Date(calendarMonth.getFullYear(), calendarMonth.getMonth() + 1, 0)
     const monthEnd = toISODate(monthEndDate)
 
-    const { data } = await supabase
-      .from('leave_requests')
-      .select('start_date, end_date')
-      .eq('status', 'approved')
-      .lte('start_date', monthEnd)
-      .gte('end_date', monthStart)
+    // 別人的假只看得到「已核准」的基本欄位（2026-11 資料權限），走資料庫函式而不是直接讀假單
+    const { data } = await supabase.rpc('approved_leaves_between', { p_start: monthStart, p_end: monthEnd })
 
     const dates = new Set()
     for (const leave of data || []) {
@@ -216,12 +213,9 @@ function Home({ userProfile }) {
 
   async function fetchColleaguesForDate(dateISO) {
     setExpandedColleagueIds(new Set())
-    const { data } = await supabase
-      .from('leave_requests')
-      .select('requester:users!leave_requests_requester_id_fkey(id, full_name)')
-      .eq('status', 'approved')
-      .lte('start_date', dateISO)
-      .gte('end_date', dateISO)
+    // 別人的假只看得到「已核准」的基本欄位（2026-11 資料權限），走資料庫函式
+    const { data: rows } = await supabase.rpc('approved_leaves_between', { p_start: dateISO, p_end: dateISO })
+    const data = (rows || []).map(r => ({ requester: { id: r.requester_id, full_name: r.requester_name } }))
 
     // One row per approved request, but one person can hold several requests
     // covering the same day (a long multi-day leave plus a separate part-day
@@ -520,7 +514,7 @@ function Home({ userProfile }) {
                             </div>
                           </td>
                           <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{leaveTypeName(req.leave_type, lang)}</Chip></td>
-                          <td>{req.start_date}</td>
+                          <td>{req.start_date}<AttachmentLink leave={req} /></td>
                           <td>
                             <div className="dash-approval-table__actions">
                               <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label={t('home_reject')}>✕</Button>

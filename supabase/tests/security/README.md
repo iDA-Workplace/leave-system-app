@@ -14,6 +14,8 @@ createdb sect
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/00_stub.sql
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/10_tests.sql   # 要在 repo 根目錄執行（裡面用 \i 載入 migration）
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/20_hr_admin_tests.sql   # 接著跑：20261112 HR 擁有管理員功能（共 71 項）
+# 或者（另開一個資料庫，00 → 10 → 30）：20261117 假單資料權限＋附件不公開（共 73 項）
+psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/30_privacy_tests.sql
 ```
 
 最後會列出每一項 PASS／FAIL；有任何 FAIL 會以錯誤結束。
