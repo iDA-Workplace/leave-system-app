@@ -502,7 +502,7 @@ function Home({ userProfile }) {
                 <div className="ui-table-wrap">
                   <table className="ui-table dash-approval-table">
                     <thead>
-                      <tr><th>{t('home_employee_name')}</th><th>{t('field_leave_type')}</th><th>{t('field_leave_dates')}</th><th>{t('common_actions')}</th></tr>
+                      <tr><th>{t('home_employee_name')}</th><th>{t('field_leave_type')}</th><th>{t('field_leave_dates')}</th><th>{t('field_reason')}</th><th>{t('common_actions')}</th></tr>
                     </thead>
                     <tbody>
                       {pageRows.map(req => (
@@ -514,7 +514,9 @@ function Home({ userProfile }) {
                             </div>
                           </td>
                           <td><Chip tone="info" style={{ background: (req.leave_type?.color || 'var(--sys-color-primary)') + '22', color: req.leave_type?.color || 'var(--sys-color-primary)' }}>{leaveTypeName(req.leave_type, lang)}</Chip></td>
-                          <td>{req.start_date}<AttachmentLink leave={req} /></td>
+                          <td>{req.end_date && req.end_date > req.start_date ? `${req.start_date} ~ ${req.end_date}` : req.start_date}</td>
+                          {/* 事由（使用者 2026-11 要求簽核人看得到）＋附件 */}
+                          <td><span className="leave-reason" title={req.reason || ''}>{req.reason || '—'}</span><AttachmentLink leave={req} /></td>
                           <td>
                             <div className="dash-approval-table__actions">
                               <Button size="sm" variant="danger-outlined" disabled={actingId === req.id} onClick={() => setRejectTarget(req)} aria-label={t('home_reject')}>✕</Button>

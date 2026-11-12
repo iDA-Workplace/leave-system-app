@@ -54,3 +54,15 @@ body {
   white-space: nowrap;
 }
 .attachment-link:disabled { opacity: 0.6; cursor: progress; }
+
+/* 假單事由（首頁待簽核、簽核紀錄）：最多兩行，滑過看全文 */
+.leave-reason {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  max-width: 260px;
+  min-width: 120px;
+  white-space: normal;
+  word-break: break-word;
+}

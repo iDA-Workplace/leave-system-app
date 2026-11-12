@@ -175,7 +175,7 @@ function MyLeaves({ userProfile }) {
       .select(`
         *,
         request:leave_requests(
-          start_date, end_date, start_time, end_time, hours, attachment_path, attachment_url, attachment_name,
+          start_date, end_date, start_time, end_time, hours, reason, attachment_path, attachment_url, attachment_name,
           leave_type:leave_types(*),
           proxy:users!leave_requests_proxy_user_id_fkey(full_name),
           requester:users!leave_requests_requester_id_fkey(full_name)
@@ -459,7 +459,7 @@ function MyLeaves({ userProfile }) {
             <>
               <div className="ui-table-wrap">
                 <table className="ui-table">
-                  <thead><tr><th>{t('field_requester')}</th><th>{t('field_leave_dates')}</th><th>{t('field_time')}</th><th>{t('field_hours')}</th><th>{t('field_proxy')}</th><th>{t('myleaves_approval_result')}</th></tr></thead>
+                  <thead><tr><th>{t('field_requester')}</th><th>{t('field_leave_dates')}</th><th>{t('field_time')}</th><th>{t('field_hours')}</th><th>{t('field_proxy')}</th><th>{t('field_reason')}</th><th>{t('myleaves_approval_result')}</th></tr></thead>
                   <tbody>
                     {pageRows.map(a => {
                       const req = a.request
@@ -471,6 +471,7 @@ function MyLeaves({ userProfile }) {
                           <td>{isMultiDay ? t('common_all_day') : (req?.start_time && req?.end_time ? `${req.start_time} ~ ${req.end_time}` : '—')}</td>
                           <td>{req ? hoursFor(req, t) : '—'}</td>
                           <td>{req?.proxy?.full_name || '—'}</td>
+                          <td><span className="leave-reason" title={req?.reason || ''}>{req?.reason || '—'}</span></td>
                           <td>
                             <Chip tone={a.action === 'approved' ? 'success' : 'error'}>{a.action === 'approved' ? t('myleaves_action_approved') : t('myleaves_action_rejected')}</Chip>
                             {req && <AttachmentLink leave={req} />}
