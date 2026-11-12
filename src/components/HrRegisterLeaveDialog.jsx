@@ -64,6 +64,10 @@ function HrRegisterLeaveDialog({ hrUser, onClose, onDone }) {
     if (form.end_date < form.start_date) {
       showToast(t('leaveform_err_date_order'), { tone: 'error' }); return
     }
+    // HR 代登也一樣：整張都落在假日（國定假日或週末）不能登記（使用者決定 2026-11；資料庫也會擋）
+    if (countWorkdays(form.start_date, form.end_date) === 0) {
+      showToast(t('leave_err_all_holiday'), { tone: 'error' }); return
+    }
     if (!isMultiDay && form.end_time <= form.start_time) {
       showToast(t('leaveform_time_order_error'), { tone: 'error' }); return
     }

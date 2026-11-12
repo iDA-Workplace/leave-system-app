@@ -6,6 +6,7 @@ import { invokeFunction } from '../lib/api'
 import ExportReport from './ExportReport'
 import EmployeeLeaveManagement from './EmployeeLeaveManagement'
 import LeaveTypeNames from './LeaveTypeNames'
+import HolidayManagement from './HolidayManagement'
 import { Button, Card, Chip, ConfirmDialog, Dialog, PageHeader, Select, Skeleton, Tabs, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
@@ -704,6 +705,8 @@ function AdminPanel({ userProfile }) {
     tabs.push({ key: 'notifications', path: '/admin/notifications', label: t('adminnotify_tab') })
     // HR 的「員工假期管理」裡也有同一張卡片；使用者要求 HR 也有這個分頁（2026-11）
     tabs.push({ key: 'leave-type-names', path: '/admin/leave-type-names', label: t('ltnames_title') })
+    // 國定假日：管理員與 HR 都能匯入；新增、修改、刪除只有 HR（頁面裡判斷，資料庫也擋）
+    tabs.push({ key: 'holidays', path: '/admin/holidays', label: t('holiday_tab') })
   }
   if (isFinance) {
     tabs.push({ key: 'leave-entitlements', path: '/admin/leave-entitlements', label: t('finleave_title') })
@@ -723,6 +726,7 @@ function AdminPanel({ userProfile }) {
         <Route path="flows" element={<FlowManagement isAdmin={canManageSystem} />} />
         <Route path="notifications" element={<NotificationTargets isAdmin={canManageSystem} />} />
         <Route path="leave-type-names" element={<LeaveTypeNames />} />
+        <Route path="holidays" element={<HolidayManagement userProfile={userProfile} />} />
         {isFinance && <Route path="leave-entitlements" element={<EmployeeLeaveManagement userProfile={userProfile} />} />}
         <Route path="change-password" element={<Navigate to="/settings" replace />} />
         <Route path="benefits" element={<BenefitsSettings />} />

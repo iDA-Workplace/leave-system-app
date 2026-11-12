@@ -5,7 +5,7 @@ import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skel
 import { useToast } from '../context/ToastContext'
 import {
   buildBalanceRows, fetchEntitlementOverrides,
-  leaveTypeName, HOURS_PER_DAY,
+  leaveTypeName, HOURS_PER_DAY, countWorkdays,
 } from '../lib/leaveEntitlements'
 import { useLanguage } from '../context/LanguageContext'
 import HrRegisterLeaveDialog from '../components/HrRegisterLeaveDialog'
@@ -550,19 +550,6 @@ function filterByYearMonth(rows, year, month, getDate) {
 function paginate(rows, page, pageSize) {
   const start = (page - 1) * pageSize
   return rows.slice(start, start + pageSize)
-}
-
-function countWorkdays(startDate, endDate) {
-  let count = 0
-  const start = new Date(startDate)
-  const end = new Date(endDate)
-  const current = new Date(start)
-  while (current <= end) {
-    const day = current.getDay()
-    if (day !== 0 && day !== 6) count++
-    current.setDate(current.getDate() + 1)
-  }
-  return count
 }
 
 export default MyLeaves

@@ -118,6 +118,7 @@ const T = {
     modal_attachment_hint: '附件請到管理系統網頁補上（Slack 表單不支援上傳檔案）。',
 
     err_end_before_start: '結束日期不能早於開始日期',
+    err_all_holiday: '選的日期都是假日（國定假日或週末），不用請假',
     err_end_time_before_start: '結束時間必須晚於開始時間',
     err_no_flow: '您尚未被指定審核流程，請聯繫管理員設定。',
     err_submit_failed: '送出失敗：{msg}',
@@ -270,6 +271,7 @@ const T = {
     modal_attachment_hint: 'Attach files from the Management Portal website — the Slack form does not support uploads.',
 
     err_end_before_start: 'End date cannot be earlier than start date',
+    err_all_holiday: 'Every selected day is a holiday or weekend — no leave needed',
     err_end_time_before_start: 'End time must be later than start time',
     err_no_flow: 'No approval flow has been assigned to you. Please contact an administrator.',
     err_submit_failed: 'Submission failed: {msg}',
@@ -472,13 +474,30 @@ function calcHours(start: string, end: string): number {
   return Math.max(0, total / 60)
 }
 
+// ── 國定假日（2026-11）──────────────────────────────────────────
+// 上班日 = 週一～週五而且不在 holidays（is_holiday = true）。每個請求開始時 ensureHolidays()，
+// 同一個執行個體 10 分鐘內共用（Slack 要求 3 秒內回應，不每次都查）。讀失敗就當作沒有假日。
+let HOLIDAYS = new Set<string>()
+let holidaysAt = 0
+async function ensureHolidays(db: SupabaseClient) {
+  if (Date.now() - holidaysAt < 10 * 60_000) return
+  const { data, error } = await db.from('holidays').select('date').eq('is_holiday', true)
+  if (error) { console.error('讀取國定假日失敗：', error.message); return }
+  HOLIDAYS = new Set((data ?? []).map((r: { date: string }) => r.date))
+  holidaysAt = Date.now()
+}
+function isWorkday(date: string): boolean {
+  const dow = new Date(`${date}T00:00:00Z`).getUTCDay()
+  return dow !== 0 && dow !== 6 && !HOLIDAYS.has(date)
+}
+
+/** 上班日天數（扣掉週末與國定假日）。與網頁版 lib/holidays.js 同一套算法。 */
 function countWorkdays(startDate: string, endDate: string): number {
   let count = 0
-  const current = new Date(startDate)
-  const end = new Date(endDate)
+  const current = new Date(`${startDate.slice(0, 10)}T00:00:00Z`)
+  const end = new Date(`${(endDate || startDate).slice(0, 10)}T00:00:00Z`)
   while (current <= end) {
-    const day = current.getUTCDay()
-    if (day !== 0 && day !== 6) count++
+    if (isWorkday(current.toISOString().slice(0, 10))) count++
     current.setUTCDate(current.getUTCDate() + 1)
   }
   return count
@@ -951,6 +970,10 @@ async function handleHrRegisterSubmit(db: SupabaseClient, me: any, lang: Lang, p
   if (endDate < startDate) {
     return json({ response_action: 'errors', errors: { end_date: t(lang, 'err_end_before_start') } })
   }
+  // HR 代登也一樣：整張都落在假日不能登記（使用者決定 2026-11；資料庫也會擋）
+  if (countWorkdays(startDate, endDate) === 0) {
+    return json({ response_action: 'errors', errors: { start_date: t(lang, 'err_all_holiday') } })
+  }
   const multiDay = endDate > startDate
   const hours = multiDay ? null : calcHours(startTime, endTime)
   if (!multiDay && (hours ?? 0) <= 0) {
@@ -1061,6 +1084,7 @@ Deno.serve(async (req) => {
 
   const db = adminClient()
   const contentType = req.headers.get('content-type') ?? ''
+  await ensureHolidays(db)
 
   try {
     if (contentType.includes('application/json')) {
@@ -1389,6 +1413,10 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
 
   if (endDate < startDate) {
     return json({ response_action: 'errors', errors: { end_date: t(lang, 'err_end_before_start') } })
+  }
+  // 整張都落在假日（國定假日或週末）不用請假（使用者決定 2026-11；資料庫也會擋）
+  if (countWorkdays(startDate, endDate) === 0) {
+    return json({ response_action: 'errors', errors: { start_date: t(lang, 'err_all_holiday') } })
   }
 
   const isMultiDay = endDate > startDate

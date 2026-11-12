@@ -25,7 +25,7 @@
 // 沒設定就維持原本全部中文的行為。
 
 import {
-  adminClient, digestLine, groupBySlot, taipeiToday, nextWorkday,
+  adminClient, digestLine, groupBySlot, taipeiToday, nextWorkday, loadHolidays, isWorkday,
   LEAVE_SELECT, type LeaveRow,
 } from '../_shared/leave.ts'
 import { postToChannel, section, contextLine, requireEnv } from '../_shared/slack.ts'
@@ -62,6 +62,13 @@ Deno.serve(async req => {
     // 不必再組 JSON，出錯的機會少一點。
     const scope = new URL(req.url).searchParams.get('scope') === 'next' ? 'next' : 'today'
     const today = taipeiToday()
+    await loadHolidays(db)
+    // 國定假日當天兩則都不發（使用者決定 2026-11）；排程本來就只在週一～週五跑
+    if (!isWorkday(today)) {
+      return new Response(JSON.stringify({ ok: true, skipped: 'holiday', date: today }), {
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
     const target = scope === 'next' ? nextWorkday(today) : today
     const tomorrow = scope === 'next' && isTomorrow(today, target)
     const params = dateParams(lang, target)

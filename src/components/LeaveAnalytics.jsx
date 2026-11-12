@@ -3,6 +3,7 @@ import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import { fetchAllRows } from '../lib/fetchAllRows'
 import { computeLeaveStats, leaveDayParts } from '../lib/leaveStats'
+import { getHolidays } from '../lib/holidays'
 import { leaveTypeName, HOURS_PER_DAY } from '../lib/leaveEntitlements'
 import { Button, Card, EmptyState, Select, Skeleton } from './ui'
 import { useLanguage } from '../context/LanguageContext'
@@ -60,9 +61,11 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
       const overrides = new Map((overridesRes.data || [])
         .filter(o => o.leave_type_id === annualTypeId && o.quota_hours != null)
         .map(o => [o.user_id, Number(o.quota_hours) / HOURS_PER_DAY]))
+      // 國定假日：登入時已讀好（lib/holidays.js），跟請假表單、特休餘額同一份
+      const holidays = getHolidays()
       const approvedAnnual = new Map()
       for (const lr of annualLeavesRes.data || []) {
-        const days = leaveDayParts(lr).reduce((s, x) => s + x.days, 0)
+        const days = leaveDayParts(lr, holidays).reduce((s, x) => s + x.days, 0)
         approvedAnnual.set(lr.requester_id, (approvedAnnual.get(lr.requester_id) ?? 0) + days)
       }
       const annual = (summaryRes.data || []).map(r => ({
@@ -78,7 +81,7 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
       setState({
         loading: false, error: null,
         data: {
-          ...computeLeaveStats({ leaves: leavesRes.data || [], users: usersRes.data || [], start: startDate, end: endDate, annual }),
+          ...computeLeaveStats({ leaves: leavesRes.data || [], users: usersRes.data || [], start: startDate, end: endDate, annual, holidays }),
           typeSlot: id => slot.get(String(id)) ?? 'other',
         },
       })
