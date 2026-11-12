@@ -15,7 +15,8 @@ import './LeaveAnalytics.css'
  *   9 特休使用狀況、10 職務代理人、12 HR 代登與異議（放在每人統計表裡）
  * 網頁上看，也可以匯出 Excel。只算已核准、不含離職同仁、WFH 另外算（見 lib/leaveStats.js）。
  *
- * scope：'all' = 全公司（HR）；之後主管的「團隊請假統計」會傳 { managerId } 只看直屬部屬。
+ * scope：'all' = 全公司（HR）；{ managerId } = 主管的「團隊請假統計」只看直屬部屬；
+ *        { userId } = 離職同仁專區看單一位同仁（含已停用的帳號）。
  */
 // 各區塊的代號。HR 全部都有；主管的「團隊請假統計」由使用者 2026-11 選定只顯示
 // departments、proxies、person、annual（Excel 匯出一樣是完整的統計總表）。
@@ -27,6 +28,7 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all', sect
 
   const valid = !!startDate && !!endDate && startDate <= endDate
   const managerId = scope === 'all' ? null : scope?.managerId ?? null
+  const userId = scope === 'all' ? null : scope?.userId ?? null
 
   useEffect(() => {
     if (!valid) return
@@ -34,7 +36,9 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all', sect
     ;(async () => {
       // 換期間時：舊的數字先留著、變淡（stats--busy），新的讀完再換掉
       setState(s => ({ ...s, loading: true, error: null }))
-      let usersQ = supabase.from('users').select('id, full_name, department, manager_id').eq('is_active', true).order('full_name')
+      let usersQ = supabase.from('users').select('id, full_name, department, manager_id').order('full_name')
+      // 一般只算在職同仁；離職同仁專區指定一個人時，不管他是不是已停用
+      usersQ = userId ? usersQ.eq('id', userId) : usersQ.eq('is_active', true)
       if (managerId) usersQ = usersQ.eq('manager_id', managerId)
       const year = new Date().getFullYear()
       const [usersRes, leavesRes, summaryRes, typesRes, overridesRes, annualLeavesRes] = await Promise.all([
@@ -91,7 +95,7 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all', sect
       })
     })()
     return () => { cancelled = true }
-  }, [startDate, endDate, managerId, valid])
+  }, [startDate, endDate, managerId, userId, valid])
 
   const stats = state.data
   const typeLabel = ty => (ty ? leaveTypeName(ty, lang) : t('stats_unknown_type'))
@@ -277,11 +281,13 @@ function PersonDetail({ stats, typeLabel, dept, pct, t }) {
     <Card>
       <div className="stats__person-head">
         <h3 className="stats__card-title">{t('stats_s_person')}</h3>
-        <div className="stats__person-pick">
-          <Select value={p.user.id} onChange={e => setPicked(e.target.value)} aria-label={t('stats_pick_person')}>
-            {people.map(x => <option key={x.user.id} value={x.user.id}>{x.user.full_name}（{dept(x.user.department)}）</option>)}
-          </Select>
-        </div>
+        {people.length > 1 && (
+          <div className="stats__person-pick">
+            <Select value={p.user.id} onChange={e => setPicked(e.target.value)} aria-label={t('stats_pick_person')}>
+              {people.map(x => <option key={x.user.id} value={x.user.id}>{x.user.full_name}（{dept(x.user.department)}）</option>)}
+            </Select>
+          </div>
+        )}
       </div>
       <div className="stats__tiles stats__tiles--small">
         <Tile label={t('stats_col_days')} value={p.days} unit={t('stats_unit_days')} />
@@ -297,8 +303,18 @@ function PersonDetail({ stats, typeLabel, dept, pct, t }) {
       )}
       <div className="stats__grid stats__grid--inner">
         <div>
-          <h4 className="stats__sub-title">{t('stats_person_months')}</h4>
-          <MonthColumns rows={p.byMonth} unit={t('stats_unit_days')} monthSuffix={t('stats_month_suffix')} />
+          {/* 期間超過 24 個月（例如離職同仁的整個在職期間）改成一年一根，不然擠不下 */}
+          {p.byMonth.length > 24 ? (
+            <>
+              <h4 className="stats__sub-title">{t('stats_person_years')}</h4>
+              <MonthColumns rows={byYear(p.byMonth)} unit={t('stats_unit_days')} monthSuffix={t('stats_year_suffix')} />
+            </>
+          ) : (
+            <>
+              <h4 className="stats__sub-title">{t('stats_person_months')}</h4>
+              <MonthColumns rows={p.byMonth} unit={t('stats_unit_days')} monthSuffix={t('stats_month_suffix')} />
+            </>
+          )}
         </div>
         <div>
           <h4 className="stats__sub-title">{t('stats_person_types')}</h4>
@@ -342,10 +358,18 @@ function Bars({ rows }) {
 }
 
 /** 月份直條：每月請假天數（不含 WFH），數字在條上方 */
+/** 每月的天數加總成每年（month 欄位放 'YYYY'） */
+function byYear(rows) {
+  const m = new Map()
+  for (const r of rows) m.set(r.month.slice(0, 4), (m.get(r.month.slice(0, 4)) ?? 0) + r.days)
+  return [...m.entries()].map(([y, days]) => ({ month: y, days: Math.round(days * 10) / 10 }))
+}
+
 function MonthColumns({ rows, unit, monthSuffix }) {
   const max = useMemo(() => Math.max(0, ...rows.map(r => r.days)), [rows])
+  const yearly = rows.length > 0 && rows[0].month.length === 4
   // 期間跨年時月份要帶年份，不然 1 月、12 月分不出是哪一年
-  const multiYear = rows.length > 0 && rows[0].month.slice(0, 4) !== rows[rows.length - 1].month.slice(0, 4)
+  const multiYear = !yearly && rows.length > 0 && rows[0].month.slice(0, 4) !== rows[rows.length - 1].month.slice(0, 4)
   return (
     <div className="stats__cols" style={{ gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` }}>
       {rows.map(r => (
@@ -353,7 +377,7 @@ function MonthColumns({ rows, unit, monthSuffix }) {
           <span className="stats__col-value">{r.days || ''}</span>
           <span className="stats__col-bar" style={{ height: max ? `${Math.max(r.days ? 3 : 0, (r.days / max) * 100)}%` : 0 }} />
           <span className="stats__col-label">
-            {multiYear ? `${r.month.slice(2, 4)}/${Number(r.month.slice(5))}` : Number(r.month.slice(5))}
+            {yearly ? r.month : multiYear ? `${r.month.slice(2, 4)}/${Number(r.month.slice(5))}` : Number(r.month.slice(5))}
             {!multiYear && <span className="stats__col-unit">{monthSuffix}</span>}
           </span>
         </div>
