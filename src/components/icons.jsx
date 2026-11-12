@@ -163,3 +163,13 @@ export const CloseIcon = (props) => (
     <path d="M5 5l14 14M19 5L5 19" />
   </Icon>
 )
+
+// 團隊請假統計（長條圖）
+export const ChartIcon = (props) => (
+  <Icon {...props}>
+    <path d="M4 20h16" />
+    <rect x="5.5" y="11" width="3" height="6.5" rx="0.8" />
+    <rect x="10.5" y="6.5" width="3" height="11" rx="0.8" />
+    <rect x="15.5" y="13.5" width="3" height="4" rx="0.8" />
+  </Icon>
+)

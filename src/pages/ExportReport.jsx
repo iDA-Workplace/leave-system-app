@@ -7,11 +7,8 @@ import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
 import { leaveTypeName } from '../lib/leaveEntitlements'
 import LeaveAnalytics from '../components/LeaveAnalytics'
+import { quickRange, toISODate } from '../lib/dateRange'
 import './ExportReport.css'
-
-function toISODate(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-}
 
 /**
  * 把人名整理成 Excel 能接受的分頁名稱。
@@ -33,16 +30,6 @@ function safeSheetName(rawName, existingNames) {
     const candidate = base.slice(0, 31 - suffix.length) + suffix
     if (!existingNames.includes(candidate)) return candidate
   }
-}
-
-/** 快速選擇的期間：本月、本季、今年（使用者要求） */
-function quickRange(kind) {
-  const now = new Date()
-  const y = now.getFullYear()
-  const m = now.getMonth()
-  if (kind === 'month') return [toISODate(new Date(y, m, 1)), toISODate(new Date(y, m + 1, 0))]
-  if (kind === 'quarter') { const q = Math.floor(m / 3) * 3; return [toISODate(new Date(y, q, 1)), toISODate(new Date(y, q + 3, 0))] }
-  return [toISODate(new Date(y, 0, 1)), toISODate(new Date(y, 11, 31))]
 }
 
 function ExportReport() {
