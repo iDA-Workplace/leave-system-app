@@ -4,9 +4,10 @@ import { supabase } from '../lib/supabase'
 import { fetchAwaitingMyScoreCount, REVIEW_TODO_EVENT } from '../lib/reviewTodo'
 import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../context/LanguageContext'
+import { TEAM_STATS_ROLES } from '../lib/teamStats'
 import {
   DashboardIcon, AddNoteIcon, ListIcon,
-  ReviewIcon, BenefitsIcon, AdminIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
+  ReviewIcon, BenefitsIcon, AdminIcon, ChartIcon, SettingsIcon, ChevronLeftIcon, MoreIcon,
   BellIcon, SunIcon, MoonIcon, LogoutIcon, CloseIcon, SearchIcon,
 } from './icons'
 import './AppShell.css'
@@ -32,6 +33,8 @@ function buildNavItems(userProfile, t, reviewTodoCount) {
     // 徽章＝有幾位部屬已經交出自評、正等著我評分。只放在側邊選單還不夠直觀，
     // 主管平常不會沒事點進考核管理，數字要在外面就看得到。
     { path: '/review', label: t('nav_review'), icon: ReviewIcon, badge: reviewTodoCount },
+    // 團隊請假統計：主管／副主管／老闆看直屬部屬（使用者 2026-11）
+    ...(TEAM_STATS_ROLES.includes(userProfile?.role) ? [{ path: '/team-stats', label: t('nav_team_stats'), icon: ChartIcon }] : []),
     // 員工福利：按摩預約（之後的員工旅遊等也放這裡，選單才不會越長越多）
     { path: '/benefits', label: t('nav_benefits'), icon: BenefitsIcon },
   ]

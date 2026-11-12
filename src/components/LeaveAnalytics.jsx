@@ -17,7 +17,11 @@ import './LeaveAnalytics.css'
  *
  * scope：'all' = 全公司（HR）；之後主管的「團隊請假統計」會傳 { managerId } 只看直屬部屬。
  */
-export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
+// 各區塊的代號。HR 全部都有；主管的「團隊請假統計」由使用者 2026-11 選定只顯示
+// departments、proxies、person、annual（Excel 匯出一樣是完整的統計總表）。
+const ALL_SECTIONS = ['overview', 'months', 'types', 'departments', 'proxies', 'person', 'annual']
+
+export default function LeaveAnalytics({ startDate, endDate, scope = 'all', sections = ALL_SECTIONS }) {
   const { t, lang } = useLanguage()
   const [state, setState] = useState({ loading: true, error: null, data: null })
 
@@ -146,6 +150,9 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
   if (!stats) return null
 
   const o = stats.overview
+  const show = key => sections.includes(key)
+  // 主管沒有任何在職的直屬部屬
+  if (managerId && o.headcount === 0) return <Card><EmptyState title={t('stats_no_team')} description={t('stats_no_team_desc')} /></Card>
   return (
     <div className={`stats ${state.loading ? 'stats--busy' : ''}`}>
       <div className="stats__head">
@@ -157,13 +164,17 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
       </div>
 
       {/* 1 總覽 */}
-      <div className="stats__tiles">
-        <Tile label={t('stats_total_days')} value={o.totalDays} unit={t('stats_unit_days')} />
-        <Tile label={t('stats_avg_days')} value={o.avgPerPerson} unit={t('stats_unit_days')} />
-        <Tile label={t('stats_leave_count')} value={o.leaveCount} unit={t('stats_unit_count')} />
-        <Tile label={t('stats_wfh_days')} value={o.wfhDays} unit={t('stats_unit_days')} />
-      </div>
-      <p className="stats__note">{t('stats_people_note', { n: o.headcount, k: o.peopleWithLeave })}</p>
+      {show('overview') && (
+        <>
+          <div className="stats__tiles">
+            <Tile label={t('stats_total_days')} value={o.totalDays} unit={t('stats_unit_days')} />
+            <Tile label={t('stats_avg_days')} value={o.avgPerPerson} unit={t('stats_unit_days')} />
+            <Tile label={t('stats_leave_count')} value={o.leaveCount} unit={t('stats_unit_count')} />
+            <Tile label={t('stats_wfh_days')} value={o.wfhDays} unit={t('stats_unit_days')} />
+          </div>
+          <p className="stats__note">{t('stats_people_note', { n: o.headcount, k: o.peopleWithLeave })}</p>
+        </>
+      )}
 
       {o.leaveCount === 0 && o.wfhDays === 0 ? (
         <Card><EmptyState title={t('stats_empty')} /></Card>
@@ -171,29 +182,29 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
         <>
           <div className="stats__grid">
             {/* 4 月份趨勢 */}
-            <Card>
+            {show('months') && <Card>
               <h3 className="stats__card-title">{t('stats_s_months')}</h3>
               <MonthColumns rows={stats.byMonth} unit={t('stats_unit_days')} monthSuffix={t('stats_month_suffix')} />
-            </Card>
+            </Card>}
             {/* 3 假別分布 */}
-            <Card>
+            {show('types') && <Card>
               <h3 className="stats__card-title">{t('stats_s_types')}</h3>
               <Bars rows={stats.byType.map(x => ({
                 key: x.id, label: typeLabel(x.type), value: x.days,
                 text: t('stats_type_line', { days: x.days, n: x.count, pct: pct(x.share) }),
               }))} />
-            </Card>
+            </Card>}
             {/* 5 部門統計 */}
-            <Card>
+            {show('departments') && <Card>
               <h3 className="stats__card-title">{t('stats_s_departments')}</h3>
               <p className="stats__card-sub">{t('stats_dept_sub')}</p>
               <Bars rows={stats.byDepartment.map(d => ({
                 key: d.department, label: dept(d.department), value: d.avg,
                 text: t('stats_dept_line', { avg: d.avg, n: d.headcount, days: d.days }),
               }))} />
-            </Card>
+            </Card>}
             {/* 10 職務代理人 */}
-            <Card>
+            {show('proxies') && <Card>
               <h3 className="stats__card-title">{t('stats_s_proxies')}</h3>
               {stats.proxies.length === 0 ? <p className="stats__card-sub">{t('stats_no_proxies')}</p> : (
                 <Bars rows={stats.proxies.slice(0, 10).map(p => ({
@@ -201,17 +212,17 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
                   text: t('stats_proxy_line', { n: p.count, days: p.days }),
                 }))} />
               )}
-            </Card>
+            </Card>}
           </div>
 
           {/* 2 個人請假狀況：選一位同仁看他的圖表 */}
           {/* 網頁上不放每人統計表（使用者 2026-11 決定拿掉）；完整的每人數字在「匯出統計總表」的 Excel 裡 */}
-          <PersonDetail stats={stats} typeLabel={typeLabel} dept={dept} pct={pct} t={t} />
+          {show('person') && <PersonDetail stats={stats} typeLabel={typeLabel} dept={dept} pct={pct} t={t} />}
         </>
       )}
 
       {/* 9 特休使用狀況（今年；跟查詢期間無關） */}
-      <Card>
+      {show('annual') && <Card>
         <h3 className="stats__card-title">{t('stats_s_annual')}</h3>
         <p className="stats__card-sub">{t('stats_annual_sub', { y: new Date().getFullYear() })}</p>
         <div className="stats__table-wrap">
@@ -240,7 +251,7 @@ export default function LeaveAnalytics({ startDate, endDate, scope = 'all' }) {
             </tbody>
           </table>
         </div>
-      </Card>
+      </Card>}
     </div>
   )
 }

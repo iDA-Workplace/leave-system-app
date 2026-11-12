@@ -13,6 +13,7 @@ import Review from './pages/Review'
 import Settings from './pages/Settings'
 import InstallGuide from './pages/InstallGuide'
 import Benefits from './pages/benefits/Benefits'
+import TeamLeaveStats from './pages/TeamLeaveStats'
 import { useLanguage } from './context/LanguageContext'
 
 function App() {
@@ -84,6 +85,7 @@ function App() {
         <Route path="/approval" element={<Navigate to="/leave/my" replace />} />
         <Route path="/admin/*" element={<AdminPanel userProfile={userProfile} />} />
         <Route path="/benefits/*" element={<Benefits userProfile={userProfile} />} />
+        <Route path="/team-stats" element={<TeamLeaveStats userProfile={userProfile} />} />
         <Route path="/settings" element={<Settings userProfile={userProfile} />} />
         <Route path="/install" element={<InstallGuide />} />
         <Route path="*" element={<Navigate to="/" />} />
