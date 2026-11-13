@@ -34,6 +34,11 @@
 //   b. 把 Slack user id 對應回系統帳號，對不到就拒絕
 //   c. 動作發生的當下「重新」檢查權限與狀態，不信任按鈕上帶的任何資訊
 //      （按鈕可能是三天前發的，那張假單早就在網頁上被處理掉了）
+//
+// ── App 推播（2026-11）─────────────────────────────────────────────
+// 發給「別人」的私訊（待審核、已核准、已駁回、代登記、異議、代理人、按摩撞假）
+// 都同時發 App 推播（pushTo，交給 send-push 那支發），沒有 Slack ID 但有開 App
+// 通知的人也收得到。回覆給「正在 Slack 上操作的本人」的訊息不發推播 —— 他人就在 Slack 上。
 
 import { createClient, type SupabaseClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
@@ -623,6 +628,66 @@ function dm(slackUserId: string, text: string, blocks: unknown[]) {
   return callSlack('chat.postMessage', { channel: slackUserId, text, blocks, unfurl_links: false })
 }
 
+// ---- App 推播（與 _shared/push.ts 同一份邏輯；這支刻意不 import 共用檔，見檔頭）----
+
+interface PushOptions { url: string; tag?: string; todo?: boolean }
+
+/** 同一則 Slack 訊息也發成 App 推播。失敗只記 log，絕不影響 Slack 與原本的流程。 */
+async function pushTo(userIds: (string | null | undefined)[], text: string, blocks: unknown[], opts: PushOptions) {
+  const ids = [...new Set(userIds.filter((x): x is string => !!x))]
+  const url = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (ids.length === 0 || !url || !key) return
+  try {
+    const res = await fetch(`${url}/functions/v1/send-push`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'send', user_ids: ids, ...slackToPush(text, blocks), ...opts }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const body = await res.text()
+    if (!res.ok) console.error(`推播失敗 ${res.status}: ${body.slice(0, 300)}`)
+  } catch (e) {
+    console.error('推播失敗', e)
+  }
+}
+
+/** Slack 訊息 → 推播文字：標題用 Slack 的 text，內文是各段文字去掉 Slack 格式。 */
+function slackToPush(text: string, blocks?: unknown[]) {
+  const parts: string[] = []
+  for (const b of (blocks ?? []) as { type?: string; text?: { text?: string }; elements?: { text?: string }[] }[]) {
+    if (b?.type === 'section' && b.text?.text) parts.push(b.text.text)
+    else if (b?.type === 'context') for (const e of b.elements ?? []) if (e?.text) parts.push(e.text)
+  }
+  const lines = parts.join('\n').split('\n')
+  if (lines.length > 1 && /^\s*(:[a-z0-9_+-]+:\s*|\p{Extended_Pictographic}\s*)?\*[^*]+\*\s*$/u.test(lines[0])) lines.shift()
+  const body = lines.map(pushPlain).filter(Boolean).join('\n')
+  return { title: pushPlain(text), body: body.length > 600 ? body.slice(0, 599) + '…' : body }
+}
+
+function pushPlain(s: string): string {
+  return s
+    .replace(/<([^|>]+)\|([^>]+)>/g, '$2')
+    .replace(/<[@#!][^>]*>/g, '')
+    .replace(/<(https?:[^>]+)>/g, '$1')
+    .replace(/:[a-z0-9_+-]+:/g, '')
+    .replace(/[*~`]/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+}
+
+/** 私訊（有 Slack ID 才發）＋ App 推播（有系統帳號才發）。 */
+async function dmAndPush(
+  person: { id?: string | null; slack_user_id?: string | null } | null | undefined,
+  text: string, blocks: unknown[], opts: PushOptions,
+) {
+  const slack = person?.slack_user_id?.trim()
+  const res = slack ? await dm(slack, text, blocks) : null
+  await pushTo([person?.id], text, blocks, opts)
+  return res
+}
+
 /** 這一關的簽核人（系統 id、Slack id、各自的語言偏好）。 */
 async function approversForStep(db: SupabaseClient, flowId: string, stepOrder: number) {
   const { data } = await db
@@ -636,10 +701,10 @@ async function approversForStep(db: SupabaseClient, flowId: string, stepOrder: n
 async function notificationTargets(db: SupabaseClient) {
   const { data } = await db
     .from('notification_targets')
-    .select('user:users(slack_user_id, language)')
+    .select('user:users(id, slack_user_id, language)')
     .eq('is_active', true)
   return (data ?? []).map(
-    (r: { user?: { slack_user_id?: string | null; language?: string | null } }) => r.user,
+    (r: { user?: { id?: string | null; slack_user_id?: string | null; language?: string | null } }) => r.user,
   )
 }
 
@@ -658,21 +723,21 @@ async function notificationTargets(db: SupabaseClient) {
 async function notifyApprovedRecipients(
   db: SupabaseClient, leave: LeaveRow, { includeRequester = true } = {},
 ): Promise<void> {
-  const rows: ({ slack_user_id?: string | null; language?: string | null } | undefined)[] = [
-    ...(includeRequester && leave.requester?.slack_user_id
-      ? [{ slack_user_id: leave.requester.slack_user_id, language: leave.requester.language }]
-      : []),
+  const rows: ({ id?: string | null; slack_user_id?: string | null; language?: string | null } | undefined)[] = [
+    ...(includeRequester && leave.requester ? [leave.requester] : []),
     ...await notificationTargets(db),
   ]
 
   const sent = new Set<string>()
   for (const row of rows) {
-    if (!row?.slack_user_id || sent.has(row.slack_user_id)) continue
-    sent.add(row.slack_user_id)
+    const key = row?.id || row?.slack_user_id
+    if (!row || !key || sent.has(key)) continue
+    sent.add(key)
     const lang = normalizeLang(row.language)
-    await dm(row.slack_user_id, t(lang, 'approved_dm_text'), [
+    // 推播點開：申請人到「我的假單」，通知對象到首頁（日曆）
+    await dmAndPush(row, t(lang, 'approved_dm_text'), [
       section(t(lang, 'approved_dm_heading', { detail: leaveDetailLines(leave, lang) })),
-    ])
+    ], { url: row.id && row.id === leave.requester?.id ? '/leave/my' : '/', tag: `leave-${leave.id}` })
   }
 }
 
@@ -701,9 +766,11 @@ async function notifyApprovers(db: SupabaseClient, leave: LeaveRow) {
   // 20260916_approver_message_refs 的說明）。
   const refs: ApproverMessageRef[] = []
   for (const s of steps) {
+    const lang = normalizeLang(s.approver?.language)
+    const text = t(lang, 'new_request_text', { name: leave.requester?.full_name ?? '' })
+    await pushTo([s.approver_id], text, buildBlocks(lang), { url: '/', tag: `leave-${leave.id}`, todo: true })
     if (!s.approver?.slack_user_id) continue
-    const lang = normalizeLang(s.approver.language)
-    const sent = await dm(s.approver.slack_user_id, t(lang, 'new_request_text', { name: leave.requester?.full_name ?? '' }), buildBlocks(lang))
+    const sent = await dm(s.approver.slack_user_id, text, buildBlocks(lang))
     if (sent.ok && sent.channel && sent.ts) {
       refs.push({ channel: String(sent.channel), ts: String(sent.ts), lang })
     }
@@ -1038,13 +1105,12 @@ async function handleHrRegisterSubmit(db: SupabaseClient, me: any, lang: Lang, p
  * 「N 天內未提出異議視同確認」那句話的前提就是他「按得到」異議。
  */
 async function notifyHrRegistered(db: SupabaseClient, leave: LeaveRow, deadline: Date) {
-  const slackId = leave.requester?.slack_user_id
-  if (!slackId) return
+  if (!leave.requester) return
 
-  const lang = normalizeLang(leave.requester?.language)
+  const lang = normalizeLang(leave.requester.language)
   const deadlineText = deadline.toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW')
 
-  await dm(slackId, t(lang, 'hrreg_dm_text'), [
+  await dmAndPush(leave.requester, t(lang, 'hrreg_dm_text'), [
     section(t(lang, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, lang) })),
     contextLine(t(lang, 'hrreg_dm_note', { deadline: deadlineText })),
     {
@@ -1056,7 +1122,7 @@ async function notifyHrRegistered(db: SupabaseClient, leave: LeaveRow, deadline:
           action_id: 'dispute_registered_leave', value: leave.id },
       ],
     },
-  ])
+  ], { url: '/leave/my', tag: `leave-${leave.id}` })
 }
 
 // ===== 進入點 =====
@@ -1582,12 +1648,12 @@ async function handleRejectSubmit(db: SupabaseClient, me: any, lang: Lang, p: Re
         section(t(lang, 'rejected_replace_heading', { detail })),
       ])
     }
-    if (leave.requester?.slack_user_id) {
+    if (leave.requester) {
       const requesterLang = normalizeLang(leave.requester.language)
       const requesterDetail = leaveDetailLines(leave, requesterLang, [t(requesterLang, 'detail_reject_reason', { reason: comment })])
-      await dm(leave.requester.slack_user_id, t(requesterLang, 'rejected_dm_text'), [
+      await dmAndPush(leave.requester, t(requesterLang, 'rejected_dm_text'), [
         section(t(requesterLang, 'rejected_dm_heading', { detail: requesterDetail })),
-      ])
+      ], { url: '/leave/my', tag: `leave-${leave.id}` })
     }
   })())
 
@@ -1792,15 +1858,15 @@ async function handleDisputeSubmit(db: SupabaseClient, me: any, lang: Lang, p: R
 async function notifyDisputeToHr(db: SupabaseClient, leave: LeaveRow, reason: string) {
   if (!leave.registered_by) return
   const { data: hr } = await db
-    .from('users').select('slack_user_id, language').eq('id', leave.registered_by).maybeSingle()
-  if (!hr?.slack_user_id) return
+    .from('users').select('id, slack_user_id, language').eq('id', leave.registered_by).maybeSingle()
+  if (!hr) return
 
   const lang = normalizeLang(hr.language)
   const detail = leaveDetailLines(leave, lang, [t(lang, 'dispute_hr_reason', { reason })])
-  await dm(hr.slack_user_id, t(lang, 'dispute_hr_text', { name: leave.requester?.full_name ?? '' }), [
+  await dmAndPush(hr, t(lang, 'dispute_hr_text', { name: leave.requester?.full_name ?? '' }), [
     section(t(lang, 'dispute_hr_heading', { detail })),
     contextLine(t(lang, 'dispute_hr_note')),
-  ])
+  ], { url: '/leave/my', tag: `leave-${leave.id}` })
 }
 
 /**
@@ -1839,16 +1905,16 @@ async function guardApproval(db: SupabaseClient, me: any, leave: LeaveRow | null
 async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
   const { data } = await db
     .from('leave_requests')
-    .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id, language)')
+    .select('proxy:users!leave_requests_proxy_user_id_fkey(id, slack_user_id, language)')
     .eq('id', leave.id).maybeSingle()
 
-  const proxy = (data as { proxy?: { slack_user_id?: string; language?: string } } | null)?.proxy
-  if (!proxy?.slack_user_id) return
+  const proxy = (data as { proxy?: { id?: string; slack_user_id?: string; language?: string } } | null)?.proxy
+  if (!proxy) return
   const lang = normalizeLang(proxy.language)
-  await dm(proxy.slack_user_id, t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
+  await dmAndPush(proxy, t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
     section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
     contextLine(t(lang, 'proxy_note')),
-  ])
+  ], { url: '/', tag: `proxy-${leave.id}` })
 }
 
 /**
@@ -2685,7 +2751,7 @@ async function remindMassageForLeave(
   person: { id?: string; full_name?: string; slack_user_id?: string | null; language?: string | null } | null | undefined,
   heading: 'hit_heading_self' | 'hit_heading_hr',
 ) {
-  if (!person?.slack_user_id) return
+  if (!person?.slack_user_id && !person?.id) return
   const { data: hits } = await db.rpc('massage_signups_hit_by_leave', { p_leave_id: leaveId })
   if (!hits?.length) return
   const lang = normalizeLang(person.language)
@@ -2708,9 +2774,9 @@ async function remindMassageForLeave(
         { confirm: mConfirm(lang, 'confirm_withdraw_title', 'confirm_withdraw_text', mt(lang, 'btn_withdraw')) })
     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: line }, accessory: btn })
   }
-  const res = await dm(person.slack_user_id, mt(lang, 'hit_text'), blocks)
+  const res = await dmAndPush(person, mt(lang, 'hit_text'), blocks, { url: '/benefits/massage', tag: `massage-hit-${leaveId}` })
   // HR 代登記時，當事人的 Slack User ID 可能填錯 → 請按摩負責人更正（同 massage-notify 的 reportBadSlackId）
-  if (!res.ok && ['channel_not_found', 'user_not_found', 'user_disabled', 'cannot_dm_bot'].includes(res.error)) {
+  if (res && !res.ok && ['channel_not_found', 'user_not_found', 'user_disabled', 'cannot_dm_bot'].includes(res.error)) {
     await reportBadMassageSlackId(db, person, mt(lang, 'hit_text'))
   }
 }

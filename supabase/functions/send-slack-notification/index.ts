@@ -8,6 +8,9 @@
 // 前面三種的呼叫點在 LeaveForm.jsx / MyLeaves.jsx / Home.jsx，呼叫格式已經
 // 存在於前端，這支 function 是照著那個既有的 { type, request_id } 契約寫的。
 //
+// App 推播（2026-11）：每一則私訊都同時發 App 推播給同一批人，沒有 Slack ID 但有開
+// App 通知的人也收得到（只收得到推播）。頻道公告不發推播。
+//
 // 語言：每一則通知都照「收件人自己」users.language 的設定發，不是看誰觸發
 // 動作。核准假單的主管可能是中文介面，但假單是發給可能設定英文的申請人 ——
 // 一則訊息只會用收件人自己的語言。頻道公告（今日臨時請假補發）沒有單一收件
@@ -16,9 +19,9 @@
 import {
   adminClient, currentApprovers, notificationTargetRecipients, loadHolidays,
   leaveDetailLines, digestLine, taipeiNow, taipeiToday, DIGEST_HOUR,
-  LEAVE_SELECT, type LeaveRow, type Recipient,
+  LEAVE_SELECT, toRecipients, type LeaveRow, type Recipient,
 } from '../_shared/leave.ts'
-import { dmMany, dmManyLocalized, postToChannel, section, contextLine } from '../_shared/slack.ts'
+import { dmManyLocalized, postToChannel, section, contextLine } from '../_shared/slack.ts'
 import { normalizeLang, t, type Lang } from '../_shared/i18n.ts'
 
 const CORS = {
@@ -70,7 +73,7 @@ Deno.serve(async (req) => {
 
 async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
   const recipients = await currentApprovers(db, leave)
-  if (recipients.length === 0) return { skipped: '這一關的簽核人沒有設定 Slack ID' }
+  if (recipients.length === 0) return { skipped: '這一關沒有設定簽核人' }
 
   return await dmManyLocalized(recipients, (lang) => ({
     text: t(lang, 'new_request_text', { name: leave.requester?.full_name ?? '' }),
@@ -89,7 +92,7 @@ async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveR
       },
       contextLine(t(lang, 'review_on_web_hint')),
     ],
-  }))
+  }), { url: '/', tag: `leave-${leave.id}`, todo: true })
 }
 
 /**
@@ -114,18 +117,15 @@ async function notifyHrRegistered(leave: LeaveRow) {
   // 同事還是需要知道今天誰不在。
   results.channel = await announceIfToday(leave)
 
-  const slackId = leave.requester?.slack_user_id
-  if (!slackId) {
-    results.dm = 'requester 沒有填 Slack User ID，通知未發送'
-    return results
-  }
+  const slackId = leave.requester?.slack_user_id ?? ''
+  if (!slackId) results.note = 'requester 沒有填 Slack User ID，Slack 通知未發送（有開 App 通知的話會收到推播）'
 
   const lang = normalizeLang(leave.requester?.language)
   const deadline = leave.ack_deadline
     ? new Date(leave.ack_deadline).toLocaleDateString(lang === 'en' ? 'en-US' : 'zh-TW')
     : ''
 
-  results.dm = await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+  results.dm = await dmManyLocalized([{ userId: leave.requester?.id, slackUserId: slackId, language: lang }], (l) => ({
     text: t(l, 'hrreg_dm_text'),
     blocks: [
       section(t(l, 'hrreg_dm_heading', { detail: leaveDetailLines(leave, l) })),
@@ -145,7 +145,7 @@ async function notifyHrRegistered(leave: LeaveRow) {
         ],
       },
     ],
-  }))
+  }), { url: '/leave/my', tag: `leave-${leave.id}` })
   return results
 }
 
@@ -167,11 +167,11 @@ async function notifyDisputeToHr(db: ReturnType<typeof adminClient>, leave: Leav
   if (!leave.dispute_reason) return { skipped: '這筆沒有異議內容' }
 
   const { data: hr } = await db
-    .from('users').select('slack_user_id, language').eq('id', leave.registered_by).maybeSingle()
-  if (!hr?.slack_user_id) return { skipped: '登記者沒有設定 Slack ID，通知未發送' }
+    .from('users').select('id, slack_user_id, language').eq('id', leave.registered_by).maybeSingle()
+  if (!hr) return { skipped: '找不到登記者' }
 
   return {
-    dm: await dmManyLocalized([{ slackUserId: hr.slack_user_id, language: normalizeLang(hr.language) }], (l) => ({
+    dm: await dmManyLocalized(toRecipients([hr]), (l) => ({
       text: t(l, 'dispute_hr_text', { name: leave.requester?.full_name ?? '' }),
       blocks: [
         section(t(l, 'dispute_hr_heading', {
@@ -179,7 +179,7 @@ async function notifyDisputeToHr(db: ReturnType<typeof adminClient>, leave: Leav
         })),
         contextLine(t(l, 'dispute_hr_note')),
       ],
-    })),
+    }), { url: '/leave/my', tag: `leave-${leave.id}` }),
   }
 }
 
@@ -187,16 +187,16 @@ async function notifyApproved(db: ReturnType<typeof adminClient>, leave: LeaveRo
   const results: Record<string, unknown> = {}
 
   // 1) 通知申請人本人 ＋ 管理後台設定的「核准通知對象」
-  const requesterRecipient: Recipient[] = leave.requester?.slack_user_id
-    ? [{ slackUserId: leave.requester.slack_user_id, language: normalizeLang(leave.requester.language) }]
-    : []
+  const requesterRecipient: Recipient[] = toRecipients([leave.requester])
   const targetRecipients = await notificationTargetRecipients(db)
   const recipients = dedupeRecipients([...requesterRecipient, ...targetRecipients])
 
+  // 推播點開：申請人到「我的假單」，通知對象到首頁（日曆）
+  const requesterId = leave.requester?.id
   results.dm = await dmManyLocalized(recipients, (lang) => ({
     text: t(lang, 'approved_text'),
     blocks: [section(t(lang, 'approved_heading', { detail: leaveDetailLines(leave, lang) }))],
-  }))
+  }), (r) => ({ url: r.userId && r.userId === requesterId ? '/leave/my' : '/', tag: `leave-${leave.id}` }))
 
   // 職務代理人的通知刻意等到「核准後」才發 —— 假單還沒過就先通知，萬一被
   // 駁回，代理人已經以為要代班了。
@@ -246,8 +246,9 @@ async function announceIfToday(leave: LeaveRow): Promise<string> {
 }
 
 async function notifyRejected(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
-  if (!leave.requester?.slack_user_id) return { skipped: '申請人沒有設定 Slack ID' }
-  const lang = normalizeLang(leave.requester.language)
+  const recipients = toRecipients([leave.requester])
+  if (recipients.length === 0) return { skipped: '找不到申請人' }
+  const lang = recipients[0].language
 
   // 駁回原因存在 leave_approvals，不在假單本身，所以要另外查最後一筆
   const { data: rejection } = await db
@@ -258,36 +259,42 @@ async function notifyRejected(db: ReturnType<typeof adminClient>, leave: LeaveRo
     .limit(1).maybeSingle()
 
   const extra = rejection?.comment ? [t(lang, 'detail_reject_reason', { reason: rejection.comment })] : []
-  return await dmMany([leave.requester.slack_user_id], t(lang, 'rejected_text'), [
-    section(t(lang, 'rejected_heading', { detail: leaveDetailLines(leave, lang, extra) })),
-    ...(rejection?.comment ? [] : [contextLine(t(lang, 'rejected_detail_hint'))]),
-  ])
+  return await dmManyLocalized(recipients, () => ({
+    text: t(lang, 'rejected_text'),
+    blocks: [
+      section(t(lang, 'rejected_heading', { detail: leaveDetailLines(leave, lang, extra) })),
+      ...(rejection?.comment ? [] : [contextLine(t(lang, 'rejected_detail_hint'))]),
+    ],
+  }), { url: '/leave/my', tag: `leave-${leave.id}` })
 }
 
 /** 核准後通知職務代理人。回傳說明字串方便從呼叫端的回應看出結果。 */
 async function notifyProxy(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
   const { data } = await db
     .from('leave_requests')
-    .select('proxy:users!leave_requests_proxy_user_id_fkey(slack_user_id, language)')
+    .select('proxy:users!leave_requests_proxy_user_id_fkey(id, slack_user_id, language)')
     .eq('id', leave.id).maybeSingle()
 
-  const proxy = (data as { proxy?: { slack_user_id?: string; language?: string } } | null)?.proxy
-  if (!proxy?.slack_user_id) return '沒有職務代理人或代理人未設定 Slack ID'
+  const proxy = (data as { proxy?: { id?: string; slack_user_id?: string; language?: string } } | null)?.proxy
+  const recipients = toRecipients([proxy])
+  if (recipients.length === 0) return '沒有職務代理人'
 
-  const lang = normalizeLang(proxy.language)
-  await dmMany([proxy.slack_user_id], t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
-    section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
-    contextLine(t(lang, 'proxy_note')),
-  ])
-  return 'sent'
+  return await dmManyLocalized(recipients, (lang) => ({
+    text: t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }),
+    blocks: [
+      section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
+      contextLine(t(lang, 'proxy_note')),
+    ],
+  }), { url: '/', tag: `proxy-${leave.id}` })
 }
 
 function dedupeRecipients(recipients: Recipient[]): Recipient[] {
   const seen = new Set<string>()
   const out: Recipient[] = []
   for (const r of recipients) {
-    if (!r.slackUserId || seen.has(r.slackUserId)) continue
-    seen.add(r.slackUserId)
+    const key = r.userId || r.slackUserId
+    if (!key || seen.has(key)) continue
+    seen.add(key)
     out.push(r)
   }
   return out

@@ -16,6 +16,8 @@ psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/10_tests.sql   # 要�
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/20_hr_admin_tests.sql   # 接著跑：20261112 HR 擁有管理員功能（共 71 項）
 # 或者（另開一個資料庫，00 → 10 → 30）：20261117 假單資料權限＋附件不公開（共 73 項）
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/30_privacy_tests.sql
+# 或者（另開一個資料庫，00 → 10 → 40）：20261119 App 推播＋圖示數字（共 77 項）
+psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/40_push_tests.sql
 ```
 
 最後會列出每一項 PASS／FAIL；有任何 FAIL 會以錯誤結束。

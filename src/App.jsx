@@ -2,6 +2,7 @@ import { Routes, Route, Navigate } from 'react-router-dom'
 import { useEffect, useState } from 'react'
 import { supabase } from './lib/supabase'
 import { loadHolidays } from './lib/holidays'
+import { clearPushOnLogout } from './lib/push'
 
 import Login, { LOGIN_NOTICE_KEY } from './pages/Login'
 import Home from './pages/Home'
@@ -56,6 +57,7 @@ function App() {
   // 登入、還留著登入狀態的人。
   if (data?.is_active === false) {
     try { sessionStorage.setItem(LOGIN_NOTICE_KEY, 'login_disabled') } catch { /* 無痕模式等存不了就算了 */ }
+    await clearPushOnLogout()   // 這台裝置不再收這個帳號的通知
     await supabase.auth.signOut()
     return
   }

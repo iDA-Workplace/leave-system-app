@@ -11,6 +11,12 @@
 // 3. 網頁：HR 代登記假單之後，帶 { type: 'leave_reminder', leave_id }。
 // 4. slack-interactions：在 Slack 上做完按摩相關的動作之後（同 2）。
 //
+// App 推播（2026-11「兩邊都發」）：每一則私訊（dm）都同時發 App 推播給同一個人，
+// 交給 send-push 那支發。沒有 Slack ID 的同仁，只要網頁上也做得到的事（抽籤結果、
+// 讓給候補、遞補邀請、時段異動、快到了、請釋出名額…），一樣會收到推播；
+// 「剛剛有按到嗎？」只能在 Slack 上回答，所以還是只發給有 Slack ID 的人。
+// 測試模式時推播也跟私訊一樣改發給負責人。頻道公告不發推播。
+//
 // 不管誰呼叫，做的事都一樣（3 多做一件）。重複呼叫不會重複發：每一筆異動
 // 紀錄、每一件「時間到才做的事」都會先在資料庫占住才發
 // （見 migration 20261020_massage_slack.sql）。
@@ -495,22 +501,72 @@ const confirm = (lang: Lang, title: MsgKey, text: MsgKey, ok: string) => ({
  * 私訊按摩負責人請他更正（使用者決定）；同一個人的同一個錯誤 ID 只提醒一次。
  */
 async function dm(ctx: Ctx, p: Person, text: string, blocks: unknown[]) {
-  // 測試模式：給同仁的私訊一律改發給負責人，註明原本要給誰（使用者決定：選項 B）
+  // 測試模式：給同仁的私訊一律改發給負責人，註明原本要給誰（使用者決定：選項 B）；推播也一樣
   if (TEST.on && p.id !== TEST.owner?.id) {
     const owner = TEST.owner
-    if (!owner?.slack_user_id) {
+    if (!owner) {
       console.log(`測試模式：原本要私訊 ${p.full_name}，沒有負責人可以轉發，略過`)
       return { ok: true, skipped: true }   // 當作送到了：不要讓「時間到才發」的私訊一直重試
     }
     const lang = normalizeLang(owner.language)
-    return callSlack('chat.postMessage', {
-      channel: owner.slack_user_id, text: `🧪 ${text}`,
-      blocks: [contextLine(t(lang, 'test_label_dm', { name: p.full_name })), ...blocks],
-    })
+    const testBlocks = [contextLine(t(lang, 'test_label_dm', { name: p.full_name })), ...blocks]
+    await pushTo([owner.id], `🧪 ${text}`, testBlocks)
+    if (!owner.slack_user_id) return { ok: true, skipped: true }
+    return callSlack('chat.postMessage', { channel: owner.slack_user_id, text: `🧪 ${text}`, blocks: testBlocks })
   }
+  await pushTo([p.id], text, blocks)
+  // 沒有 Slack ID：只收得到推播，當作送到了（不要讓「時間到才發」的私訊一直重試）
+  if (!p.slack_user_id?.trim()) return { ok: true, skipped: true }
   const res = await callSlack('chat.postMessage', { channel: p.slack_user_id, text, blocks })
   if (!res.ok && BAD_SLACK_ID_ERRORS.includes(res.error)) await reportBadSlackId(ctx, p, text)
   return res
+}
+
+// ---- App 推播（與 _shared/push.ts 同一份邏輯；這支刻意不 import 共用檔，見檔頭）----
+
+/** 同一則 Slack 訊息也發成 App 推播，點開到按摩頁。失敗只記 log，絕不影響 Slack 與原本的流程。 */
+async function pushTo(userIds: (string | null | undefined)[], text: string, blocks: unknown[]) {
+  const ids = [...new Set(userIds.filter((x): x is string => !!x))]
+  const url = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (ids.length === 0 || !url || !key) return
+  try {
+    const res = await fetch(`${url}/functions/v1/send-push`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'send', user_ids: ids, ...slackToPush(text, blocks), url: '/benefits/massage' }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const body = await res.text()
+    if (!res.ok) console.error(`推播失敗 ${res.status}: ${body.slice(0, 300)}`)
+  } catch (e) {
+    console.error('推播失敗', e)
+  }
+}
+
+/** Slack 訊息 → 推播文字：標題用 Slack 的 text，內文是各段文字去掉 Slack 格式。 */
+function slackToPush(text: string, blocks?: unknown[]) {
+  const parts: string[] = []
+  for (const b of (blocks ?? []) as { type?: string; text?: { text?: string }; elements?: { text?: string }[] }[]) {
+    if (b?.type === 'section' && b.text?.text) parts.push(b.text.text)
+    else if (b?.type === 'context') for (const e of b.elements ?? []) if (e?.text) parts.push(e.text)
+  }
+  const lines = parts.join('\n').split('\n')
+  if (lines.length > 1 && /^\s*(:[a-z0-9_+-]+:\s*|\p{Extended_Pictographic}\s*)?\*[^*]+\*\s*$/u.test(lines[0])) lines.shift()
+  const body = lines.map(pushPlain).filter(Boolean).join('\n')
+  return { title: pushPlain(text), body: body.length > 600 ? body.slice(0, 599) + '…' : body }
+}
+
+function pushPlain(s: string): string {
+  return s
+    .replace(/<([^|>]+)\|([^>]+)>/g, '$2')
+    .replace(/<[@#!][^>]*>/g, '')
+    .replace(/<(https?:[^>]+)>/g, '$1')
+    .replace(/:[a-z0-9_+-]+:/g, '')
+    .replace(/[*~`]/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
 }
 
 // 收件人的 Slack User ID 有問題時 chat.postMessage 會回的錯誤（token、權限之類的錯誤不算）
@@ -814,7 +870,7 @@ async function notifyDrawResult(ctx: Ctx, e: MassageEvent) {
   if (e.details?.yield_asked) { await askYield(ctx, e); return }
   const s = await ctx.session(e.session_id!)
   const p = await ctx.person(e.user_id)
-  if (!s || !p?.slack_user_id || !e.signup_id) return
+  if (!s || !p || !e.signup_id) return
   // 處理到這筆時可能已經釋出了（例如網頁上秒按），就不用再發
   const { data: g } = await ctx.db.from('massage_signups')
     .select('slot_no, released_at').eq('id', e.signup_id).maybeSingle()
@@ -853,7 +909,7 @@ async function notifyDrawResult(ctx: Ctx, e: MassageEvent) {
 async function askYield(ctx: Ctx, e: MassageEvent) {
   const s = await ctx.session(e.session_id!)
   const p = await ctx.person(e.user_id)
-  if (!s || !p?.slack_user_id || !e.signup_id) return
+  if (!s || !p || !e.signup_id) return
   // 已經回答過（例如在網頁上）、或已經取消的，不用再問
   const { data: g } = await ctx.db.from('massage_signups')
     .select('slot_no, yield_answer, released_at').eq('id', e.signup_id).maybeSingle()
@@ -883,7 +939,7 @@ async function notifyOffer(ctx: Ctx, e: MassageEvent) {
     .select('offer_status, offer_slot_no, offer_expires_at').eq('id', e.signup_id).maybeSingle()
   const stillPending = g?.offer_status === 'pending' && g.offer_slot_no === e.slot_no
 
-  if (stillPending && p.slack_user_id) {
+  if (stillPending) {
     const lang = normalizeLang(p.language)
     await dm(ctx, p, t(lang, 'offer_text'), [
       section(t(lang, 'offer_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no) })),
@@ -952,7 +1008,7 @@ async function notifyOwnerReleased(ctx: Ctx, e: MassageEvent) {
 async function sendCancelReleaseDm(ctx: Ctx, e: MassageEvent) {
   const s = await ctx.session(e.session_id!)
   const p = await ctx.person(e.user_id)
-  if (!s || !p?.slack_user_id || !e.signup_id || !e.slot_no) return
+  if (!s || !p || !e.signup_id || !e.slot_no) return
   // 處理到這筆時已經取消釋出、或已經開放了，就不用發
   const { data: g } = await ctx.db.from('massage_signups').select('released_at').eq('id', e.signup_id).maybeSingle()
   const { data: held } = await ctx.db.rpc('massage_release_held', { p_session_id: s.id })
@@ -1167,7 +1223,7 @@ async function syncNotices(ctx: Ctx) {
 async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
   const s = await ctx.session(e.session_id!)
   const p = await ctx.person(e.user_id)
-  if (!s || !p?.slack_user_id || !e.slot_no) return
+  if (!s || !p || !e.slot_no) return
   const lang = normalizeLang(p.language)
   await dm(ctx, p, t(lang, 'superseded_text'), [
     section(t(lang, 'superseded_heading', { title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no) })),
@@ -1181,7 +1237,7 @@ async function notifySuperseded(ctx: Ctx, e: MassageEvent) {
 async function notifyAssigned(ctx: Ctx, e: MassageEvent, textKey: MsgKey, headingKey: MsgKey) {
   const s = await ctx.session(e.session_id!)
   const p = await ctx.person(e.user_id)
-  if (!s || !p?.slack_user_id || !e.signup_id || !e.slot_no || e.actor_id === e.user_id) return
+  if (!s || !p || !e.signup_id || !e.slot_no || e.actor_id === e.user_id) return
   // 處理到這筆時已經又被改掉（取消、換時段）就不發，之後那一筆會有自己的通知
   const { data: g } = await ctx.db.from('massage_signups')
     .select('slot_no, released_at').eq('id', e.signup_id).maybeSingle()
@@ -1202,7 +1258,7 @@ async function notifyMoved(ctx: Ctx, e: MassageEvent) {
   const p = await ctx.person(e.user_id)
   const from = Number(e.details?.from)
   const to = Number(e.details?.to)
-  if (!s || !p?.slack_user_id || !e.signup_id || !from || !to || e.actor_id === e.user_id) return
+  if (!s || !p || !e.signup_id || !from || !to || e.actor_id === e.user_id) return
   const { data: g } = await ctx.db.from('massage_signups')
     .select('slot_no, released_at').eq('id', e.signup_id).maybeSingle()
   if (!g || g.released_at || g.slot_no !== to) return
@@ -1352,7 +1408,7 @@ async function remindUpcoming(ctx: Ctx) {
       const start = new Date(`${s.session_date}T${slotRange(s, g.slot_no).from}:00+08:00`).getTime()
       if (now < start - REMIND_BEFORE_MIN * 60_000 || now >= start) continue
       const p = await ctx.person(g.user_id)
-      if (!p?.slack_user_id) continue
+      if (!p) continue
       const key = `remind_slot:${g.id}:${g.slot_no}`
       if (!(await claim(ctx, key))) continue
       const lang = normalizeLang(p.language)
@@ -1553,7 +1609,7 @@ async function leaveReminder(ctx: Ctx, req: Request, leaveId: string) {
   const { data: leave } = await ctx.db.from('leave_requests')
     .select('requester_id, registered_by').eq('id', leaveId).maybeSingle()
   const p = await ctx.person(leave?.requester_id ?? null)
-  if (!p?.slack_user_id) return 0
+  if (!p) return 0
   const lang = normalizeLang(p.language)
   await dm(ctx, p, t(lang, 'hit_text'),
     await leaveHitBlocks(ctx, lang, hits, leave?.registered_by ? 'hit_heading_hr' : 'hit_heading_self'))
