@@ -9,6 +9,8 @@
 | `daily-leave-job` | 待審假單逾期 7 天自動退回；未逾期的每天提醒該簽核的主管 | 排程（pg_cron） |
 | `slack-interactions` | 在 Slack 裡送假單、在 Slack 裡核准／駁回 | Slack（事件與互動） |
 | `import-holidays` | 匯入人事行政總處的國定假日（網頁按鈕、每月排程） | 網頁（管理員、HR）、排程（pg_cron） |
+| `send-push` | App 推播通知（加密後送到同仁開啟通知的手機／電腦）；推播金鑰第一次用到時自動產生 | 其他後台程式（service role）、網頁（設定 → App 通知） |
+| `review-notify` | 考核通知（Slack 私訊＋App 推播）：被加入考核 → 本人填自評；輪到某一關 → 那一關的評核人 | 網頁（考核管理的動作完成後） |
 
 ## `slack-interactions` 的資安模型
 
@@ -532,3 +534,21 @@ select cron.schedule(
 - `slack-interactions`：在 Slack 請假、HR 在 Slack 代登時，整張都落在假日（或週末）會擋下；天數扣掉國定假日。
   它不 import `_shared`，有自己一份同樣的算法（10 分鐘內共用一次讀取）。
 - 改完 `_shared/` 要跑 `node supabase/functions/build-standalone.mjs` 更新三支的 `standalone.ts`。
+
+---
+
+## App 推播通知（2026-11）
+
+使用者決定：假單、按摩、考核三類，**Slack 照發、App 推播也發**；沒有 Slack ID 的同仁只要在
+「設定 → App 通知」開啟，也收得到推播。App 圖示上的數字＝待簽核假單＋待評分考核＋待填自評＋未讀推播。
+
+- **推播內容＝同一則 Slack 私訊**：`_shared/push.ts` 的 `slackToPush()` 把 Slack 訊息轉成推播的標題與內文，
+  不用每種通知各寫一份。`slack-interactions`、`massage-notify`、`review-notify` 是單一檔案，各有一份同樣的程式。
+- **頻道公告不發推播**（今日請假名單、按摩開放報名等）。
+- **推播失敗不影響 Slack 與原本的流程**：所有推播呼叫都只記 log。
+- **金鑰（VAPID）**：`send-push` 第一次用到時自動產生，存在 `push_config`（網頁讀不到）。**不要刪這張表的資料**，
+  刪了所有裝置都要重新開啟通知。
+- **聯絡網址**：推播規定要附一個聯絡網址，依序用環境變數 `PUSH_CONTACT` → `SITE_URL` → Supabase 專案網址，不用另外設定。
+- **部署**：`send-push`、`review-notify` 都是新的 function：Deploy a new function → Via Editor → 貼上 `index.ts` → Deploy，
+  再到 Details 把 **Verify JWT 關掉**（兩支都自己檢查身分）。
+

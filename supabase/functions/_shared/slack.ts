@@ -6,6 +6,7 @@
 // 風險與工作量都完全不同，所以刻意分開。
 
 import type { Recipient } from './leave.ts'
+import { pushToUsers, slackToPush, type PushOptions } from './push.ts'
 
 const SLACK_API = 'https://slack.com/api'
 
@@ -64,28 +65,50 @@ export async function dmMany(slackUserIds: string[], text: string, blocks?: unkn
  *
  * 先把收件人依語言分組，同一組共用一次 build(lang) 組出來的訊息內容，
  * 組數最多就是 2（zh／en），不會因為收件人多而重複組字串。
+ *
+ * 有給 push 的話，同一則內容也發 App 推播（2026-11「兩邊都發」）：有系統帳號 id
+ * 的人都發，沒有 Slack ID 的人也一樣（只收得到推播）。push 可以是函式，讓不同的
+ * 收件人點開通知時到不同的頁面（例如申請人到「我的假單」、通知對象到首頁）。
  */
 export async function dmManyLocalized(
   recipients: Recipient[],
   build: (lang: Recipient['language']) => { text: string; blocks?: unknown[] },
+  push?: PushOptions | ((r: Recipient) => PushOptions),
 ) {
-  const byLang = new Map<Recipient['language'], string[]>()
+  const byLang = new Map<Recipient['language'], Recipient[]>()
   for (const r of recipients) {
-    if (!r.slackUserId) continue
     const list = byLang.get(r.language) ?? []
-    list.push(r.slackUserId)
+    list.push(r)
     byLang.set(r.language, list)
   }
 
   let sent = 0
   const failures: string[] = []
-  for (const [lang, slackUserIds] of byLang) {
+  const pushed: string[] = []
+  for (const [lang, group] of byLang) {
     const { text, blocks } = build(lang)
-    const result = await dmMany(slackUserIds, text, blocks)
-    sent += result.sent
-    failures.push(...result.failures.filter((f): f is string => typeof f === 'string'))
+    const slackIds = group.map(r => r.slackUserId).filter(Boolean)
+    if (slackIds.length) {
+      const result = await dmMany(slackIds, text, blocks)
+      sent += result.sent
+      failures.push(...result.failures.filter((f): f is string => typeof f === 'string'))
+    }
+    if (push) {
+      // 同一個網址的人一起發
+      const byUrl = new Map<string, { opts: PushOptions; ids: string[] }>()
+      for (const r of group) {
+        if (!r.userId) continue
+        const opts = typeof push === 'function' ? push(r) : push
+        const k = JSON.stringify(opts)
+        const entry = byUrl.get(k) ?? { opts, ids: [] }
+        entry.ids.push(r.userId)
+        byUrl.set(k, entry)
+      }
+      const text2 = slackToPush(text, blocks)
+      for (const { opts, ids } of byUrl.values()) pushed.push(await pushToUsers(ids, text2, opts))
+    }
   }
-  return { sent, failures }
+  return { sent, failures, ...(push ? { pushed } : {}) }
 }
 
 export function section(markdown: string) {

@@ -3,7 +3,7 @@ import { Routes, Route, useLocation, Navigate } from 'react-router-dom'
 import * as XLSX from 'xlsx'
 import { supabase } from '../lib/supabase'
 import {
-  fetchMyStepSet, isAwaitingMyScore, fetchAwaitingMyScoreCount, notifyReviewTodoChanged,
+  fetchMyStepSet, isAwaitingMyScore, fetchAwaitingMyScoreCount, notifyReviewTodoChanged, notifyReview,
 } from '../lib/reviewTodo'
 import {
   Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea,
@@ -400,6 +400,8 @@ function EmployeeReviewSection({ userProfile }) {
         setAssessSaving(false)
         return
       }
+      // 通知流程第 1 關的評核人：輪到你評分了（Slack＋App 推播）
+      notifyReview({ type: 'turn', participant_id: assessModal.id })
     }
 
     setAssessSaving(false)
@@ -839,6 +841,8 @@ function TeamReviewManagement({ userProfile, isBoss, onScored }) {
     }
 
     showToast(isFinal ? t('review_submitted_final') : t('review_submitted_next'))
+    // 還沒到最後一關：通知下一關的評核人（Slack＋App 推播）
+    if (!isFinal) notifyReview({ type: 'turn', participant_id: selected.id })
 
     setSubmitting(false)
     setSelected(null)
@@ -1884,8 +1888,10 @@ function ReviewParticipants({ userProfile, isBoss }) {
     }
     if (rows.length === 0) return
 
-    const { error } = await supabase.from('annual_review_participants').insert(rows)
+    const { data: inserted, error } = await supabase.from('annual_review_participants').insert(rows).select('id')
     if (error) { showToast(t('reviewpart_err_add', { msg: error.message }), { tone: 'error' }); return }
+    // 通知被加入的人去填自評（Slack＋App 推播）
+    if (inserted?.length) notifyReview({ type: 'invited', participant_ids: inserted.map(r => r.id) })
     showToast(t('reviewpart_added', { n: rows.length }))
     setManualSelection([])
     fetchParticipants()

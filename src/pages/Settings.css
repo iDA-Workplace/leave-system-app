@@ -100,3 +100,28 @@
   font: 500 var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
   color: var(--sys-color-primary);
 }
+
+/* App 通知 */
+.settings-push-status {
+  margin: 0;
+  padding: var(--space-100) var(--space-150);
+  border-radius: var(--shape-corner-small);
+  font: var(--type-body-medium-size)/var(--type-body-medium-line) var(--font-family-base);
+  background: var(--sys-color-surface-container-high);
+  color: var(--sys-color-on-surface);
+}
+.settings-push-status--on {
+  background: var(--sys-color-success-container);
+  color: var(--sys-color-on-success-container);
+}
+.settings-push-status--denied {
+  background: var(--sys-color-error-container);
+  color: var(--sys-color-on-error-container);
+}
+.settings-push-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-100);
+  margin-top: var(--space-150);
+}
+.settings-push-actions:empty { display: none; }

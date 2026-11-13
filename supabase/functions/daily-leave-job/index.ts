@@ -13,12 +13,14 @@
 // 視同確認，並私訊當事人留下紀錄（見 migration 20260915_hr_registered_leave）。
 //
 // 語言：每則私訊都照收件人（申請人／簽核人）自己 users.language 的設定發。
+//
+// App 推播（2026-11）：每則私訊都同時發 App 推播，沒有 Slack ID 但有開 App 通知的人也收得到。
 
 import {
-  adminClient, currentApprovers, leaveDetailLines, loadHolidays, LEAVE_SELECT, type LeaveRow,
+  adminClient, currentApprovers, leaveDetailLines, loadHolidays, LEAVE_SELECT, toRecipients, type LeaveRow,
 } from '../_shared/leave.ts'
-import { dmMany, dmManyLocalized, section, contextLine } from '../_shared/slack.ts'
-import { normalizeLang, t } from '../_shared/i18n.ts'
+import { dmManyLocalized, section, contextLine } from '../_shared/slack.ts'
+import { t } from '../_shared/i18n.ts'
 
 /** 待審幾天後自動退回。 */
 const EXPIRE_DAYS = 7
@@ -56,13 +58,13 @@ Deno.serve(async () => {
         returned_reason: '逾期未審核，系統自動退回',
       }).eq('id', leave.id)
 
-      if (leave.requester?.slack_user_id) {
-        const lang = normalizeLang(leave.requester.language)
-        await dmMany([leave.requester.slack_user_id], t(lang, 'overdue_text'), [
+      await dmManyLocalized(toRecipients([leave.requester]), (lang) => ({
+        text: t(lang, 'overdue_text'),
+        blocks: [
           section(t(lang, 'overdue_heading', { detail: leaveDetailLines(leave, lang) })),
           contextLine(t(lang, 'overdue_note', { n: EXPIRE_DAYS })),
-        ])
-      }
+        ],
+      }), { url: '/leave/my', tag: `leave-${leave.id}` })
     }
 
     // ── 提醒簽核人 ──
@@ -93,7 +95,7 @@ Deno.serve(async () => {
             ],
           },
         ],
-      }))
+      }), { url: '/', tag: `leave-${leave.id}`, todo: true })
       remindedIds.push(leave.id)
     }
 
@@ -145,16 +147,14 @@ async function autoAcknowledgeExpired(db: ReturnType<typeof adminClient>): Promi
   if (updateError) throw new Error(`自動確認失敗：${updateError.message}`)
 
   for (const leave of expired) {
-    const slackId = leave.requester?.slack_user_id
-    if (!slackId) continue   // 沒填 Slack ID 的人收不到，但確認本身已經生效
-    const lang = normalizeLang(leave.requester?.language)
-    await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+    // 沒填 Slack ID、也沒開 App 通知的人收不到，但確認本身已經生效
+    await dmManyLocalized(toRecipients([leave.requester]), (l) => ({
       text: t(l, 'hrreg_auto_text'),
       blocks: [
         section(t(l, 'hrreg_auto_heading', { detail: leaveDetailLines(leave, l) })),
         contextLine(t(l, 'hrreg_auto_note')),
       ],
-    }))
+    }), { url: '/leave/my', tag: `leave-${leave.id}` })
   }
 
   return expired.length

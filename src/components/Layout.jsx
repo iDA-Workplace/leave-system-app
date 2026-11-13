@@ -2,6 +2,7 @@ import { Link, useNavigate, useLocation } from 'react-router-dom'
 import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAwaitingMyScoreCount, REVIEW_TODO_EVENT } from '../lib/reviewTodo'
+import { clearPushOnLogout, refreshAppBadge, resetUnreadPushCount, syncPushSubscription } from '../lib/push'
 import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../context/LanguageContext'
 import { TEAM_STATS_ROLES } from '../lib/teamStats'
@@ -135,6 +136,24 @@ function Layout({ children, userProfile }) {
   // 不會每換一次頁就把即時訂閱拆掉重接。
   useEffect(() => { refreshReviewTodo() }, [refreshReviewTodo, location.pathname])
 
+  // App 推播（2026-11）：打開 App（或切回來）＝看過了 → 未讀的推播歸零，圖示數字
+  // 只剩待處理件數。這台裝置開過通知的話，順便把它記到現在登入的人名下。
+  useEffect(() => {
+    if (!userProfile?.id) return
+    syncPushSubscription()
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') resetUnreadPushCount().then(refreshAppBadge)
+    }
+    onVisible()
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [userProfile?.id])
+
+  // 鈴鐺或考核的數字一變（即時訂閱、換頁、自己剛簽完），圖示上的數字也跟著重算
+  useEffect(() => {
+    if (userProfile?.id) refreshAppBadge()
+  }, [userProfile?.id, pendingCount, reviewTodoCount])
+
   useEffect(() => {
     const goOnline = () => setOnline(true)
     const goOffline = () => setOnline(false)
@@ -184,6 +203,8 @@ function Layout({ children, userProfile }) {
   }
 
   async function handleLogout() {
+    // 登出前先讓這台裝置不再收這個人的通知（要趁還登入著才刪得掉）
+    await clearPushOnLogout()
     await supabase.auth.signOut()
     navigate('/')
   }

@@ -5,6 +5,7 @@ import { Button, Card, PageHeader, TextField } from '../components/ui'
 import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../context/LanguageContext'
 import { useToast } from '../context/ToastContext'
+import { getPushState, enablePush, disablePush, sendTestPush } from '../lib/push'
 import './Settings.css'
 
 function ChangePasswordSection() {
@@ -182,6 +183,84 @@ function InstallSection() {
   )
 }
 
+// App 通知（2026-11）：每台裝置各自開關。開了之後，Slack 收得到的私訊（假單、
+// 按摩、考核）這台裝置也會跳出通知，App 圖示上會顯示待處理的數字。
+function NotificationSection() {
+  const { t } = useLanguage()
+  const { showToast } = useToast()
+  const [state, setState] = useState('loading')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    getPushState().then(setState).catch(() => setState('unsupported'))
+  }, [])
+
+  async function turnOn() {
+    setBusy(true)
+    try {
+      const result = await enablePush()
+      setState(result)
+      if (result === 'on') showToast(t('settings_push_enabled'))
+    } catch (e) {
+      showToast(t('settings_push_err', { msg: e.message === 'no-service-worker' ? t('settings_push_err_no_sw') : e.message }), { tone: 'error' })
+    }
+    setBusy(false)
+  }
+
+  async function turnOff() {
+    setBusy(true)
+    try {
+      await disablePush()
+      setState('off')
+      showToast(t('settings_push_disabled'))
+    } catch (e) {
+      showToast(t('settings_push_err', { msg: e.message }), { tone: 'error' })
+    }
+    setBusy(false)
+  }
+
+  async function test() {
+    setBusy(true)
+    try {
+      const n = await sendTestPush()
+      showToast(n > 0 ? t('settings_push_test_sent') : t('settings_push_test_none'), { tone: n > 0 ? undefined : 'error' })
+    } catch (e) {
+      showToast(t('settings_push_err', { msg: e.message }), { tone: 'error' })
+    }
+    setBusy(false)
+  }
+
+  const status = {
+    loading: '',
+    on: t('settings_push_status_on'),
+    off: t('settings_push_status_off'),
+    denied: t('settings_push_status_denied'),
+    'needs-install': t('settings_push_status_needs_install'),
+    unsupported: t('settings_push_status_unsupported'),
+  }[state]
+
+  return (
+    <Card className="settings-section">
+      <h3 className="settings-section__title">{t('settings_push_title')}</h3>
+      <p className="settings-install-body">{t('settings_push_body')}</p>
+      {status && (
+        <p className={`settings-push-status settings-push-status--${state}`} role="status">{status}</p>
+      )}
+      <div className="settings-push-actions">
+        {state === 'off' && <Button onClick={turnOn} loading={busy}>{t('settings_push_turn_on')}</Button>}
+        {state === 'on' && (
+          <>
+            <Button variant="tonal" onClick={test} loading={busy}>{t('settings_push_test')}</Button>
+            <Button variant="outlined" onClick={turnOff} disabled={busy}>{t('settings_push_turn_off')}</Button>
+          </>
+        )}
+        {state === 'needs-install' && <Link to="/install" className="settings-install-link">{t('settings_install_link')}</Link>}
+      </div>
+      <p className="settings-hint">{t('settings_push_hint')}</p>
+    </Card>
+  )
+}
+
 function Settings({ userProfile }) {
   const { t } = useLanguage()
   return (
@@ -190,6 +269,7 @@ function Settings({ userProfile }) {
 
       <ProfileSection userProfile={userProfile} />
       <InstallSection />
+      <NotificationSection />
       <AppearanceSection />
       <LanguageSection />
       <ChangePasswordSection />

@@ -80,7 +80,7 @@ export const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
   registered_by, ack_deadline, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
-  proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
+  proxy:users!leave_requests_proxy_user_id_fkey(id, full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
 `
 
@@ -97,7 +97,7 @@ export interface LeaveRow {
   flow_id: string | null
   current_step: number | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
-  proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
+  proxy?: { id?: string; full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
   // HR 代登記的假單才有值，見 migration 20260915_hr_registered_leave
   registered_by?: string | null
@@ -108,8 +108,12 @@ export interface LeaveRow {
   dispute_reason?: string | null
 }
 
-/** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
+/**
+ * 收件人：系統帳號 id、Slack ID 與他自己的語言偏好。language 缺省一律當中文。
+ * 沒有 Slack ID 的人 slackUserId 是空字串：Slack 不發，但 App 推播照發（2026-11）。
+ */
 export interface Recipient {
+  userId?: string | null
   slackUserId: string
   language: Lang
 }
@@ -245,12 +249,12 @@ export async function currentApprovers(db: SupabaseClient, leave: LeaveRow): Pro
   if (!leave.flow_id || !leave.current_step) return []
   const { data, error } = await db
     .from('approval_flow_steps')
-    .select('approver:users!approval_flow_steps_approver_id_fkey(slack_user_id, language)')
+    .select('approver:users!approval_flow_steps_approver_id_fkey(id, slack_user_id, language)')
     .eq('flow_id', leave.flow_id)
     .eq('step_order', leave.current_step)
   if (error) throw new Error(`讀取簽核關卡失敗：${error.message}`)
   return toRecipients(
-    (data ?? []).map((r: { approver?: { slack_user_id?: string; language?: string } }) => r.approver),
+    (data ?? []).map((r: { approver?: RecipientRow }) => r.approver),
   )
 }
 
@@ -258,21 +262,26 @@ export async function currentApprovers(db: SupabaseClient, leave: LeaveRow): Pro
 export async function notificationTargetRecipients(db: SupabaseClient): Promise<Recipient[]> {
   const { data, error } = await db
     .from('notification_targets')
-    .select('user:users(slack_user_id, language)')
+    .select('user:users(id, slack_user_id, language)')
     .eq('is_active', true)
   if (error) throw new Error(`讀取通知對象失敗：${error.message}`)
   return toRecipients(
-    (data ?? []).map((r: { user?: { slack_user_id?: string; language?: string } }) => r.user),
+    (data ?? []).map((r: { user?: RecipientRow }) => r.user),
   )
 }
 
-function toRecipients(rows: ({ slack_user_id?: string; language?: string } | undefined)[]): Recipient[] {
+interface RecipientRow { id?: string | null; slack_user_id?: string | null; language?: string | null }
+
+/** 有 Slack ID 或系統帳號 id 的都算（後者只收得到 App 推播）；同一個人只算一次。 */
+export function toRecipients(rows: (RecipientRow | null | undefined)[]): Recipient[] {
   const seen = new Set<string>()
   const out: Recipient[] = []
   for (const row of rows) {
-    if (!row?.slack_user_id || seen.has(row.slack_user_id)) continue
-    seen.add(row.slack_user_id)
-    out.push({ slackUserId: row.slack_user_id, language: normalizeLang(row.language) })
+    const slack = row?.slack_user_id?.trim() || ''
+    const key = row?.id || slack
+    if (!row || !key || seen.has(key)) continue
+    seen.add(key)
+    out.push({ userId: row.id ?? null, slackUserId: slack, language: normalizeLang(row.language) })
   }
   return out
 }

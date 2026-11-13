@@ -69,3 +69,15 @@ export const REVIEW_TODO_EVENT = 'review-todo-changed'
 export function notifyReviewTodoChanged() {
   window.dispatchEvent(new CustomEvent(REVIEW_TODO_EVENT))
 }
+
+/**
+ * 考核通知（Slack 私訊＋App 推播，2026-11）。在動作成功之後呼叫，不等結果：
+ *   notifyReview({ type: 'invited', participant_ids })  新增考核名單之後 → 通知本人填自評
+ *   notifyReview({ type: 'turn', participant_id })      送出自評／評核人送出（非最後一關）之後
+ *                                                        → 通知「現在這一關」的評核人
+ * 要不要發、發給誰由 review-notify 照資料庫的狀態決定，同一件事只會發一次。
+ * 通知失敗不影響考核本身。
+ */
+export function notifyReview(body) {
+  supabase.functions.invoke('review-notify', { body }).catch(() => {})
+}

@@ -92,7 +92,7 @@ const LEAVE_SELECT = `
   id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
   registered_by, ack_deadline, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
-  proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
+  proxy:users!leave_requests_proxy_user_id_fkey(id, full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
 `
 
@@ -109,7 +109,7 @@ interface LeaveRow {
   flow_id: string | null
   current_step: number | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
-  proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
+  proxy?: { id?: string; full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
   // HR 代登記的假單才有值，見 migration 20260915_hr_registered_leave
   registered_by?: string | null
@@ -120,8 +120,12 @@ interface LeaveRow {
   dispute_reason?: string | null
 }
 
-/** 收件人：Slack ID 與他自己的語言偏好。language 缺省一律當中文。 */
+/**
+ * 收件人：系統帳號 id、Slack ID 與他自己的語言偏好。language 缺省一律當中文。
+ * 沒有 Slack ID 的人 slackUserId 是空字串：Slack 不發，但 App 推播照發（2026-11）。
+ */
 interface Recipient {
+  userId?: string | null
   slackUserId: string
   language: Lang
 }
@@ -257,12 +261,12 @@ async function currentApprovers(db: SupabaseClient, leave: LeaveRow): Promise<Re
   if (!leave.flow_id || !leave.current_step) return []
   const { data, error } = await db
     .from('approval_flow_steps')
-    .select('approver:users!approval_flow_steps_approver_id_fkey(slack_user_id, language)')
+    .select('approver:users!approval_flow_steps_approver_id_fkey(id, slack_user_id, language)')
     .eq('flow_id', leave.flow_id)
     .eq('step_order', leave.current_step)
   if (error) throw new Error(`讀取簽核關卡失敗：${error.message}`)
   return toRecipients(
-    (data ?? []).map((r: { approver?: { slack_user_id?: string; language?: string } }) => r.approver),
+    (data ?? []).map((r: { approver?: RecipientRow }) => r.approver),
   )
 }
 
@@ -270,21 +274,26 @@ async function currentApprovers(db: SupabaseClient, leave: LeaveRow): Promise<Re
 async function notificationTargetRecipients(db: SupabaseClient): Promise<Recipient[]> {
   const { data, error } = await db
     .from('notification_targets')
-    .select('user:users(slack_user_id, language)')
+    .select('user:users(id, slack_user_id, language)')
     .eq('is_active', true)
   if (error) throw new Error(`讀取通知對象失敗：${error.message}`)
   return toRecipients(
-    (data ?? []).map((r: { user?: { slack_user_id?: string; language?: string } }) => r.user),
+    (data ?? []).map((r: { user?: RecipientRow }) => r.user),
   )
 }
 
-function toRecipients(rows: ({ slack_user_id?: string; language?: string } | undefined)[]): Recipient[] {
+interface RecipientRow { id?: string | null; slack_user_id?: string | null; language?: string | null }
+
+/** 有 Slack ID 或系統帳號 id 的都算（後者只收得到 App 推播）；同一個人只算一次。 */
+function toRecipients(rows: (RecipientRow | null | undefined)[]): Recipient[] {
   const seen = new Set<string>()
   const out: Recipient[] = []
   for (const row of rows) {
-    if (!row?.slack_user_id || seen.has(row.slack_user_id)) continue
-    seen.add(row.slack_user_id)
-    out.push({ slackUserId: row.slack_user_id, language: normalizeLang(row.language) })
+    const slack = row?.slack_user_id?.trim() || ''
+    const key = row?.id || slack
+    if (!row || !key || seen.has(key)) continue
+    seen.add(key)
+    out.push({ userId: row.id ?? null, slackUserId: slack, language: normalizeLang(row.language) })
   }
   return out
 }
@@ -296,6 +305,7 @@ function toRecipients(rows: ({ slack_user_id?: string; language?: string } | und
 // 「直接在 Slack 上按核准」那類互動功能。互動功能會讓 Slack 反過來打進我們的
 // 資料庫，那條路徑沒有登入狀態、繞過 RLS，必須自己驗簽章＋自己檢查權限，
 // 風險與工作量都完全不同，所以刻意分開。
+
 
 
 const SLACK_API = 'https://slack.com/api'
@@ -355,28 +365,50 @@ async function dmMany(slackUserIds: string[], text: string, blocks?: unknown[]) 
  *
  * 先把收件人依語言分組，同一組共用一次 build(lang) 組出來的訊息內容，
  * 組數最多就是 2（zh／en），不會因為收件人多而重複組字串。
+ *
+ * 有給 push 的話，同一則內容也發 App 推播（2026-11「兩邊都發」）：有系統帳號 id
+ * 的人都發，沒有 Slack ID 的人也一樣（只收得到推播）。push 可以是函式，讓不同的
+ * 收件人點開通知時到不同的頁面（例如申請人到「我的假單」、通知對象到首頁）。
  */
 async function dmManyLocalized(
   recipients: Recipient[],
   build: (lang: Recipient['language']) => { text: string; blocks?: unknown[] },
+  push?: PushOptions | ((r: Recipient) => PushOptions),
 ) {
-  const byLang = new Map<Recipient['language'], string[]>()
+  const byLang = new Map<Recipient['language'], Recipient[]>()
   for (const r of recipients) {
-    if (!r.slackUserId) continue
     const list = byLang.get(r.language) ?? []
-    list.push(r.slackUserId)
+    list.push(r)
     byLang.set(r.language, list)
   }
 
   let sent = 0
   const failures: string[] = []
-  for (const [lang, slackUserIds] of byLang) {
+  const pushed: string[] = []
+  for (const [lang, group] of byLang) {
     const { text, blocks } = build(lang)
-    const result = await dmMany(slackUserIds, text, blocks)
-    sent += result.sent
-    failures.push(...result.failures.filter((f): f is string => typeof f === 'string'))
+    const slackIds = group.map(r => r.slackUserId).filter(Boolean)
+    if (slackIds.length) {
+      const result = await dmMany(slackIds, text, blocks)
+      sent += result.sent
+      failures.push(...result.failures.filter((f): f is string => typeof f === 'string'))
+    }
+    if (push) {
+      // 同一個網址的人一起發
+      const byUrl = new Map<string, { opts: PushOptions; ids: string[] }>()
+      for (const r of group) {
+        if (!r.userId) continue
+        const opts = typeof push === 'function' ? push(r) : push
+        const k = JSON.stringify(opts)
+        const entry = byUrl.get(k) ?? { opts, ids: [] }
+        entry.ids.push(r.userId)
+        byUrl.set(k, entry)
+      }
+      const text2 = slackToPush(text, blocks)
+      for (const { opts, ids } of byUrl.values()) pushed.push(await pushToUsers(ids, text2, opts))
+    }
   }
-  return { sent, failures }
+  return { sent, failures, ...(push ? { pushed } : {}) }
 }
 
 function section(markdown: string) {
@@ -768,6 +800,82 @@ function weekdayKey(day: number): MsgKey {
   return WEEKDAY_KEYS[day] ?? 'weekday_0'
 }
 
+// ───── 內聯自 ../_shared/push.ts ─────
+// App 推播（呼叫 send-push 那支 function）。
+//
+// 使用者 2026-11 決定：假單、按摩、考核的私訊「Slack 照發、推播也發」，
+// 沒有 Slack ID 的同仁只要有開 App 通知也收得到。推播的文字直接從同一則 Slack
+// 訊息轉過來（slackToPush），兩邊講的內容一定一致，不用每種通知各寫一份。
+//
+// 推播失敗絕對不能影響 Slack 與原本的流程：這裡的錯誤一律只記 log、不往外丟。
+
+interface PushOptions {
+  /** 點通知後打開哪一頁（網站內的路徑） */
+  url: string
+  /** 同一個 tag 的通知，新的會蓋掉舊的 */
+  tag?: string
+  /**
+   * 這則是不是「待辦」（例如待你簽核）。待辦已經算在圖示數字的「待處理」裡，
+   * 不再另外算一則「未讀」，免得同一件事在數字上算兩次。
+   */
+  todo?: boolean
+}
+
+interface PushText { title: string; body: string }
+
+/** 發推播給這些人（系統帳號 id）。沒開通知的人 send-push 會直接略過。 */
+async function pushToUsers(userIds: (string | null | undefined)[], text: PushText, opts: PushOptions): Promise<string> {
+  const ids = [...new Set(userIds.filter((x): x is string => !!x))]
+  if (ids.length === 0) return 'no recipients'
+  const url = Deno.env.get('SUPABASE_URL')
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
+  if (!url || !key) return 'push skipped: missing env'
+  try {
+    const res = await fetch(`${url}/functions/v1/send-push`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'send', user_ids: ids, ...text, ...opts }),
+      signal: AbortSignal.timeout(15_000),
+    })
+    const body = await res.text()
+    if (!res.ok) console.error(`推播失敗 ${res.status}: ${body.slice(0, 300)}`)
+    return `push ${res.status}`
+  } catch (e) {
+    console.error('推播失敗', e)
+    return `push failed: ${(e as Error).message}`
+  }
+}
+
+/**
+ * Slack 訊息 → 推播文字。
+ *   標題：Slack 的 text（通知預覽那一句，例如「王小明 送出了一張待您審核的假單」）
+ *   內文：訊息裡各段文字去掉 Slack 格式（粗體、:emoji:、連結語法）。第一行如果只是
+ *         粗體標題（例如「:memo: *有一張假單待您審核*」）就略過，跟標題重複。
+ */
+function slackToPush(text: string, blocks?: unknown[]): PushText {
+  const parts: string[] = []
+  for (const b of (blocks ?? []) as { type?: string; text?: { text?: string }; elements?: { text?: string }[] }[]) {
+    if (b?.type === 'section' && b.text?.text) parts.push(b.text.text)
+    else if (b?.type === 'context') for (const e of b.elements ?? []) if (e?.text) parts.push(e.text)
+  }
+  const lines = parts.join('\n').split('\n')
+  if (lines.length > 1 && /^\s*(:[a-z0-9_+-]+:\s*|\p{Extended_Pictographic}\s*)?\*[^*]+\*\s*$/u.test(lines[0])) lines.shift()
+  const body = lines.map(plain).filter(Boolean).join('\n')
+  return { title: plain(text), body: body.length > 600 ? body.slice(0, 599) + '…' : body }
+}
+
+function plain(s: string): string {
+  return s
+    .replace(/<([^|>]+)\|([^>]+)>/g, '$2')     // <網址|文字> → 文字
+    .replace(/<[@#!][^>]*>/g, '')              // <@U123> 之類的提及
+    .replace(/<(https?:[^>]+)>/g, '$1')
+    .replace(/:[a-z0-9_+-]+:/g, '')             // :memo: 之類的 Slack 表情代碼
+    .replace(/[*~`]/g, '')
+    .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+    .replace(/[ \t]+/g, ' ')
+    .trim()
+}
+
 // 待審假單的每日處理：逾期自動退回 ＋ 提醒還沒簽的主管。
 //
 // 這支在這個專案之前就存在，跟「每日請假名單」公告完全是兩回事（只是名字
@@ -783,6 +891,8 @@ function weekdayKey(day: number): MsgKey {
 // 視同確認，並私訊當事人留下紀錄（見 migration 20260915_hr_registered_leave）。
 //
 // 語言：每則私訊都照收件人（申請人／簽核人）自己 users.language 的設定發。
+//
+// App 推播（2026-11）：每則私訊都同時發 App 推播，沒有 Slack ID 但有開 App 通知的人也收得到。
 
 
 
@@ -823,13 +933,13 @@ Deno.serve(async () => {
         returned_reason: '逾期未審核，系統自動退回',
       }).eq('id', leave.id)
 
-      if (leave.requester?.slack_user_id) {
-        const lang = normalizeLang(leave.requester.language)
-        await dmMany([leave.requester.slack_user_id], t(lang, 'overdue_text'), [
+      await dmManyLocalized(toRecipients([leave.requester]), (lang) => ({
+        text: t(lang, 'overdue_text'),
+        blocks: [
           section(t(lang, 'overdue_heading', { detail: leaveDetailLines(leave, lang) })),
           contextLine(t(lang, 'overdue_note', { n: EXPIRE_DAYS })),
-        ])
-      }
+        ],
+      }), { url: '/leave/my', tag: `leave-${leave.id}` })
     }
 
     // ── 提醒簽核人 ──
@@ -860,7 +970,7 @@ Deno.serve(async () => {
             ],
           },
         ],
-      }))
+      }), { url: '/', tag: `leave-${leave.id}`, todo: true })
       remindedIds.push(leave.id)
     }
 
@@ -912,16 +1022,14 @@ async function autoAcknowledgeExpired(db: ReturnType<typeof adminClient>): Promi
   if (updateError) throw new Error(`自動確認失敗：${updateError.message}`)
 
   for (const leave of expired) {
-    const slackId = leave.requester?.slack_user_id
-    if (!slackId) continue   // 沒填 Slack ID 的人收不到，但確認本身已經生效
-    const lang = normalizeLang(leave.requester?.language)
-    await dmManyLocalized([{ slackUserId: slackId, language: lang }], (l) => ({
+    // 沒填 Slack ID、也沒開 App 通知的人收不到，但確認本身已經生效
+    await dmManyLocalized(toRecipients([leave.requester]), (l) => ({
       text: t(l, 'hrreg_auto_text'),
       blocks: [
         section(t(l, 'hrreg_auto_heading', { detail: leaveDetailLines(leave, l) })),
         contextLine(t(l, 'hrreg_auto_note')),
       ],
-    }))
+    }), { url: '/leave/my', tag: `leave-${leave.id}` })
   }
 
   return expired.length

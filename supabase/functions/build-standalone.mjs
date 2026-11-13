@@ -42,10 +42,19 @@ for (const name of TARGETS) {
 
   const index = readFileSync(indexPath, 'utf8')
   const externals = new Set()
-  const sharedPaths = [...index.matchAll(SHARED_IMPORT)].map(m => m[1])
+  // 共用檔之間也會互相 import（例如 slack.ts 用到 push.ts）：沿著 import 一路找下去，
+  // 被用到的共用檔全部攤進來，每個只放一次。
+  const sharedFiles = []
+  const queue = [...index.matchAll(SHARED_IMPORT)].map(m => resolve(join(ROOT, name), m[1]))
+  while (queue.length) {
+    const p = queue.shift()
+    if (sharedFiles.includes(p)) continue
+    sharedFiles.push(p)
+    for (const m of readFileSync(p, 'utf8').matchAll(SHARED_IMPORT)) queue.push(resolve(dirname(p), m[1]))
+  }
 
-  const sharedBodies = sharedPaths.map(rel => {
-    const p = resolve(join(ROOT, name), rel)
+  const sharedBodies = sharedFiles.map(p => {
+    const rel = '../_shared/' + p.split('/').pop()
     return `// ───── 內聯自 ${rel} ─────\n${flattenShared(p, externals).trim()}`
   })
 
