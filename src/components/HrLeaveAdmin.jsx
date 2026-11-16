@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { LEAVE_OPEN_FROM, isBeforeLeaveOpen } from '../lib/leavePolicy'
 import { fetchAllRows } from '../lib/fetchAllRows'
 import { Button, Chip, ConfirmDialog, Dialog, EmptyState, Select, Skeleton, Textarea } from './ui'
 import { useToast } from '../context/ToastContext'
@@ -120,6 +121,12 @@ function HrLeaveAdmin({ hrUser }) {
     }
     if (form.end_date < form.start_date) {
       showToast(t('leaveform_err_date_order'), { tone: 'error' }); return
+    }
+    // HR 修改日期也一樣：系統從 2027/1/1 起開放請假（使用者決定 2026-11；資料庫也會擋）。
+    // 日期沒動的不檢查：已經存在的舊假單照常可以改假別、事由。
+    const datesChanged = form.start_date !== editing.start_date || form.end_date !== editing.end_date
+    if (datesChanged && isBeforeLeaveOpen(form.start_date)) {
+      showToast(t('leave_err_before_open', { date: LEAVE_OPEN_FROM.replace(/-/g, '/') }), { tone: 'error' }); return
     }
     // HR 修改也一樣：改成整張都落在假日（國定假日或週末）不能存（使用者決定 2026-11；資料庫也會擋）
     if (countWorkdays(form.start_date, form.end_date) === 0) {

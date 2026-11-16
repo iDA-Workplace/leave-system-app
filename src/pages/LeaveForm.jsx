@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
+import { LEAVE_OPEN_FROM, isBeforeLeaveOpen } from '../lib/leavePolicy'
 import { Button, Dialog, Select, Textarea, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import {
@@ -171,6 +172,10 @@ function LeaveForm({ userProfile }) {
     if (form.end_date < form.start_date) {
       showToast(t('leaveform_err_date_order'), { tone: 'error' }); return
     }
+    // 系統從 2027/1/1 起開放請假（使用者決定 2026-11；資料庫也會擋）
+    if (isBeforeLeaveOpen(form.start_date)) {
+      showToast(t('leave_err_before_open', { date: LEAVE_OPEN_FROM.replace(/-/g, '/') }), { tone: 'error' }); return
+    }
     // 整張都落在假日（國定假日或週末）不用請假（使用者決定 2026-11；資料庫也會擋）
     if (countWorkdays(form.start_date, form.end_date) === 0) {
       showToast(t('leave_err_all_holiday'), { tone: 'error' }); return
@@ -308,6 +313,7 @@ function LeaveForm({ userProfile }) {
                     type="date"
                     className="ui-field__control"
                     value={form.start_date}
+                    min={LEAVE_OPEN_FROM}
                     onChange={e => setForm(prev => ({ ...prev, start_date: e.target.value }))}
                     required
                   />
@@ -328,7 +334,7 @@ function LeaveForm({ userProfile }) {
                     type="date"
                     className="ui-field__control"
                     value={form.end_date}
-                    min={form.start_date}
+                    min={form.start_date || LEAVE_OPEN_FROM}
                     onChange={e => setForm(prev => ({ ...prev, end_date: e.target.value }))}
                     required
                   />

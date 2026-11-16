@@ -17,6 +17,9 @@
 // ── 支援的動作 ──────────────────────────────────────────────────
 // create：新增帳號（預設密碼 Welcome@123，跟 AdminPanel.jsx 的 DEFAULT_PASSWORD 一致）
 // update：改姓名／角色／Slack ID／在職狀態。停用時一併「封鎖登入」，恢復時解除封鎖。
+// onboard_approve：開通新人從 Slack 送出的申請（2026-11）—— 建立帳號、填好資料、
+//                  標成已開通、用 Slack 私訊新人登入方式（見 migration 20261121_slack_onboarding）
+// onboard_remove：移除一筆開通申請（填錯、不需要開通）
 // （舊版的 delete 已拿掉：網站從來沒用到，留著只會變成可以把人整個刪掉的後門。
 //   離職一律用停用，資料全部保留。）
 //
@@ -108,9 +111,114 @@ Deno.serve(async req => {
       return reply({ success: true })
     }
 
+    // ── 開通新人（從 Slack 送出的申請）──
+    if (action === 'onboard_approve') {
+      const { request_id, department, job_title, default_flow_id, manager_id, hire_date } = body ?? {}
+      if (typeof request_id !== 'string' || !email || !full_name || !hire_date || !/^\d{4}-\d{2}-\d{2}$/.test(String(hire_date))) {
+        return reply({ error: 'bad_request' }, 400)
+      }
+      const { data: reqRow } = await db.from('onboarding_requests').select('*').eq('id', request_id).maybeSingle()
+      if (!reqRow) return reply({ error: 'not_found' }, 404)
+      if (reqRow.status !== 'pending') return reply({ error: 'already_handled' }, 409)
+
+      // 同一個 Slack 帳號已經連到某位同仁 → 不重複開
+      const { data: taken } = await db.from('users').select('id').eq('slack_user_id', reqRow.slack_user_id).maybeSingle()
+      if (taken) return reply({ error: 'slack_taken' }, 409)
+
+      const { data: created, error: createError } = await db.auth.admin.createUser({
+        email: String(email).trim(),
+        password: DEFAULT_PASSWORD,
+        email_confirm: true,
+        user_metadata: { full_name, role: role || 'employee' },
+      })
+      if (createError) return reply({ error: createError.message }, 400)
+      const newId = created.user.id
+
+      const { error: profileError } = await db.from('users').update({
+        full_name,
+        role: role || 'employee',
+        slack_user_id: reqRow.slack_user_id,
+        department: department || null,
+        job_title: job_title || null,
+        default_flow_id: default_flow_id || null,
+        manager_id: manager_id || null,
+        hire_date,
+      }).eq('id', newId)
+
+      await db.from('onboarding_requests').update({
+        status: 'approved', user_id: newId, handled_by: caller.id, handled_at: new Date().toISOString(),
+      }).eq('id', request_id)
+      console.log(`${caller.full_name}（${caller.id}）開通了 ${full_name}（${newId}），來自 Slack ${reqRow.slack_user_id}`)
+
+      if (profileError) {
+        // 帳號已經建好，只是部分資料沒寫進去：照實回報，讓管理員到「編輯」補
+        return reply({ error: `partial:${profileError.message}`, user: created.user }, 500)
+      }
+      const notified = await dmLoginInfo(reqRow.slack_user_id, full_name, String(email).trim())
+      return reply({ success: true, user: created.user, notified })
+    }
+
+    // ── 移除一筆開通申請 ──
+    if (action === 'onboard_remove') {
+      const { request_id } = body ?? {}
+      if (typeof request_id !== 'string') return reply({ error: 'bad_request' }, 400)
+      const { data: updated } = await db.from('onboarding_requests')
+        .update({ status: 'removed', handled_by: caller.id, handled_at: new Date().toISOString() })
+        .eq('id', request_id).eq('status', 'pending').select('id')
+      if (!updated?.length) return reply({ error: 'not_found' }, 404)
+      return reply({ success: true })
+    }
+
     return reply({ error: 'unknown_action' }, 400)
   } catch (e) {
     console.error(e)
     return reply({ error: 'internal_error' }, 500)
   }
 })
+
+/**
+ * 開通後用 Slack 私訊新人登入方式（使用者決定 2026-11）。新人還沒設定語言，中英文並列。
+ * 網站網址用 Edge Function Secrets 的 SITE_URL（按摩通知已經在用）；沒設定就不附網址。
+ * 私訊失敗不影響開通本身，回報給網頁讓管理員知道要自己告訴新人。
+ */
+async function dmLoginInfo(slackUserId: string, name: string, email: string): Promise<boolean> {
+  const token = Deno.env.get('SLACK_BOT_TOKEN')
+  if (!token) return false
+  const site = (Deno.env.get('SITE_URL') ?? '').trim().replace(/\/+$/, '')
+  const zh = [
+    `:tada: *${name}，你的 iDA 管理系統帳號開通了！*`,
+    site ? `*網址：* ${site}` : null,
+    `*帳號：* ${email}`,
+    `*預設密碼：* ${DEFAULT_PASSWORD}`,
+    '第一次登入後，請到「設定 → 變更密碼」改成你自己的密碼。',
+  ].filter(Boolean).join('\n')
+  const en = [
+    '*Your iDA Management Portal account is ready!*',
+    site ? `*URL:* ${site}` : null,
+    `*Account:* ${email}`,
+    `*Default password:* ${DEFAULT_PASSWORD}`,
+    'After you sign in for the first time, please change it under Settings → Change password.',
+  ].filter(Boolean).join('\n')
+  try {
+    const res = await fetch('https://slack.com/api/chat.postMessage', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json; charset=utf-8', Authorization: `Bearer ${token}` },
+      body: JSON.stringify({
+        channel: slackUserId,
+        text: `${name}，你的 iDA 管理系統帳號開通了`,
+        blocks: [
+          { type: 'section', text: { type: 'mrkdwn', text: zh } },
+          { type: 'divider' },
+          { type: 'section', text: { type: 'mrkdwn', text: en } },
+        ],
+        unfurl_links: false,
+      }),
+    })
+    const out = await res.json()
+    if (!out.ok) console.error(`私訊新人登入方式失敗：${out.error}`)
+    return out.ok === true
+  } catch (e) {
+    console.error('私訊新人登入方式失敗', e)
+    return false
+  }
+}

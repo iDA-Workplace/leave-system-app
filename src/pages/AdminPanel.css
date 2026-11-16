@@ -193,3 +193,14 @@
 }
 .admin-save-hint--ok { color: var(--sys-color-success, var(--sys-color-primary)); }
 .admin-save-hint--error { color: var(--sys-color-error); }
+
+/* 員工帳號管理 → 待開通（新人從 Slack 送出的申請） */
+.onboarding-card {
+  margin-bottom: var(--space-200);
+  border: 1px solid var(--sys-color-primary);
+}
+.onboarding-card__title {
+  margin: 0 0 var(--space-100);
+  font: 600 var(--type-title-medium-size)/var(--type-title-medium-line) var(--font-family-base);
+  color: var(--sys-color-on-surface);
+}
