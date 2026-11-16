@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { supabase } from '../lib/supabase'
+import { LEAVE_OPEN_FROM, isBeforeLeaveOpen } from '../lib/leavePolicy'
 import { Button, Dialog, Select, Textarea } from './ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
@@ -63,6 +64,10 @@ function HrRegisterLeaveDialog({ hrUser, onClose, onDone }) {
     }
     if (form.end_date < form.start_date) {
       showToast(t('leaveform_err_date_order'), { tone: 'error' }); return
+    }
+    // HR 代登也一樣：系統從 2027/1/1 起開放請假（使用者決定 2026-11；資料庫也會擋）
+    if (isBeforeLeaveOpen(form.start_date)) {
+      showToast(t('leave_err_before_open', { date: LEAVE_OPEN_FROM.replace(/-/g, '/') }), { tone: 'error' }); return
     }
     // HR 代登也一樣：整張都落在假日（國定假日或週末）不能登記（使用者決定 2026-11；資料庫也會擋）
     if (countWorkdays(form.start_date, form.end_date) === 0) {
@@ -164,6 +169,7 @@ function HrRegisterLeaveDialog({ hrUser, onClose, onDone }) {
           <input
             className="ui-field__control" type="date"
             value={form.start_date}
+            min={LEAVE_OPEN_FROM}
             onChange={e => setForm(p => ({ ...p, start_date: e.target.value, end_date: p.end_date || e.target.value }))}
           />
         </label>
@@ -173,6 +179,7 @@ function HrRegisterLeaveDialog({ hrUser, onClose, onDone }) {
           <input
             className="ui-field__control" type="date"
             value={form.end_date}
+            min={form.start_date || LEAVE_OPEN_FROM}
             onChange={e => setForm(p => ({ ...p, end_date: e.target.value }))}
           />
         </label>

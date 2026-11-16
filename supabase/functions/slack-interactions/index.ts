@@ -124,6 +124,7 @@ const T = {
 
     err_end_before_start: '結束日期不能早於開始日期',
     err_all_holiday: '選的日期都是假日（國定假日或週末），不用請假',
+    err_before_open: '系統從 {date} 起開放請假，這之前的假請用原本的方式申請',
     err_end_time_before_start: '結束時間必須晚於開始時間',
     err_no_flow: '您尚未被指定審核流程，請聯繫管理員設定。',
     err_submit_failed: '送出失敗：{msg}',
@@ -277,6 +278,7 @@ const T = {
 
     err_end_before_start: 'End date cannot be earlier than start date',
     err_all_holiday: 'Every selected day is a holiday or weekend — no leave needed',
+    err_before_open: 'Leave requests in this system start from {date}. For earlier dates, please use the previous process.',
     err_end_time_before_start: 'End time must be later than start time',
     err_no_flow: 'No approval flow has been assigned to you. Please contact an administrator.',
     err_submit_failed: 'Submission failed: {msg}',
@@ -624,6 +626,19 @@ function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}): stri
   return `• ${name}　${type}　${timeLabel(l, lang)}`
 }
 
+/**
+ * 開放請假的第一天（2026-11 使用者決定）：開始日期在這之前的假一律不能送出、
+ * HR 也不能代登記（2026 年的假之後也不能補請）。資料庫也會擋（migration
+ * 20261120_leave_from_2027.sql）。改這個日期的話，那支 migration 與網站的
+ * src/lib/leavePolicy.js 也要一起改。
+ */
+const LEAVE_OPEN_FROM = '2027-01-01'
+
+/** 表單的預設日期：今天，但不早於開放請假的第一天。 */
+function firstLeaveDay(today: string): string {
+  return today < LEAVE_OPEN_FROM ? LEAVE_OPEN_FROM : today
+}
+
 function dm(slackUserId: string, text: string, blocks: unknown[]) {
   return callSlack('chat.postMessage', { channel: slackUserId, text, blocks, unfurl_links: false })
 }
@@ -869,12 +884,12 @@ async function buildLeaveModal(
       {
         type: 'input', block_id: 'start_date',
         label: { type: 'plain_text', text: t(lang, 'field_start_date'), emoji: true },
-        element: { type: 'datepicker', action_id: 'v', initial_date: current.startDate ?? today },
+        element: { type: 'datepicker', action_id: 'v', initial_date: current.startDate ?? firstLeaveDay(today) },
       },
       {
         type: 'input', block_id: 'end_date',
         label: { type: 'plain_text', text: t(lang, 'field_end_date'), emoji: true },
-        element: { type: 'datepicker', action_id: 'v', initial_date: current.endDate ?? today },
+        element: { type: 'datepicker', action_id: 'v', initial_date: current.endDate ?? firstLeaveDay(today) },
       },
       {
         type: 'input', block_id: 'start_time',
@@ -988,12 +1003,12 @@ async function buildHrRegisterModal(db: SupabaseClient, lang: Lang) {
       {
         type: 'input', block_id: 'start_date',
         label: { type: 'plain_text', text: t(lang, 'field_start_date'), emoji: true },
-        element: { type: 'datepicker', action_id: 'v', initial_date: today },
+        element: { type: 'datepicker', action_id: 'v', initial_date: firstLeaveDay(today) },
       },
       {
         type: 'input', block_id: 'end_date',
         label: { type: 'plain_text', text: t(lang, 'field_end_date'), emoji: true },
-        element: { type: 'datepicker', action_id: 'v', initial_date: today },
+        element: { type: 'datepicker', action_id: 'v', initial_date: firstLeaveDay(today) },
       },
       {
         type: 'input', block_id: 'start_time',
@@ -1036,6 +1051,10 @@ async function handleHrRegisterSubmit(db: SupabaseClient, me: any, lang: Lang, p
 
   if (endDate < startDate) {
     return json({ response_action: 'errors', errors: { end_date: t(lang, 'err_end_before_start') } })
+  }
+  // HR 代登也一樣：系統從 2027/1/1 起開放請假（使用者決定 2026-11；資料庫也會擋）
+  if (startDate < LEAVE_OPEN_FROM) {
+    return json({ response_action: 'errors', errors: { start_date: t(lang, 'err_before_open', { date: LEAVE_OPEN_FROM.replace(/-/g, '/') }) } })
   }
   // HR 代登也一樣：整張都落在假日不能登記（使用者決定 2026-11；資料庫也會擋）
   if (countWorkdays(startDate, endDate) === 0) {
@@ -1479,6 +1498,10 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
 
   if (endDate < startDate) {
     return json({ response_action: 'errors', errors: { end_date: t(lang, 'err_end_before_start') } })
+  }
+  // 系統從 2027/1/1 起開放請假（使用者決定 2026-11；資料庫也會擋）
+  if (startDate < LEAVE_OPEN_FROM) {
+    return json({ response_action: 'errors', errors: { start_date: t(lang, 'err_before_open', { date: LEAVE_OPEN_FROM.replace(/-/g, '/') }) } })
   }
   // 整張都落在假日（國定假日或週末）不用請假（使用者決定 2026-11；資料庫也會擋）
   if (countWorkdays(startDate, endDate) === 0) {

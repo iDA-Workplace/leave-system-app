@@ -219,6 +219,7 @@ export const translations = {
     leaveform_err_required: '請填寫所有欄位',
     // 國定假日（2026-11）
     leave_err_all_holiday: '選的日期都是假日（國定假日或週末），不用請假',
+    leave_err_before_open: '系統從 {date} 起開放請假，這之前的假請用原本的方式申請',
     holiday_tab: '國定假日',
     holiday_title: '國定假日',
     holiday_hint: '依行政院人事行政總處的辦公日曆。公司不補班，所以只列週一～週五的放假日（含調整放假）；週末本來就不上班，不用列。請假天數、特休餘額、請假統計都會扣掉這裡的日子。',
@@ -1616,6 +1617,7 @@ export const translations = {
     leaveform_err_required: 'Please fill in all required fields',
     // National holidays (2026-11)
     leave_err_all_holiday: 'Every selected day is a holiday or weekend — no leave needed',
+    leave_err_before_open: 'Leave requests in this system start from {date}. For earlier dates, please use the previous process.',
     holiday_tab: 'Holidays',
     holiday_title: 'National holidays',
     holiday_hint: 'Based on the DGPA government office calendar. The company does not work make-up days, so only weekday days off are listed (including bridge holidays); weekends are never workdays. Leave days, annual-leave balances and leave statistics all skip these dates.',
