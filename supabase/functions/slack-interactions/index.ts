@@ -35,6 +35,12 @@
 //   c. 動作發生的當下「重新」檢查權限與狀態，不信任按鈕上帶的任何資訊
 //      （按鈕可能是三天前發的，那張假單早就在網頁上被處理掉了）
 //
+// ── 新人開通（2026-11）─────────────────────────────────────────────
+// 新人加入 Slack（team_join 事件）→ 私訊歡迎訊息＋「填寫資料」按鈕 → 表單（姓名、email、
+// 職稱、部門）→ 存進 onboarding_requests、私訊 HR 與管理員 → 他們在網頁「員工帳號管理 →
+// 待開通」按開通（manage-users）。這些請求的人還沒有系統帳號，所以要在 resolveUser 之前處理。
+// 找不到帳號的人私訊 bot 時，回覆裡也有同一顆按鈕（錯過歡迎訊息、或還沒開通的人可以從這裡申請）。
+//
 // ── App 推播（2026-11）─────────────────────────────────────────────
 // 發給「別人」的私訊（待審核、已核准、已駁回、代登記、異議、代理人、按摩撞假）
 // 都同時發 App 推播（pushTo，交給 send-push 那支發），沒有 Slack ID 但有開 App
@@ -101,7 +107,7 @@ const T = {
     today_wfh_note: '此申請於今日上午的公告發出後才核准，故補發通知。仍可照常聯繫。',
 
     no_account_text: '找不到您的系統帳號',
-    no_account_heading: ':warning: 找不到對應的系統帳號，請聯繫管理員在「員工帳號管理」補上您的 Slack User ID。',
+    no_account_heading: ':warning: 找不到對應的系統帳號。新進同仁請按下面的按鈕填寫資料、申請開通；已經有帳號的話，請聯繫管理員在「員工帳號管理」補上您的 Slack User ID。',
     ask_leave_prompt_text: '要請假嗎？點下面的按鈕填寫假單。',
     ask_leave_prompt_heading: ':memo: 要請假嗎？點下面的按鈕填寫假單。',
     btn_fill_leave_form: '填寫假單',
@@ -255,7 +261,7 @@ const T = {
     today_wfh_note: 'Approved after this morning’s announcement, so this is a follow-up notice. They are still reachable as usual.',
 
     no_account_text: 'We could not find your account',
-    no_account_heading: ':warning: We could not match you to an account. Ask an administrator to add your Slack User ID under “Employee Accounts”.',
+    no_account_heading: ':warning: We could not match you to an account. New here? Click the button below to send your details and request an account. If you already have one, ask an administrator to add your Slack User ID under “Employee Accounts”.',
     ask_leave_prompt_text: 'Want to request leave? Click the button below to fill out the form.',
     ask_leave_prompt_heading: ':memo: Want to request leave? Click the button below to fill out the form.',
     btn_fill_leave_form: 'Fill out leave request',
@@ -1192,6 +1198,11 @@ function handleEvent(db: SupabaseClient, body: Record<string, any>) {
   }
 
   const event = body.event
+  // 新人加入 Slack → 私訊歡迎訊息（走背景：Slack 要 3 秒內收到回應）
+  if (event?.type === 'team_join' && event.user) {
+    background(welcomeNewMember(db, event.user))
+    return new Response('ok')
+  }
   // bot_id 用來擋掉「bot 自己發的訊息」，否則我們回的訊息會再觸發自己
   if (event?.type === 'message' && event.channel_type === 'im' && !event.bot_id && !event.subtype) {
     const text: string = event.text ?? ''
@@ -1285,7 +1296,7 @@ async function replyWithBalance(db: SupabaseClient, event: Record<string, any>, 
     await callSlack('chat.postMessage', {
       channel: event.channel,
       text: t(fallbackLang, 'no_account_text'),
-      blocks: [section(t(fallbackLang, 'no_account_heading'))],
+      blocks: noAccountBlocks(fallbackLang),
     })
     return
   }
@@ -1375,9 +1386,14 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
   if (p.type === 'block_actions') {
     const action = p.actions?.[0]
     const slackUserId = p.user?.id
+    // 新人申請開通：這時候還沒有系統帳號，要在 resolveUser 之前處理
+    if (action?.action_id === 'onboard_open') {
+      await openOnboardingModal(db, slackUserId, p.trigger_id)
+      return new Response('')
+    }
     const me = await resolveUser(db, slackUserId)
     if (!me) {
-      await dm(slackUserId, t('zh', 'no_account_text'), [section(t('zh', 'no_account_heading'))])
+      await dm(slackUserId, t('zh', 'no_account_text'), noAccountBlocks('zh'))
       return new Response('')
     }
     const lang = normalizeLang(me.language)
@@ -1465,6 +1481,7 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
   }
 
   if (p.type === 'view_submission') {
+    if (p.view?.callback_id === 'submit_onboarding') return await handleOnboardingSubmit(db, p)
     const me = await resolveUser(db, p.user?.id)
     if (!me) {
       return json({ response_action: 'errors', errors: { reason: t('zh', 'no_account_heading') } })
@@ -2463,7 +2480,7 @@ async function replyRoster(db: SupabaseClient, event: Record<string, any>, fallb
   const me = await resolveUser(db, event.user)
   if (!me) {
     await callSlack('chat.postMessage', {
-      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: [section(t(fallbackLang, 'no_account_heading'))],
+      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: noAccountBlocks(fallbackLang),
     })
     return
   }
@@ -2516,7 +2533,7 @@ async function replyMassage(db: SupabaseClient, event: Record<string, any>, fall
   const me = await resolveUser(db, event.user)
   if (!me) {
     await callSlack('chat.postMessage', {
-      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: [section(t(fallbackLang, 'no_account_heading'))],
+      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: noAccountBlocks(fallbackLang),
     })
     return
   }
@@ -2540,7 +2557,7 @@ async function replyDraw(db: SupabaseClient, event: Record<string, any>, fallbac
   const me = await resolveUser(db, event.user)
   if (!me) {
     await callSlack('chat.postMessage', {
-      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: [section(t(fallbackLang, 'no_account_heading'))],
+      channel: event.channel, text: t(fallbackLang, 'no_account_text'), blocks: noAccountBlocks(fallbackLang),
     })
     return
   }
@@ -2828,3 +2845,177 @@ async function reportBadMassageSlackId(
     ],
   })
 }
+
+
+// ===== 新人開通（2026-11） =====
+//
+// 新人還沒有系統帳號、也還沒設定語言，所以訊息與表單都中英文並列。
+
+/** 找不到帳號時的回覆：說明＋「填寫資料申請開通」按鈕。 */
+function noAccountBlocks(lang: Lang) {
+  return [
+    section(t(lang, 'no_account_heading')),
+    { type: 'actions', elements: [onboardButton()] },
+  ]
+}
+
+function onboardButton() {
+  return {
+    type: 'button', style: 'primary', action_id: 'onboard_open', value: 'open',
+    text: { type: 'plain_text', text: '填寫資料 Fill in my details', emoji: true },
+  }
+}
+
+/** 新人加入 Slack 的當下：私訊歡迎訊息。訪客、bot、已經有帳號的人不發。 */
+async function welcomeNewMember(db: SupabaseClient, user: Record<string, any>) {
+  if (!user?.id || user.is_bot || user.deleted || user.is_restricted || user.is_ultra_restricted || user.id === 'USLACKBOT') return
+  const { data: existing } = await db.from('users').select('id').eq('slack_user_id', user.id).maybeSingle()
+  if (existing) return
+  const name = user.profile?.real_name || user.real_name || user.name || ''
+  await dm(user.id, `歡迎加入 iDA！Welcome to iDA, ${name}!`, [
+    section(`:wave: *歡迎加入 iDA${name ? `，${name}` : ''}！*\n請按下面的按鈕填寫基本資料，我們會幫你開通「iDA 管理系統」的帳號（請假、考核、按摩預約都在這裡）。開通後會再私訊你登入方式。`),
+    section(`*Welcome to iDA!*\nPlease click the button below to fill in your details so we can set up your iDA Management Portal account (leave, reviews and massage booking). We will message you here with your sign-in details once it is ready.`),
+    { type: 'actions', elements: [onboardButton()] },
+  ])
+}
+
+/** 部門選項：跟網站「員工帳號管理」一樣，從現有在職同仁的部門彙整（不開放自由輸入）。 */
+async function departmentOptions(db: SupabaseClient): Promise<string[]> {
+  const { data } = await db.from('users').select('department').eq('is_active', true)
+  return [...new Set((data ?? []).map((r: { department: string | null }) => r.department).filter(Boolean) as string[])].sort()
+}
+
+async function openOnboardingModal(db: SupabaseClient, slackUserId: string, triggerId: string) {
+  const { data: account } = await db.from('users').select('id, is_active').eq('slack_user_id', slackUserId).maybeSingle()
+  if (account) {
+    await dm(slackUserId, '你已經有帳號了 You already have an account', [section(account.is_active === false
+      ? ':warning: 你的帳號目前是停用狀態，請聯絡 HR。\nYour account is currently deactivated. Please contact HR.'
+      : ':white_check_mark: 你已經有 iDA 管理系統的帳號，不需要再申請。忘記密碼請聯絡管理員。\nYou already have an iDA Management Portal account. If you forgot your password, please contact an administrator.')])
+    return
+  }
+
+  // 預先帶入：上次送出的資料；沒有的話用 Slack 個人檔案的姓名與 email
+  const { data: prev } = await db.from('onboarding_requests').select('*').eq('slack_user_id', slackUserId).maybeSingle()
+  let slackName = '', slackEmail = ''
+  if (!prev) {
+    const info = await callSlack('users.info', { user: slackUserId })
+    const u = (info as any)?.user
+    slackName = u?.profile?.real_name || u?.real_name || ''
+    slackEmail = u?.profile?.email || ''
+  }
+  const depts = await departmentOptions(db)
+  const initialDept = prev?.department && depts.includes(prev.department) ? prev.department : null
+
+  const textInput = (block: string, label: string, initial: string, opts: Record<string, unknown> = {}) => ({
+    type: 'input', block_id: block,
+    label: { type: 'plain_text', text: label, emoji: true },
+    element: { type: 'plain_text_input', action_id: 'v', ...(initial ? { initial_value: initial } : {}), ...opts },
+  })
+
+  await callSlack('views.open', {
+    trigger_id: triggerId,
+    view: {
+      type: 'modal', callback_id: 'submit_onboarding',
+      title: { type: 'plain_text', text: '申請開通帳號', emoji: true },
+      submit: { type: 'plain_text', text: '送出 Submit', emoji: true },
+      close: { type: 'plain_text', text: '取消 Cancel', emoji: true },
+      blocks: [
+        contextLine('送出後，管理員或 HR 會幫你開通帳號，開通後會私訊你登入方式。\nAn administrator or HR will set up your account and message you the sign-in details.'),
+        textInput('full_name', '姓名 Name', prev?.full_name ?? slackName, { max_length: 50 }),
+        textInput('email', 'Email（登入帳號 Sign-in account）', prev?.email ?? slackEmail, { max_length: 120 }),
+        textInput('job_title', '職稱 Job title', prev?.job_title ?? '', { max_length: 50 }),
+        depts.length
+          ? {
+              type: 'input', block_id: 'department',
+              label: { type: 'plain_text', text: '部門 Department', emoji: true },
+              element: {
+                type: 'static_select', action_id: 'v',
+                placeholder: { type: 'plain_text', text: '請選擇 Select', emoji: true },
+                ...(initialDept ? { initial_option: opt(initialDept, initialDept) } : {}),
+                options: depts.slice(0, 100).map(d => opt(d, d)),
+              },
+            }
+          : textInput('department', '部門 Department', prev?.department ?? '', { max_length: 50 }),
+      ],
+    },
+  })
+}
+
+async function handleOnboardingSubmit(db: SupabaseClient, p: Record<string, any>) {
+  const slackUserId: string = p.user?.id
+  const v = p.view?.state?.values ?? {}
+  const text = (block: string) => String(v[block]?.v?.value ?? '').trim()
+  const fullName = text('full_name')
+  const email = text('email').toLowerCase()
+  const jobTitle = text('job_title')
+  const department = String(v.department?.v?.selected_option?.value ?? v.department?.v?.value ?? '').trim()
+
+  if (!fullName) return json({ response_action: 'errors', errors: { full_name: '請填姓名 Please enter your name' } })
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return json({ response_action: 'errors', errors: { email: 'Email 格式不對 Please enter a valid email' } })
+  }
+  if (!jobTitle) return json({ response_action: 'errors', errors: { job_title: '請填職稱 Please enter your job title' } })
+  if (!department) return json({ response_action: 'errors', errors: { department: '請選部門 Please choose a department' } })
+
+  const { data: account } = await db.from('users').select('id').eq('slack_user_id', slackUserId).maybeSingle()
+  if (account) return json({ response_action: 'errors', errors: { full_name: '你已經有帳號了 You already have an account' } })
+  // 不分大小寫比對；email 裡的 _ 和 % 在 ilike 是萬用字元，要先跳脫
+  const { data: sameEmail } = await db.from('users').select('id')
+    .ilike('email', email.replace(/[\\%_]/g, '\\$&')).limit(1).maybeSingle()
+  if (sameEmail) {
+    return json({ response_action: 'errors', errors: { email: '這個 email 已經有帳號，請聯絡 HR This email already has an account — please contact HR' } })
+  }
+  const { data: prev } = await db.from('onboarding_requests').select('status').eq('slack_user_id', slackUserId).maybeSingle()
+  if (prev?.status === 'approved') {
+    return json({ response_action: 'errors', errors: { full_name: '你的帳號已經開通了 Your account is already set up' } })
+  }
+
+  const { error } = await db.from('onboarding_requests').upsert({
+    slack_user_id: slackUserId, full_name: fullName, email, job_title: jobTitle, department,
+    status: 'pending', submitted_at: new Date().toISOString(), handled_by: null, handled_at: null, user_id: null,
+  }, { onConflict: 'slack_user_id' })
+  if (error) {
+    console.error('存開通申請失敗', error.message)
+    return json({ response_action: 'errors', errors: { full_name: '送出失敗，請稍後再試 Something went wrong, please try again' } })
+  }
+
+  background((async () => {
+    await dm(slackUserId, '已收到你的資料 We got your details', [section(
+      `:white_check_mark: *已收到你的資料！* 管理員或 HR 開通帳號後會再私訊你登入方式。\n*We got your details!* We will message you here with your sign-in details once your account is ready.\n\n*姓名 Name:* ${fullName}\n*Email:* ${email}\n*職稱 Job title:* ${jobTitle}\n*部門 Department:* ${department}`)])
+    await notifyOnboardingAdmins(db, { fullName, email, jobTitle, department, resubmitted: !!prev })
+  })())
+  return json({ response_action: 'clear' })
+}
+
+/** 私訊所有在職的 HR 與管理員：有新人待開通（使用者決定 2026-11）。 */
+async function notifyOnboardingAdmins(
+  db: SupabaseClient,
+  r: { fullName: string; email: string; jobTitle: string; department: string; resubmitted: boolean },
+) {
+  const { data } = await db.from('users')
+    .select('id, slack_user_id, language')
+    .eq('is_active', true).or('is_admin.eq.true,is_finance.eq.true')
+  const site = (Deno.env.get('SITE_URL') ?? '').trim().replace(/\/+$/, '')
+  for (const a of (data ?? []) as { slack_user_id: string | null; language: string | null }[]) {
+    if (!a.slack_user_id?.trim()) continue
+    const en = normalizeLang(a.language) === 'en'
+    const heading = en
+      ? `:bust_in_silhouette: *${r.resubmitted ? 'Updated account request' : 'New account request'}*`
+      : `:bust_in_silhouette: *${r.resubmitted ? '新人更新了開通資料' : '有新人申請開通帳號'}*`
+    const lines = en
+      ? [`*Name:* ${r.fullName}`, `*Email:* ${r.email}`, `*Job title:* ${r.jobTitle}`, `*Department:* ${r.department}`]
+      : [`*姓名：* ${r.fullName}`, `*Email：* ${r.email}`, `*職稱：* ${r.jobTitle}`, `*部門：* ${r.department}`]
+    const note = en
+      ? 'Go to Admin → Employee Accounts → Pending, fill in the hire date, approval flow and manager, then click Activate.'
+      : '請到「管理後台 → 員工帳號管理 → 待開通」補上入職日期、審核流程、直屬主管後按「開通」。'
+    const blocks: unknown[] = [section(`${heading}\n${lines.join('\n')}`), contextLine(note)]
+    if (site) {
+      blocks.push({ type: 'actions', elements: [{
+        type: 'button', url: `${site}/admin`, action_id: 'onboard_go_admin',
+        text: { type: 'plain_text', text: en ? 'Open Employee Accounts' : '前往開通', emoji: true },
+      }] })
+    }
+    await dm(a.slack_user_id, en ? `New account request: ${r.fullName}` : `${r.fullName} 申請開通帳號`, blocks)
+  }
+}
+

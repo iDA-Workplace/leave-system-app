@@ -8,6 +8,7 @@ import EmployeeLeaveManagement from './EmployeeLeaveManagement'
 import LeaveTypeNames from './LeaveTypeNames'
 import HolidayManagement from './HolidayManagement'
 import ResignedStaffDialog from '../components/ResignedStaffDialog'
+import OnboardingRequests from '../components/OnboardingRequests'
 import { Button, Card, Chip, ConfirmDialog, Dialog, PageHeader, Select, Skeleton, Tabs, TextField } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import { useLanguage } from '../context/LanguageContext'
@@ -235,6 +236,12 @@ function UserManagement({ isAdmin, isHr, userProfile }) {
         title={t('adminusers_title')}
         actions={isAdmin && <Button size="sm" onClick={() => { setNewUser(emptyNewUser); setShowAdd(true) }}>{t('adminusers_add')}</Button>}
       />
+
+      {/* 新人從 Slack 送出的開通申請（2026-11）；沒有待開通的就不顯示 */}
+      {isAdmin && (
+        <OnboardingRequests departments={departments} flows={flows} users={users}
+          onActivated={() => setTimeout(fetchUsers, 1000)} />
+      )}
 
       <div className="admin-inline-form">
         <Select value={filterDept} onChange={e => setFilterDept(e.target.value)} style={{ maxWidth: '200px' }}>

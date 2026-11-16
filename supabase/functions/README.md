@@ -552,3 +552,20 @@ select cron.schedule(
 - **部署**：`send-push`、`review-notify` 都是新的 function：Deploy a new function → Via Editor → 貼上 `index.ts` → Deploy，
   再到 Details 把 **Verify JWT 關掉**（兩支都自己檢查身分）。
 
+---
+
+## 新人從 Slack 申請開通（2026-11）
+
+1. 新人加入 Slack（`team_join` 事件）→ `slack-interactions` 私訊歡迎訊息＋「填寫資料」按鈕
+   （訪客、bot、已經有帳號的人不發）。找不到帳號的人私訊 bot 時，回覆裡也有同一顆按鈕。
+2. 表單：姓名、email（預先帶入 Slack 的 email，可改）、職稱、部門（從現有部門選）。Slack User ID 自動記下。
+3. 存進 `onboarding_requests`，私訊所有在職的 HR 與管理員（有設 `SITE_URL` 的話附「前往開通」按鈕）。
+4. 管理員／HR 在「員工帳號管理 → 待開通」補入職日期、審核流程、直屬主管 → 開通：
+   `manage-users` 的 `onboard_approve` 建立帳號（預設密碼）、寫好資料、私訊新人登入方式。
+
+**Slack App 要多做的設定**（<https://api.slack.com/apps> → 你的 App）：
+
+- **OAuth & Permissions → Bot Token Scopes**：加 `users:read`、`users:read.email`
+- **Event Subscriptions → Subscribe to bot events**：加 `team_join`
+- 頁面上方出現黃色提示時按 **reinstall your app**（改權限一定要重新安裝才生效）
+
