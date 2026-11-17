@@ -538,6 +538,12 @@ const T = {
     digest_group_morning: '上午',
     digest_group_afternoon: '下午',
     digest_group_wfh: '在家工作',
+    digest_group_leave: '請假',
+    long_heading: ':calendar: *長假預告*',
+    long_line: '• {name}　{type}　{range}（共 {n} 個上班日）',
+    long_footer: '3 個上班日以上的假，約在開始前兩個月預告一次。請提早安排交接；需要請示或報備的事，請在休假前處理。',
+    long_summary_text: '長假預告：{n} 位同仁近期將請長假',
+    long_summary_text_wfh: '長假預告：{n} 位同仁近期將長時間在家工作',
     hrreg_dm_text: 'HR 幫你登記了一筆請假，請確認',
     hrreg_dm_heading: ':memo: *HR 幫你登記了一筆請假*\n{detail}',
     hrreg_dm_note: '⚠️ 內容正確請按「確認」；有誤請按「提出修改異議」並說明。*{deadline} 前未提出異議，視同確認。*',
@@ -710,6 +716,12 @@ const T = {
     digest_group_morning: 'Morning',
     digest_group_afternoon: 'Afternoon',
     digest_group_wfh: 'Working from home',
+    digest_group_leave: 'On leave',
+    long_heading: ':calendar: *Upcoming extended leave*',
+    long_line: '• {name}　{type}　{range} ({n} working days)',
+    long_footer: 'Leave of 3+ working days is announced once, about two months before it starts. Please plan handovers early, and raise anything that needs their sign-off before they go.',
+    long_summary_text: 'Upcoming extended leave: {n} colleague(s)',
+    long_summary_text_wfh: 'Upcoming extended WFH: {n} colleague(s)',
     hrreg_dm_text: 'HR filed a leave record for you — please confirm',
     hrreg_dm_heading: ':memo: *HR filed a leave record for you*\n{detail}',
     hrreg_dm_note: '⚠️ If this is correct, click “Confirm”. If not, click “Raise an objection” and explain. *If you raise no objection before {deadline}, this counts as confirmed.*',
@@ -922,6 +934,9 @@ function plain(s: string): string {
 //
 //   · 當天上午 9:00 —— 「今天有誰請假」（scope=today，預設）
 //   · 前一天下午 1:00 —— 「下個上班日有誰請假」的預告（scope=next）
+//   · 早上 9:00 —— 長假預告（scope=long，2026-11）：3 個上班日以上、已核准、還沒預告過、
+//     兩個月內開始的假，合併成一則發一次（太晚核准的就在核准後的下一個上班日補發）。
+//     沒有長假就不發。發過的假單記在 long_notice_sent_at，同一張只預告一次。
 //     （原本是下午 4:00，2026-11 使用者決定提前到 1:00；只改排程，見 maintenance/move_preview_to_1pm.sql）
 //
 // 兩則刻意共用同一支：內容組法完全一樣，只差在查哪一天、標題怎麼寫、
@@ -977,15 +992,17 @@ Deno.serve(async req => {
     // scope=next → 前一天下午的預告；沒帶或帶別的值 → 維持原本的「今天」。
     // 用查詢字串而不是 request body：pg_cron 那邊 net.http_post 只要改網址，
     // 不必再組 JSON，出錯的機會少一點。
-    const scope = new URL(req.url).searchParams.get('scope') === 'next' ? 'next' : 'today'
+    const scopeParam = new URL(req.url).searchParams.get('scope')
+    const scope = scopeParam === 'next' ? 'next' : 'today'
     const today = taipeiToday()
     await loadHolidays(db)
-    // 國定假日當天兩則都不發（使用者決定 2026-11）；排程本來就只在週一～週五跑
+    // 國定假日當天都不發（使用者決定 2026-11）；排程本來就只在週一～週五跑
     if (!isWorkday(today)) {
       return new Response(JSON.stringify({ ok: true, skipped: 'holiday', date: today }), {
         headers: { 'Content-Type': 'application/json' },
       })
     }
+    if (scopeParam === 'long') return json(await postLongLeaveNotice(db, lang, today))
     const target = scope === 'next' ? nextWorkday(today) : today
     const tomorrow = scope === 'next' && isTomorrow(today, target)
     const params = dateParams(lang, target)
@@ -1070,6 +1087,70 @@ Deno.serve(async req => {
     return json({ error: (e as Error).message }, 500)
   }
 })
+
+// ===== 長假預告（scope=long） =====
+
+/** 3 個上班日以上算長假（使用者決定 2026-11）。 */
+const LONG_LEAVE_MIN_WORKDAYS = 3
+/** 開始前約兩個月預告（8 週）。 */
+const LONG_LEAVE_LOOKAHEAD_DAYS = 56
+
+function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+async function postLongLeaveNotice(db: ReturnType<typeof adminClient>, lang: Lang, today: string) {
+  // 還沒預告過、明天以後才開始、兩個月內開始的已核准假單。
+  // 開始日在兩個月以後的，等時間到了再發；太晚才核准、離開始不到兩個月的，這次就會被撈到（補發）。
+  // 今天就開始的不在這裡：早上的今日名單已經有他。
+  const { data, error } = await db
+    .from('leave_requests')
+    .select(LEAVE_SELECT)
+    .eq('status', 'approved')
+    .is('long_notice_sent_at', null)
+    .gt('start_date', today)
+    .lte('start_date', addDays(today, LONG_LEAVE_LOOKAHEAD_DAYS))
+    .order('start_date')
+  if (error) throw new Error(`讀取假單失敗：${error.message}`)
+
+  const longOnes = ((data ?? []) as unknown as LeaveRow[])
+    .map(l => ({ l, n: countWorkdays(l.start_date, l.end_date) }))
+    .filter(x => x.n >= LONG_LEAVE_MIN_WORKDAYS)
+  if (longOnes.length === 0) return { scope: 'long', date: today, count: 0, posted: false }
+
+  const line = ({ l, n }: { l: LeaveRow; n: number }) => t(lang, 'long_line', {
+    name: (l.requester?.full_name ?? t(lang, 'unknown_person'))
+      + (l.proxy?.full_name ? t(lang, 'digest_proxy_suffix', { name: l.proxy.full_name }) : ''),
+    type: leaveTypeName(l, lang),
+    range: dateLabel(l),
+    n,
+  })
+  const leave = longOnes.filter(x => !x.l.leave_type?.is_wfh)
+  const wfh = longOnes.filter(x => x.l.leave_type?.is_wfh)
+
+  const blocks: unknown[] = [section(t(lang, 'long_heading'))]
+  // 在家工作分開列（使用者決定）：他們有在工作，只是不在辦公室
+  for (const [label, rows] of [[t(lang, 'digest_group_leave'), leave], [t(lang, 'digest_group_wfh'), wfh]] as const) {
+    if (rows.length === 0) continue
+    blocks.push(section(t(lang, 'digest_group_heading', { label, lines: rows.map(line).join('\n') })))
+  }
+  blocks.push(contextLine(t(lang, 'long_footer')))
+
+  const summary = leave.length > 0
+    ? t(lang, 'long_summary_text', { n: leave.length })
+    : t(lang, 'long_summary_text_wfh', { n: wfh.length })
+  await postToChannel(requireEnv('SLACK_LEAVE_CHANNEL'), summary, blocks)
+
+  // 發成功才標記；發失敗（例如 bot 不在頻道裡）的話，明天會再試一次
+  const { error: markError } = await db.from('leave_requests')
+    .update({ long_notice_sent_at: new Date().toISOString() })
+    .in('id', longOnes.map(x => x.l.id))
+  if (markError) console.error('標記長假預告失敗：', markError.message)
+
+  return { scope: 'long', date: today, count: leave.length, wfh: wfh.length, posted: true }
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
