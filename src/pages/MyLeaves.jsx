@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-import { Button, Card, Chip, ConfirmDialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea } from '../components/ui'
+import { Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, PageHeader, Select, Skeleton, Tabs, Textarea } from '../components/ui'
 import { useToast } from '../context/ToastContext'
 import {
   buildBalanceRows, fetchEntitlementOverrides,
@@ -157,10 +157,12 @@ function MyLeaves({ userProfile }) {
     // homepage), so this fetches minimal columns.
     const { data } = await supabase
       .from('leave_requests')
-      .select('id, flow_id, current_step')
+      .select('id, flow_id, current_step, proxy_status')
       .eq('status', 'pending')
 
+    // 還在等職務代理人確認的不算（2026-11）
     const filtered = (data || []).filter(req =>
+      req.proxy_status !== 'pending' &&
       allSteps.some(step => step.flow_id === req.flow_id && step.step_order === req.current_step)
     )
 
@@ -196,6 +198,29 @@ function MyLeaves({ userProfile }) {
     fetchMyLeaves()
   }
 
+  // 重新送出前先選職務代理人（2026-11 必填）。代理人回覆不能代理而退回的，預設清空、一定要重選；
+  // 其他（收回、逾期退回）預設帶原本的代理人。
+  const [resubmitTarget, setResubmitTarget] = useState(null)
+  const [resubmitProxy, setResubmitProxy] = useState('')
+  const [proxyOptions, setProxyOptions] = useState([])
+
+  async function openResubmit(leave) {
+    setResubmitTarget(leave)
+    setResubmitProxy(leave.proxy_status === 'rejected' ? '' : (leave.proxy_user_id || ''))
+    if (proxyOptions.length === 0) {
+      const { data } = await supabase.from('users').select('id, full_name')
+        .eq('is_active', true).neq('id', userProfile.id).order('full_name')
+      setProxyOptions(data || [])
+    }
+  }
+
+  async function confirmResubmit() {
+    if (!resubmitProxy) { showToast(t('leaveform_err_proxy_required'), { tone: 'error' }); return }
+    const leave = { ...resubmitTarget, proxy_user_id: resubmitProxy }
+    setResubmitTarget(null)
+    await handleResubmit(leave)
+  }
+
   async function handleResubmit(leave) {
     // 這裡原本跟「請假申請」走同一套額度檢查、額度不足就擋下來。
     // 2026-09 兩邊一起移除了（見 LeaveForm.jsx 送出那段的說明）——
@@ -224,6 +249,8 @@ function MyLeaves({ userProfile }) {
       await supabase.functions.invoke('send-slack-notification', { body: { type: 'new_request', request_id: data.id } })
       fetchMyLeaves()
       showToast(t('myleaves_resubmitted'))
+    } else {
+      showToast(t('leaveform_err_submit', { msg: error.message }), { tone: 'error' })
     }
   }
 
@@ -398,7 +425,13 @@ function MyLeaves({ userProfile }) {
                           <td>{isMultiDay ? t('common_all_day') : (leave.start_time && leave.end_time ? `${leave.start_time} ~ ${leave.end_time}` : '—')}</td>
                           <td>{hoursFor(leave, t)}</td>
                           <td>
-                            <Chip tone={tone}>{t(`status_${leave.status}`)}</Chip>
+                            <Chip tone={tone}>{leave.status === 'pending' && leave.proxy_status === 'pending' ? t('status_proxy_pending') : t(`status_${leave.status}`)}</Chip>
+                            {/* 職務代理人不能代理而退回（2026-11）：寫出是誰、為什麼，申請人才知道要換人 */}
+                            {leave.status === 'returned' && leave.proxy_status === 'rejected' && (
+                              <div className="leave-reason" style={{ marginTop: 4 }}>
+                                {t('myleaves_proxy_declined', { name: leave.proxy?.full_name || '—', reason: leave.proxy_comment || '' })}
+                              </div>
+                            )}
                             {/* HR 代登記的假單要一眼看得出來，而且要分得出
                                 「本人確認過」「逾期自動確認」「還沒確認」—— 
                                 事後有爭議時，這三種的意義完全不同。 */}
@@ -423,7 +456,7 @@ function MyLeaves({ userProfile }) {
                               <Button variant="tonal" size="sm" onClick={() => setWithdrawTarget(leave)}>{t('myleaves_withdraw')}</Button>
                             )}
                             {(leave.status === 'returned' || leave.status === 'withdrawn') && (
-                              <Button size="sm" onClick={() => handleResubmit(leave)}>{t('myleaves_resubmit')}</Button>
+                              <Button size="sm" onClick={() => openResubmit(leave)}>{t('myleaves_resubmit')}</Button>
                             )}
                             {leave.registered_by && !leave.acknowledged_at && !leave.disputed_at && (
                               <>
@@ -491,6 +524,26 @@ function MyLeaves({ userProfile }) {
           )
         })()}
       </Card>
+
+      {resubmitTarget && (
+        <Dialog
+          title={t('myleaves_resubmit_title')}
+          labelledBy="resubmit-dialog-title"
+          onClose={() => setResubmitTarget(null)}
+          actions={(
+            <>
+              <Button variant="text" onClick={() => setResubmitTarget(null)}>{t('common_cancel')}</Button>
+              <Button onClick={confirmResubmit}>{t('myleaves_resubmit')}</Button>
+            </>
+          )}
+        >
+          <p className="admin-form-card__hint">{t('myleaves_resubmit_hint')}</p>
+          <Select label={t('leaveform_proxy')} required value={resubmitProxy} onChange={e => setResubmitProxy(e.target.value)}>
+            <option value="">{t('leaveform_select_proxy')}</option>
+            {proxyOptions.map(u => <option key={u.id} value={u.id}>{u.full_name}</option>)}
+          </Select>
+        </Dialog>
+      )}
 
       {withdrawTarget && (
         <ConfirmDialog

@@ -22,6 +22,9 @@ psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/40_push_tests.sql
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/50_leave_open_tests.sql
 # 或者（另開一個資料庫，00 → 10 → 60）：20261121 新人從 Slack 申請開通（9 項）
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/60_onboarding_tests.sql
+# 或者（另開一個資料庫，00 → 10 → 40 → 70）：20261122 職務代理人必填＋先審批（25 項）
+psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/40_push_tests.sql
+psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/70_proxy_tests.sql
 ```
 
 最後會列出每一項 PASS／FAIL；有任何 FAIL 會以錯誤結束。

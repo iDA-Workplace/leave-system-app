@@ -3,6 +3,7 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import { supabase } from '../lib/supabase'
 import { fetchAwaitingMyScoreCount, REVIEW_TODO_EVENT } from '../lib/reviewTodo'
 import { clearPushOnLogout, refreshAppBadge, resetUnreadPushCount, syncPushSubscription } from '../lib/push'
+import { fetchMyProxyRequests, PROXY_TODO_EVENT } from '../lib/proxy'
 import { useTheme } from '../context/ThemeContext'
 import { useLanguage } from '../context/LanguageContext'
 import { TEAM_STATS_ROLES } from '../lib/teamStats'
@@ -65,6 +66,8 @@ function Layout({ children, userProfile }) {
   const { mode, setMode, resolvedTheme } = useTheme()
   const { t } = useLanguage()
   const [pendingCount, setPendingCount] = useState(0)
+  // 待我確認的職務代理（2026-11）：每個人都可能是代理人，所以不分角色都要算
+  const [proxyCount, setProxyCount] = useState(0)
   const [reviewTodoCount, setReviewTodoCount] = useState(0)
   // 斷線提示。刻意不做離線暫存：請假牽涉額度與簽核流程，離線存起來再補送會
   // 跟別人的假單打架，寧可當下就講清楚現在送不出去。
@@ -80,6 +83,16 @@ function Layout({ children, userProfile }) {
   const avatarMenuRef = useRef(null)
   const themeMenuRef = useRef(null)
   const searchRef = useRef(null)
+
+  // 待我確認的職務代理：換頁、自己剛回覆完（PROXY_TODO_EVENT）時重算。
+  // 代理人讀不到假單本身，即時訂閱收不到，所以靠這兩個時機。
+  useEffect(() => {
+    if (!userProfile?.id) return
+    const load = () => fetchMyProxyRequests().then(r => setProxyCount(r.length))
+    load()
+    window.addEventListener(PROXY_TODO_EVENT, load)
+    return () => window.removeEventListener(PROXY_TODO_EVENT, load)
+  }, [userProfile?.id, location.pathname])
 
   useEffect(() => {
     if (APPROVER_ROLES.includes(userProfile?.role)) {
@@ -152,7 +165,7 @@ function Layout({ children, userProfile }) {
   // 鈴鐺或考核的數字一變（即時訂閱、換頁、自己剛簽完），圖示上的數字也跟著重算
   useEffect(() => {
     if (userProfile?.id) refreshAppBadge()
-  }, [userProfile?.id, pendingCount, reviewTodoCount])
+  }, [userProfile?.id, pendingCount, reviewTodoCount, proxyCount])
 
   useEffect(() => {
     const goOnline = () => setOnline(true)
@@ -192,10 +205,12 @@ function Layout({ children, userProfile }) {
 
     const { data: requests } = await supabase
       .from('leave_requests')
-      .select('id, flow_id, current_step')
+      .select('id, flow_id, current_step, proxy_status')
       .eq('status', 'pending')
 
+    // 還在等職務代理人確認的不算（2026-11）
     const count = (requests || []).filter(req =>
+      req.proxy_status !== 'pending' &&
       allSteps.some(step => step.flow_id === req.flow_id && step.step_order === req.current_step)
     ).length
 
@@ -313,11 +328,11 @@ function Layout({ children, userProfile }) {
           <button
             type="button"
             className="icon-button"
-            aria-label={t('app_bar_pending_aria', { n: pendingCount })}
-            onClick={() => navigate('/#pending-team-approvals')}
+            aria-label={t('app_bar_pending_aria', { n: pendingCount + proxyCount })}
+            onClick={() => navigate(pendingCount === 0 && proxyCount > 0 ? '/#pending-proxy' : '/#pending-team-approvals')}
           >
             <BellIcon size={20} />
-            {pendingCount > 0 && <span className="icon-button__badge">{pendingCount}</span>}
+            {pendingCount + proxyCount > 0 && <span className="icon-button__badge">{pendingCount + proxyCount}</span>}
           </button>
 
           <div className="avatar-menu" ref={avatarMenuRef}>

@@ -8,6 +8,7 @@ import { useLanguage } from '../context/LanguageContext'
 import MassageHomeWidget from './benefits/MassageHomeWidget'
 import './Home.css'
 import AttachmentLink from '../components/AttachmentLink'
+import ProxyRequestsCard from '../components/ProxyRequestsCard'
 
 const APPROVER_ROLES = ['supervisor', 'deputy_supervisor', 'boss']
 const STATUS_TONES = {
@@ -111,8 +112,9 @@ function Home({ userProfile }) {
   useEffect(() => { fetchMonthLeaveDates() }, [calendarMonth])
   useEffect(() => { fetchColleaguesForDate(selectedDate) }, [selectedDate])
   useEffect(() => {
-    if (location.hash === '#pending-team-approvals' && !queueLoading) {
-      document.getElementById('pending-team-approvals')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    // 鈴鐺會帶 #pending-team-approvals（待簽核）或 #pending-proxy（待確認的職務代理）
+    if (['#pending-team-approvals', '#pending-proxy'].includes(location.hash) && !queueLoading) {
+      document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [location.hash, queueLoading])
   useEffect(() => { setApprovalPage(1) }, [approvalQueue.length])
@@ -160,7 +162,9 @@ function Home({ userProfile }) {
       .eq('status', 'pending')
       .order('start_date')
 
+    // 還在等職務代理人確認的不算（2026-11：代理人同意後才輪到簽核人）
     const filtered = (data || []).filter(req =>
+      req.proxy_status !== 'pending' &&
       allSteps.some(step => step.flow_id === req.flow_id && step.step_order === req.current_step)
     )
 
@@ -459,7 +463,7 @@ function Home({ userProfile }) {
                       <td>{req.hours ? t('common_hours', { n: req.hours }) : (isMultiDay ? t('common_days', { n: calendarDayCount(req.start_date, req.end_date) }) : '—')}</td>
                       <td>
                         <div className="dash-status-cell">
-                          <Chip tone={tone}>{t(`status_${req.status}`)}</Chip>
+                          <Chip tone={tone}>{req.status === 'pending' && req.proxy_status === 'pending' ? t('status_proxy_pending') : t(`status_${req.status}`)}</Chip>
                           {req.status === 'pending' && (
                             <FlowChips
                               steps={req.flow?.steps?.slice().sort((a, b) => a.step_order - b.step_order)}
@@ -482,6 +486,9 @@ function Home({ userProfile }) {
           </div>
         )}
       </Card>
+
+      {/* 待你確認的職務代理（2026-11）：沒有的話不顯示 */}
+      <ProxyRequestsCard />
 
       {isApprover && (
         <Card className="dash-approval-card" id="pending-team-approvals">

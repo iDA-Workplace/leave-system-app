@@ -5,6 +5,12 @@
 //                                                     若假期涵蓋今天則另外公告到頻道
 //   rejected                    假單被拒絕           → 私訊申請人
 //
+// 職務代理人（2026-11）：同仁送出的假單先由代理人確認。
+//   new_request  還在等代理人確認 → 私訊代理人（同意代理／不能代理按鈕，按鈕由 slack-interactions 處理）；
+//                代理人已同意     → 照舊私訊目前這一關的簽核人
+//   proxy_decided 代理人在網頁上回覆之後 → 依假單現在的狀態：不能代理（已退回）通知申請人；
+//                同意且還要簽核 → 通知第 1 關簽核人；同意且流程沒有關卡（已核准）→ 走「已核准」
+//
 // 前面三種的呼叫點在 LeaveForm.jsx / MyLeaves.jsx / Home.jsx，呼叫格式已經
 // 存在於前端，這支 function 是照著那個既有的 { type, request_id } 契約寫的。
 //
@@ -19,7 +25,7 @@
 import {
   adminClient, currentApprovers, notificationTargetRecipients, loadHolidays,
   leaveDetailLines, digestLine, taipeiNow, taipeiToday, DIGEST_HOUR,
-  LEAVE_SELECT, toRecipients, type LeaveRow, type Recipient,
+  LEAVE_SELECT, toRecipients, proxyDetailLines, type LeaveRow, type Recipient,
 } from '../_shared/leave.ts'
 import { dmManyLocalized, postToChannel, section, contextLine } from '../_shared/slack.ts'
 import { normalizeLang, t, type Lang } from '../_shared/i18n.ts'
@@ -57,7 +63,10 @@ Deno.serve(async (req) => {
     const leave = data as unknown as LeaveRow
 
     switch (type) {
-      case 'new_request': return json(await notifyApprovers(db, leave))
+      case 'new_request': return json(leave.proxy_status === 'pending'
+        ? await notifyProxyRequest(leave)
+        : await notifyApprovers(db, leave))
+      case 'proxy_decided': return json(await notifyProxyDecided(db, leave))
       case 'approved':    return json(await notifyApproved(db, leave))
       case 'rejected':    return json(await notifyRejected(db, leave))
       case 'hr_registered': return json(await notifyHrRegistered(leave))
@@ -70,6 +79,53 @@ Deno.serve(async (req) => {
     return json({ error: (e as Error).message }, 500)
   }
 })
+
+/** 請代理人確認：只給基本資料（誰、什麼假、哪天），附「同意代理／不能代理」按鈕。 */
+async function notifyProxyRequest(leave: LeaveRow) {
+  const recipients = toRecipients([leave.proxy as { id?: string; slack_user_id?: string | null; language?: string | null } | null])
+  if (recipients.length === 0) return { skipped: '找不到職務代理人' }
+  const name = leave.requester?.full_name ?? ''
+  return await dmManyLocalized(recipients, (lang) => ({
+    text: t(lang, 'proxy_request_text', { name }),
+    blocks: [
+      section(t(lang, 'proxy_request_heading', { name, detail: proxyDetailLines(leave, lang) })),
+      contextLine(t(lang, 'proxy_request_note')),
+      {
+        type: 'actions',
+        elements: [
+          { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(lang, 'btn_proxy_accept'), emoji: true },
+            action_id: 'proxy_accept', value: leave.id },
+          { type: 'button', text: { type: 'plain_text', text: t(lang, 'btn_proxy_decline'), emoji: true },
+            action_id: 'proxy_decline', value: leave.id },
+        ],
+      },
+    ],
+  }), { url: '/', tag: `proxy-req-${leave.id}`, todo: true })
+}
+
+/** 代理人在網頁上回覆之後：照假單現在的狀態通知該通知的人（不信任呼叫端，一律看資料庫）。 */
+async function notifyProxyDecided(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
+  if (leave.status === 'returned' && leave.proxy_status === 'rejected') return await notifyProxyDeclined(leave)
+  if (leave.status === 'pending' && leave.proxy_status === 'approved') return await notifyApprovers(db, leave)
+  if (leave.status === 'approved' && leave.proxy_status === 'approved') return await notifyApproved(db, leave)
+  return { skipped: '假單目前不是代理人剛回覆完的狀態' }
+}
+
+/** 代理人不能代理 → 通知申請人（含原因），請他換人重新送出。 */
+async function notifyProxyDeclined(leave: LeaveRow) {
+  const recipients = toRecipients([leave.requester])
+  if (recipients.length === 0) return { skipped: '找不到申請人' }
+  const proxy = leave.proxy?.full_name ?? ''
+  return await dmManyLocalized(recipients, (lang) => ({
+    text: t(lang, 'proxy_declined_text', { proxy }),
+    blocks: [
+      section(t(lang, 'proxy_declined_heading', {
+        detail: leaveDetailLines(leave, lang, [t(lang, 'proxy_declined_reason', { reason: leave.proxy_comment ?? '' })]),
+      })),
+      contextLine(t(lang, 'proxy_declined_note')),
+    ],
+  }), { url: '/leave/my', tag: `leave-${leave.id}` })
+}
 
 async function notifyApprovers(db: ReturnType<typeof adminClient>, leave: LeaveRow) {
   const recipients = await currentApprovers(db, leave)
@@ -282,7 +338,7 @@ async function notifyProxy(db: ReturnType<typeof adminClient>, leave: LeaveRow) 
   return await dmManyLocalized(recipients, (lang) => ({
     text: t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }),
     blocks: [
-      section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
+      section(t(lang, 'proxy_heading', { detail: proxyDetailLines(leave, lang) })),
       contextLine(t(lang, 'proxy_note')),
     ],
   }), { url: '/', tag: `proxy-${leave.id}` })

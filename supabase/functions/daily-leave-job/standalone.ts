@@ -89,7 +89,7 @@ function adminClient(): SupabaseClient {
 
 // language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 const LEAVE_SELECT = `
-  id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step, proxy_status, proxy_comment,
   registered_by, ack_deadline, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(id, full_name, slack_user_id, language),
@@ -108,6 +108,9 @@ interface LeaveRow {
   status: string
   flow_id: string | null
   current_step: number | null
+  // 職務代理人確認（2026-11）：pending 待代理人確認、approved、rejected；空的＝不用（舊假單、HR 代登）
+  proxy_status?: string | null
+  proxy_comment?: string | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { id?: string; full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
@@ -197,6 +200,21 @@ function durationLabel(l: LeaveRow, lang: Lang): string {
  * 單張假單的條列式明細。`extra` 用來補該情境專屬的欄位
  * （例如駁回通知要多一行駁回原因）。
  */
+/**
+ * 給職務代理人看的版本：只有「誰、什麼假、哪天、幾點、多久」，沒有事由與附件
+ * （2026-11 使用者決定：代理人只看得到基本資料）。
+ */
+function proxyDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
+  return [
+    t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
+    t(lang, 'detail_type', { type: leaveTypeName(l, lang) }),
+    t(lang, 'detail_date', { date: dateLabel(l) }),
+    t(lang, 'detail_time', { time: timeLabel(l, lang) }),
+    t(lang, 'detail_hours', { duration: durationLabel(l, lang) }),
+    ...extra,
+  ].join('\n')
+}
+
 function leaveDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
   const lines = [
     t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
@@ -498,6 +516,16 @@ const T = {
     proxy_text: '您被指定為 {name} 的職務代理人',
     proxy_heading: ':handshake: *您被指定為職務代理人*\n{detail}',
     proxy_note: '這張假單已核准，該時段請協助代理其職務。',
+    proxy_request_text: '{name} 請你擔任職務代理人，請確認',
+    proxy_request_heading: ':handshake: *{name} 請你擔任職務代理人*\n{detail}',
+    proxy_request_note: '同意後假單會送給主管審核；不能代理請按「不能代理」並寫原因，假單會退回給申請人換人。也可以到管理系統首頁的「待你確認的職務代理」處理。',
+    btn_proxy_accept: '同意代理',
+    btn_proxy_decline: '不能代理',
+    proxy_reminder_text: '{name} 的假單還在等你確認職務代理',
+    proxy_declined_text: '{proxy} 無法擔任你的職務代理人，假單已退回',
+    proxy_declined_heading: ':leftwards_arrow_with_hook: *職務代理人無法代理，假單已退回*\n{detail}',
+    proxy_declined_reason: '*原因:* {reason}',
+    proxy_declined_note: '請到管理系統「假單管理」按「重新送出」，並換一位職務代理人。',
     proxy_sent: 'sent',
 
     weekday_0: '日', weekday_1: '一', weekday_2: '二', weekday_3: '三',
@@ -659,6 +687,16 @@ const T = {
     proxy_text: 'You have been assigned as {name}’s proxy',
     proxy_heading: ':handshake: *You’ve been assigned as a proxy*\n{detail}',
     proxy_note: 'This leave request has been approved — please cover their responsibilities during that time.',
+    proxy_request_text: '{name} asked you to be their proxy — please confirm',
+    proxy_request_heading: ':handshake: *{name} asked you to be their proxy*\n{detail}',
+    proxy_request_note: 'Once you agree, the request goes to the approvers. If you can’t cover, click “Can’t cover” and give a reason — the request goes back to them to pick someone else. You can also respond under “Proxy requests for you” on the portal homepage.',
+    btn_proxy_accept: 'I’ll cover',
+    btn_proxy_decline: 'Can’t cover',
+    proxy_reminder_text: '{name}’s leave request is still waiting for your proxy confirmation',
+    proxy_declined_text: '{proxy} can’t be your proxy — your request was returned',
+    proxy_declined_heading: ':leftwards_arrow_with_hook: *Your proxy can’t cover — request returned*\n{detail}',
+    proxy_declined_reason: '*Reason:* {reason}',
+    proxy_declined_note: 'Go to “My Leave” in the portal, click “Resubmit” and choose another proxy.',
     proxy_sent: 'sent',
 
     weekday_0: 'Sun', weekday_1: 'Mon', weekday_2: 'Tue', weekday_3: 'Wed',
@@ -949,6 +987,28 @@ Deno.serve(async () => {
     // 一則訊息裝了好幾張假單，處理其中一張就會把其他張的按鈕一起蓋掉。
     const remindedIds: string[] = []
     for (const leave of toRemind) {
+      // 還在等職務代理人確認（2026-11）：提醒的是代理人，不是簽核人
+      if (leave.proxy_status === 'pending') {
+        const name = leave.requester?.full_name ?? ''
+        await dmManyLocalized(toRecipients([leave.proxy as { id?: string; slack_user_id?: string | null; language?: string | null } | null]), (lang) => ({
+          text: t(lang, 'proxy_reminder_text', { name }),
+          blocks: [
+            section(t(lang, 'proxy_request_heading', { name, detail: proxyDetailLines(leave, lang) })),
+            contextLine(t(lang, 'proxy_request_note')),
+            {
+              type: 'actions',
+              elements: [
+                { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(lang, 'btn_proxy_accept'), emoji: true },
+                  action_id: 'proxy_accept', value: leave.id },
+                { type: 'button', text: { type: 'plain_text', text: t(lang, 'btn_proxy_decline'), emoji: true },
+                  action_id: 'proxy_decline', value: leave.id },
+              ],
+            },
+          ],
+        }), { url: '/', tag: `proxy-req-${leave.id}`, todo: true })
+        remindedIds.push(leave.id)
+        continue
+      }
       if (!leave.flow_id || !leave.current_step) continue
 
       const recipients = await currentApprovers(db, leave)

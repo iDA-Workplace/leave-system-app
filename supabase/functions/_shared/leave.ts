@@ -77,7 +77,7 @@ export function adminClient(): SupabaseClient {
 
 // language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 export const LEAVE_SELECT = `
-  id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step, proxy_status, proxy_comment,
   registered_by, ack_deadline, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(id, full_name, slack_user_id, language),
@@ -96,6 +96,9 @@ export interface LeaveRow {
   status: string
   flow_id: string | null
   current_step: number | null
+  // 職務代理人確認（2026-11）：pending 待代理人確認、approved、rejected；空的＝不用（舊假單、HR 代登）
+  proxy_status?: string | null
+  proxy_comment?: string | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { id?: string; full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
@@ -185,6 +188,21 @@ export function durationLabel(l: LeaveRow, lang: Lang): string {
  * 單張假單的條列式明細。`extra` 用來補該情境專屬的欄位
  * （例如駁回通知要多一行駁回原因）。
  */
+/**
+ * 給職務代理人看的版本：只有「誰、什麼假、哪天、幾點、多久」，沒有事由與附件
+ * （2026-11 使用者決定：代理人只看得到基本資料）。
+ */
+export function proxyDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
+  return [
+    t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
+    t(lang, 'detail_type', { type: leaveTypeName(l, lang) }),
+    t(lang, 'detail_date', { date: dateLabel(l) }),
+    t(lang, 'detail_time', { time: timeLabel(l, lang) }),
+    t(lang, 'detail_hours', { duration: durationLabel(l, lang) }),
+    ...extra,
+  ].join('\n')
+}
+
 export function leaveDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
   const lines = [
     t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
