@@ -54,6 +54,9 @@ begin
          acknowledged_at         = null,
          has_dispute             = false,
          dispute_comment         = null;
+  -- 「輪到哪一關已通知」的記號也要清（20261119 新增）：不清的話，同仁之後送出自評時
+  -- 會被當成「第 1 關已經通知過」，第 1 關的評核人收不到通知
+  update public.annual_review_participants set turn_notified_key = null;
 
   -- 3. 按摩：「已抽籤的期數不能刪」是正式環境的保護，這裡暫時關掉、刪完馬上打開
   --    （出錯的話整段不算，保護也會維持原樣）
