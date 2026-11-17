@@ -79,6 +79,7 @@ const T = {
     leave_fallback_type: '請假',
     all_day: '整日',
     full_day_marker: '　整天',
+    digest_proxy_suffix: '（職務代理人：{name}）',
     days_unit: '{n} 天',
     hours_unit: '{n} 小時',
     multiday_range: '{range} 連假中',
@@ -123,7 +124,7 @@ const T = {
     field_end_time: '結束時間',
     field_multiday_hint: '跨日請假時會忽略時間，整天計算',
     field_proxy: '職務代理人',
-    field_proxy_placeholder: '（可不填）',
+    field_proxy_placeholder: '請選擇',
     wfh_no_proxy_note: ':information_source: 在家工作不需要指定職務代理人 —— 人有在上班，只是不在辦公室。',
     field_reason: '事由',
     modal_attachment_hint: '附件請到管理系統網頁補上（Slack 表單不支援上傳檔案）。',
@@ -138,7 +139,7 @@ const T = {
     leave_submitted_text: '假單已送出',
     leave_submitted_heading: ':white_check_mark: *假單已送出*\n{detail}',
     leave_submitted_no_flow: '此流程不需簽核，已自動核准。',
-    leave_submitted_pending: '已通知簽核人，審核結果會在這裡通知您。',
+    leave_submitted_pending: '已請職務代理人確認，確認後會送給主管審核；結果會在這裡通知您。',
 
     modal_reject_title: '駁回假單',
     modal_reject_submit: '送出駁回',
@@ -159,6 +160,32 @@ const T = {
     proxy_text: '您被指定為 {name} 的職務代理人',
     proxy_heading: ':handshake: *您被指定為職務代理人*\n{detail}',
     proxy_note: '這張假單已核准，該時段請協助代理其職務。',
+    proxy_request_text: '{name} 請你擔任職務代理人，請確認',
+    proxy_request_heading: ':handshake: *{name} 請你擔任職務代理人*\n{detail}',
+    proxy_request_note: '同意後假單會送給主管審核；不能代理請按「不能代理」並寫原因，假單會退回給申請人換人。也可以到管理系統首頁的「待你確認的職務代理」處理。',
+    btn_proxy_accept: '同意代理',
+    btn_proxy_decline: '不能代理',
+    proxy_accepted_text: '已同意擔任職務代理人',
+    proxy_accepted_heading: ':white_check_mark: *你已同意擔任職務代理人*\n{detail}',
+    proxy_accepted_note_flow: '假單已送給主管審核，核准後會再通知你。',
+    proxy_accepted_note_final: '這張假單不需要主管審核，已經核准，該時段請協助代理其職務。',
+    proxy_declined_replace_text: '已回覆不能代理',
+    proxy_declined_replace_heading: ':leftwards_arrow_with_hook: *你已回覆不能代理*\n{detail}',
+    proxy_declined_text: '{proxy} 無法擔任你的職務代理人，假單已退回',
+    proxy_declined_heading: ':leftwards_arrow_with_hook: *職務代理人無法代理，假單已退回*\n{detail}',
+    proxy_declined_reason: '*原因:* {reason}',
+    proxy_declined_note: '請到管理系統「假單管理」按「重新送出」，並換一位職務代理人。',
+    modal_proxy_decline_title: '不能代理',
+    modal_proxy_decline_submit: '送出',
+    field_proxy_decline_reason: '原因（會告訴申請人）',
+    err_proxy_decline_reason: '請寫原因，申請人才知道要怎麼調整。',
+    proxy_guard_not_yours: '這張假單的職務代理人不是你，無法回覆。',
+    proxy_guard_handled: '這張假單已經處理過了（可能已回覆、已收回或已退回），不需要再動作。',
+    guard_proxy_pending: '這張假單還在等職務代理人確認，確認後才輪到簽核人。',
+    err_proxy_required: '請選擇職務代理人',
+    err_proxy_failed: '操作失敗，請稍後再試一次，或到網頁首頁操作。',
+    proxy_withdrawn_text: '{name} 已收回假單，不需要再確認代理',
+    proxy_withdrawn_heading: ':information_source: *此假單已被收回，不需要再確認代理*\n{detail}',
 
     // HR 代同仁登記請假
     ask_leave_prompt_heading_hr: ':memo: 要請假嗎？點下面的按鈕填寫假單。需要幫同仁補登記的話，按「代同仁登記」。',
@@ -235,6 +262,7 @@ const T = {
     leave_fallback_type: 'Leave',
     all_day: 'All day',
     full_day_marker: '　All day',
+    digest_proxy_suffix: ' (proxy: {name})',
     days_unit: '{n} days',
     hours_unit: '{n} hrs',
     multiday_range: '{range}',
@@ -277,7 +305,7 @@ const T = {
     field_end_time: 'End time',
     field_multiday_hint: 'Time is ignored for multi-day leave — it is counted as full days',
     field_proxy: 'Proxy',
-    field_proxy_placeholder: '(optional)',
+    field_proxy_placeholder: 'Choose',
     wfh_no_proxy_note: ':information_source: Working from home needs no proxy — you are still working, just not in the office.',
     field_reason: 'Reason',
     modal_attachment_hint: 'Attach files from the Management Portal website — the Slack form does not support uploads.',
@@ -292,7 +320,7 @@ const T = {
     leave_submitted_text: 'Leave request submitted',
     leave_submitted_heading: ':white_check_mark: *Leave request submitted*\n{detail}',
     leave_submitted_no_flow: 'No approval is required for this flow — it was approved automatically.',
-    leave_submitted_pending: 'The approver has been notified. You’ll be notified here with the result.',
+    leave_submitted_pending: 'Your proxy has been asked to confirm; after that it goes to the approvers. You’ll be notified here with the result.',
 
     modal_reject_title: 'Reject Leave Request',
     modal_reject_submit: 'Submit rejection',
@@ -313,6 +341,32 @@ const T = {
     proxy_text: 'You have been assigned as {name}’s proxy',
     proxy_heading: ':handshake: *You’ve been assigned as a proxy*\n{detail}',
     proxy_note: 'This leave request has been approved — please cover their responsibilities during that time.',
+    proxy_request_text: '{name} asked you to be their proxy — please confirm',
+    proxy_request_heading: ':handshake: *{name} asked you to be their proxy*\n{detail}',
+    proxy_request_note: 'Once you agree, the request goes to the approvers. If you can’t cover, click “Can’t cover” and give a reason — the request goes back to them to pick someone else. You can also respond under “Proxy requests for you” on the portal homepage.',
+    btn_proxy_accept: 'I’ll cover',
+    btn_proxy_decline: 'Can’t cover',
+    proxy_accepted_text: 'You agreed to be the proxy',
+    proxy_accepted_heading: ':white_check_mark: *You agreed to be the proxy*\n{detail}',
+    proxy_accepted_note_flow: 'The request has gone to the approvers. You’ll be notified once it’s approved.',
+    proxy_accepted_note_final: 'This request needs no approval and is now approved — please cover their responsibilities during that time.',
+    proxy_declined_replace_text: 'You said you can’t cover',
+    proxy_declined_replace_heading: ':leftwards_arrow_with_hook: *You said you can’t cover*\n{detail}',
+    proxy_declined_text: '{proxy} can’t be your proxy — your request was returned',
+    proxy_declined_heading: ':leftwards_arrow_with_hook: *Your proxy can’t cover — request returned*\n{detail}',
+    proxy_declined_reason: '*Reason:* {reason}',
+    proxy_declined_note: 'Go to “My Leave” in the portal, click “Resubmit” and choose another proxy.',
+    modal_proxy_decline_title: 'Can’t cover',
+    modal_proxy_decline_submit: 'Submit',
+    field_proxy_decline_reason: 'Reason (shared with the requester)',
+    err_proxy_decline_reason: 'Please give a reason so they know what to change.',
+    proxy_guard_not_yours: 'You are not the proxy for this request.',
+    proxy_guard_handled: 'This request has already been handled (answered, withdrawn or returned) — nothing more to do.',
+    guard_proxy_pending: 'This request is still waiting for the proxy to confirm; approvers come after that.',
+    err_proxy_required: 'Please choose a proxy',
+    err_proxy_failed: 'Something went wrong. Please try again later or use the portal homepage.',
+    proxy_withdrawn_text: '{name} withdrew the request — no need to confirm',
+    proxy_withdrawn_heading: ':information_source: *This request was withdrawn — no need to confirm*\n{detail}',
 
     ask_leave_prompt_heading_hr: ':memo: Want to request leave? Use the button below. To file a record on a colleague’s behalf, use “File for a colleague”.',
     btn_hr_register: 'File for a colleague',
@@ -540,20 +594,24 @@ async function resolveUser(db: SupabaseClient, slackUserId: string) {
 
 const LEAVE_SELECT = `
   id, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  proxy_status, proxy_comment, proxy_user_id,
   registered_by, acknowledged_at, disputed_at, approver_message_refs,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
-  proxy:users!leave_requests_proxy_user_id_fkey(full_name, slack_user_id, language),
+  proxy:users!leave_requests_proxy_user_id_fkey(id, full_name, slack_user_id, language),
   leave_type:leave_types(name, name_en, is_wfh)
 `
 
 /** 一則已經發出去的待審核通知的位置。lang 一起記，改寫時才不會變成另一種語言。 */
-interface ApproverMessageRef { channel: string; ts: string; lang: Lang }
+// proxy：這則是發給職務代理人的（改寫時只能放基本資料，不能放事由）
+interface ApproverMessageRef { channel: string; ts: string; lang: Lang; proxy?: boolean }
 
 interface LeaveRow {
   id: string; start_date: string; end_date: string
   start_time: string | null; end_time: string | null
   hours: number | null; reason: string | null; status: string
   flow_id: string | null; current_step: number | null
+  // 職務代理人確認（2026-11）
+  proxy_status?: string | null; proxy_comment?: string | null; proxy_user_id?: string | null
   // HR 代登記的假單才有值，見 migration 20260915_hr_registered_leave 與
   // 20260916_hr_registered_leave_dispute
   registered_by?: string | null
@@ -562,7 +620,7 @@ interface LeaveRow {
   // 待審核通知發到 Slack 的哪幾則訊息，見 migration 20260916_approver_message_refs
   approver_message_refs?: ApproverMessageRef[] | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
-  proxy?: { full_name: string; slack_user_id?: string | null; language?: string | null } | null
+  proxy?: { id?: string; full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
 }
 
@@ -622,9 +680,23 @@ function leaveDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string
   return [...lines, ...extra].join('\n')
 }
 
+/** 給職務代理人看的版本：只有誰、什麼假、哪天、幾點、多久（2026-11：代理人看不到事由與附件）。 */
+function proxyDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
+  return [
+    t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
+    t(lang, 'detail_type', { type: leaveTypeName(l, lang) }),
+    t(lang, 'detail_date', { date: dateLabel(l) }),
+    t(lang, 'detail_time', { time: timeLabel(l, lang) }),
+    t(lang, 'detail_hours', { duration: durationLabel(l, lang) }),
+    ...extra,
+  ].join('\n')
+}
+
 /** 頻道公告用的精簡單行（不含部門）。 */
 function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}): string {
-  const name = l.requester?.full_name ?? t(lang, 'unknown_person')
+  // 請假人後面加上職務代理人（2026-11 使用者要求；HR 代登沒填代理人的就不加）
+  const name = (l.requester?.full_name ?? t(lang, 'unknown_person'))
+    + (l.proxy?.full_name ? t(lang, 'digest_proxy_suffix', { name: l.proxy.full_name }) : '')
   const type = leaveTypeName(l, lang)
   if (isMultiDay(l)) return `• ${name}　${type}（${t(lang, 'multiday_range', { range: dateLabel(l) })}）`
   // 整天卻什麼都不寫，看起來像資訊漏掉（未滿 8 小時的會顯示時間範圍）
@@ -804,6 +876,104 @@ async function notifyApprovers(db: SupabaseClient, leave: LeaveRow) {
     .eq('id', leave.id)
 }
 
+// ===== 職務代理人確認（2026-11） =====
+
+/** 請代理人確認：只給基本資料，附「同意代理／不能代理」按鈕；記下訊息位置，收回時才改寫得到。 */
+async function notifyProxyRequest(db: SupabaseClient, leave: LeaveRow) {
+  const proxy = leave.proxy
+  if (!proxy?.id) return
+  const lang = normalizeLang(proxy.language)
+  const name = leave.requester?.full_name ?? ''
+  const text = t(lang, 'proxy_request_text', { name })
+  const blocks = [
+    section(t(lang, 'proxy_request_heading', { name, detail: proxyDetailLines(leave, lang) })),
+    contextLine(t(lang, 'proxy_request_note')),
+    {
+      type: 'actions',
+      elements: [
+        { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(lang, 'btn_proxy_accept'), emoji: true },
+          action_id: 'proxy_accept', value: leave.id },
+        { type: 'button', text: { type: 'plain_text', text: t(lang, 'btn_proxy_decline'), emoji: true },
+          action_id: 'proxy_decline', value: leave.id },
+      ],
+    },
+  ]
+  const sent = await dmAndPush(proxy, text, blocks, { url: '/', tag: `proxy-req-${leave.id}`, todo: true })
+  if (sent?.ok && sent.channel && sent.ts) {
+    await db.from('leave_requests')
+      .update({ approver_message_refs: [{ channel: String(sent.channel), ts: String(sent.ts), lang, proxy: true }] })
+      .eq('id', leave.id)
+  }
+}
+
+function proxyGuardText(lang: Lang, result: string): string {
+  return result === 'not_proxy' ? t(lang, 'proxy_guard_not_yours') : t(lang, 'proxy_guard_handled')
+}
+
+/** 代理人按「同意代理」。動作當下重新檢查（proxy_decide_as 裡面）：是不是他、是不是還在等他。 */
+function handleProxyAccept(db: SupabaseClient, me: any, lang: Lang, requestId: string, responseUrl: string) {
+  background((async () => {
+    const { data: result, error } = await db.rpc('proxy_decide_as', { p_actor: me.id, p_request: requestId, p_approve: true, p_comment: null })
+    const { data } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', requestId).maybeSingle()
+    const leave = data as unknown as LeaveRow | null
+    if (error || !leave || (result !== 'approved' && result !== 'approved_final')) {
+      const msg = error ? t(lang, 'err_proxy_failed') : proxyGuardText(lang, String(result))
+      await replaceMessage(responseUrl, msg, [section(`:information_source: ${msg}`)])
+      return
+    }
+    await replaceMessage(responseUrl, t(lang, 'proxy_accepted_text'), [
+      section(t(lang, 'proxy_accepted_heading', { detail: proxyDetailLines(leave, lang) })),
+      contextLine(t(lang, result === 'approved_final' ? 'proxy_accepted_note_final' : 'proxy_accepted_note_flow')),
+    ])
+    if (result === 'approved') {
+      await notifyApprovers(db, leave)        // 接著走原本的簽核流程
+    } else {
+      // 流程沒有關卡（老闆）：已經核准，走「核准後」該做的事
+      await notifyApprovedRecipients(db, leave)
+      await notifyProxy(db, leave)
+      await notifyChannelIfToday(db, leave)
+    }
+  })())
+  return new Response('')
+}
+
+/** 代理人送出「不能代理」的原因 → 假單退回給申請人換人。 */
+async function handleProxyDeclineSubmit(db: SupabaseClient, me: any, lang: Lang, p: Record<string, any>) {
+  const meta = JSON.parse(p.view.private_metadata || '{}')
+  const reason = (p.view.state.values.reason?.v?.value ?? '').trim()
+  if (!reason) return json({ response_action: 'errors', errors: { reason: t(lang, 'err_proxy_decline_reason') } })
+
+  const { data: result, error } = await db.rpc('proxy_decide_as', { p_actor: me.id, p_request: meta.request_id, p_approve: false, p_comment: reason })
+  if (error) return json({ response_action: 'errors', errors: { reason: t(lang, 'err_proxy_failed') } })
+  if (result !== 'returned') return json({ response_action: 'errors', errors: { reason: proxyGuardText(lang, String(result)) } })
+
+  background((async () => {
+    const { data } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', meta.request_id).single()
+    const leave = data as unknown as LeaveRow
+    if (meta.response_url) {
+      await replaceMessage(meta.response_url, t(lang, 'proxy_declined_replace_text'), [
+        section(t(lang, 'proxy_declined_replace_heading', {
+          detail: proxyDetailLines(leave, lang, [t(lang, 'proxy_declined_reason', { reason })]),
+        })),
+      ])
+    }
+    await notifyProxyDeclined(leave)
+  })())
+  return json({ response_action: 'clear' })
+}
+
+/** 通知申請人：代理人不能代理，假單已退回，請換人重新送出。 */
+async function notifyProxyDeclined(leave: LeaveRow) {
+  if (!leave.requester) return
+  const lang = normalizeLang(leave.requester.language)
+  await dmAndPush(leave.requester, t(lang, 'proxy_declined_text', { proxy: leave.proxy?.full_name ?? '' }), [
+    section(t(lang, 'proxy_declined_heading', {
+      detail: leaveDetailLines(leave, lang, [t(lang, 'proxy_declined_reason', { reason: leave.proxy_comment ?? '' })]),
+    })),
+    contextLine(t(lang, 'proxy_declined_note')),
+  ], { url: '/leave/my', tag: `leave-${leave.id}` })
+}
+
 // ===== 假單表單 =====
 
 const TIME_OPTIONS: string[] = []
@@ -863,7 +1033,6 @@ async function buildLeaveModal(
   // 在家工作不需要職務代理人 —— 人有在上班，只是不在辦公室，沒有職務要交接。
   // 整個欄位藏起來，比留著讓人猶豫要不要填好（跟網頁版 LeaveForm.jsx 一致）。
   const selectedType = types.find(row => row.id === current.leaveTypeId)
-  const isWfh = !!selectedType?.is_wfh
   const selectedProxy = colleagues.find(u => u.id === current.proxyId)
   const startTime = current.startTime ?? '09:00'
   const endTime = current.endTime ?? '18:00'
@@ -916,9 +1085,9 @@ async function buildLeaveModal(
           options: TIME_OPTIONS.map(time => opt(time, time)),
         },
       },
-      // 選了 WFH 就整格拿掉，並補一句說明 —— 欄位無聲消失看起來像壞掉。
-      ...(isWfh ? [contextLine(t(lang, 'wfh_no_proxy_note'))] : [{
-        type: 'input', block_id: 'proxy', optional: true,
+      // 職務代理人必填（2026-11 使用者決定，在家工作也要）：送出後代理人要先確認
+      ...([{
+        type: 'input', block_id: 'proxy',
         label: { type: 'plain_text', text: t(lang, 'field_proxy'), emoji: true },
         element: {
           type: 'static_select', action_id: 'v',
@@ -1427,6 +1596,28 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
     if (action.action_id === 'approve_leave') {
       return await handleApprove(db, me, lang, action.value, p.response_url)
     }
+    if (action.action_id === 'proxy_accept') {
+      return handleProxyAccept(db, me, lang, action.value, p.response_url)
+    }
+    if (action.action_id === 'proxy_decline') {
+      // 不能代理一定要寫原因（使用者決定 2026-11），再開一個視窗收
+      await callSlack('views.open', {
+        trigger_id: p.trigger_id,
+        view: {
+          type: 'modal', callback_id: 'submit_proxy_decline',
+          private_metadata: JSON.stringify({ request_id: action.value, response_url: p.response_url }),
+          title: { type: 'plain_text', text: t(lang, 'modal_proxy_decline_title'), emoji: true },
+          submit: { type: 'plain_text', text: t(lang, 'modal_proxy_decline_submit'), emoji: true },
+          close: { type: 'plain_text', text: t(lang, 'modal_cancel'), emoji: true },
+          blocks: [{
+            type: 'input', block_id: 'reason',
+            label: { type: 'plain_text', text: t(lang, 'field_proxy_decline_reason'), emoji: true },
+            element: { type: 'plain_text_input', action_id: 'v', multiline: true },
+          }],
+        },
+      })
+      return new Response('')
+    }
     if (action.action_id === 'withdraw_leave') {
       return handleWithdraw(db, me, lang, action.value, p.response_url)
     }
@@ -1489,6 +1680,7 @@ async function handleInteraction(db: SupabaseClient, p: Record<string, any>) {
     const lang = normalizeLang(me.language)
     if (p.view.callback_id === 'submit_leave') return await handleLeaveSubmit(db, me, lang, p)
     if (p.view.callback_id === 'submit_reject') return await handleRejectSubmit(db, me, lang, p)
+    if (p.view.callback_id === 'submit_proxy_decline') return await handleProxyDeclineSubmit(db, me, lang, p)
     if (p.view.callback_id === 'submit_dispute') return await handleDisputeSubmit(db, me, lang, p)
     if (p.view.callback_id === 'submit_hr_register') return await handleHrRegisterSubmit(db, me, lang, p)
   }
@@ -1533,15 +1725,14 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
   if (!me.default_flow_id) {
     return json({ response_action: 'errors', errors: { reason: t(lang, 'err_no_flow') } })
   }
+  // 職務代理人必填（2026-11；資料庫也會擋）
+  if (!proxyId) {
+    return json({ response_action: 'errors', errors: { proxy: t(lang, 'err_proxy_required') } })
+  }
 
   // 這裡原本會擋下超過年度額度的申請（網頁版送出時也有同一道）。
   // 2026-09 依需求兩邊一起移除：額度用完仍然可以請，超額怎麼處理交給人資
   // 判斷，不是系統該擋的。查餘額時餘額會顯示成負數，使用者看得出來超了多少。
-
-  // 只查 is_wfh：選了 WFH 時那一格會被藏起來，但「先選了代理人才改成 WFH」
-  // 的殘留值還是可能被送上來，所以這裡再清一次（跟網頁版同一道保險）。
-  const { data: leaveType } = await db
-    .from('leave_types').select('is_wfh').eq('id', leaveTypeId).maybeSingle()
 
   const { data: created, error } = await db.from('leave_requests').insert({
     requester_id: me.id,
@@ -1552,7 +1743,7 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
     start_time: isMultiDay ? '09:00' : startTime,
     end_time: isMultiDay ? '18:00' : endTime,
     hours,
-    proxy_user_id: leaveType?.is_wfh ? null : proxyId,
+    proxy_user_id: proxyId,
     reason,
     status: 'pending',
     current_step: 1,
@@ -1569,34 +1760,21 @@ async function handleLeaveSubmit(db: SupabaseClient, me: any, lang: Lang, p: Rec
     const { data: leave } = await db.from('leave_requests').select(LEAVE_SELECT).eq('id', created.id).single()
     const row = leave as unknown as LeaveRow
 
-    const steps = await approversForStep(db, me.default_flow_id, 1)
-    if (steps.length === 0) {
-      // 沒有設定任何簽核關卡＝不需審核（目前只有老闆是這種設定），與網頁版一致。
-      // 這條路徑一樣要走完「核准後」該做的事 —— 之前這裡直接改狀態就結束，
-      // 導致這種員工當天臨時請假時頻道上沒有任何人知道。
-      await db.from('leave_requests').update({ status: 'approved' }).eq('id', created.id)
-      // 申請人自己不重複發：他等一下就會收到下面那則「假單已送出／此流程不需
-      // 簽核，已自動核准」，再多一則「假單已核准」只是同一件事講兩次。
-      await notifyApprovedRecipients(db, row, { includeRequester: false })
-      await notifyProxy(db, row)
-      await notifyChannelIfToday(db, row)
-    } else {
-      await notifyApprovers(db, row)
-    }
+    // 2026-11 起：一律先請職務代理人確認（代理人同意之後才通知簽核人；流程沒有關卡的人，
+    // 代理人同意就直接核准 —— 見 handleProxyAccept）
+    await notifyProxyRequest(db, row)
 
     if (me.slack_user_id) {
       await dm(me.slack_user_id, t(lang, 'leave_submitted_text'), [
         section(t(lang, 'leave_submitted_heading', { detail: leaveDetailLines(row, lang) })),
-        contextLine(steps.length === 0 ? t(lang, 'leave_submitted_no_flow') : t(lang, 'leave_submitted_pending')),
-        // 「收回假單」只有在還要送審時才給 —— 沒有簽核關卡的人一送出就是
-        // 已核准，而已核准的假單不能收回（使用者明確要求，2026-09）。
-        ...(steps.length === 0 ? [] : [{
+        contextLine(t(lang, 'leave_submitted_pending')),
+        {
           type: 'actions',
           elements: [{
             type: 'button', text: { type: 'plain_text', text: t(lang, 'btn_withdraw'), emoji: true },
             action_id: 'withdraw_leave', value: created.id,
           }],
-        }]),
+        },
       ])
     }
 
@@ -1782,10 +1960,16 @@ async function markApproverMessagesWithdrawn(db: SupabaseClient, leave: LeaveRow
     if (!ref?.channel || !ref?.ts) continue
     // 用當初發送時的語言改寫，不是用收回者的語言 —— 這則是寫給簽核人看的
     const lang = normalizeLang(ref.lang)
-    await callSlack('chat.update', {
+    const name = leave.requester?.full_name ?? ''
+    await callSlack('chat.update', ref.proxy ? {
       channel: ref.channel,
       ts: ref.ts,
-      text: t(lang, 'approver_withdrawn_text', { name: leave.requester?.full_name ?? '' }),
+      text: t(lang, 'proxy_withdrawn_text', { name }),
+      blocks: [section(t(lang, 'proxy_withdrawn_heading', { detail: proxyDetailLines(leave, lang) }))],
+    } : {
+      channel: ref.channel,
+      ts: ref.ts,
+      text: t(lang, 'approver_withdrawn_text', { name }),
       blocks: [
         section(t(lang, 'approver_withdrawn_heading', { detail: leaveDetailLines(leave, lang) })),
         contextLine(t(lang, 'approver_withdrawn_note')),
@@ -1923,6 +2107,7 @@ async function guardApproval(db: SupabaseClient, me: any, leave: LeaveRow | null
     const label = statusKey ? t(lang, statusKey) : leave.status
     return t(lang, 'guard_already_handled', { status: label })
   }
+  if (leave.proxy_status === 'pending') return t(lang, 'guard_proxy_pending')
   if (!leave.flow_id || !leave.current_step) return t(lang, 'guard_no_flow')
 
   const steps = await approversForStep(db, leave.flow_id, leave.current_step)
@@ -1952,7 +2137,7 @@ async function notifyProxy(db: SupabaseClient, leave: LeaveRow) {
   if (!proxy) return
   const lang = normalizeLang(proxy.language)
   await dmAndPush(proxy, t(lang, 'proxy_text', { name: leave.requester?.full_name ?? '' }), [
-    section(t(lang, 'proxy_heading', { detail: leaveDetailLines(leave, lang) })),
+    section(t(lang, 'proxy_heading', { detail: proxyDetailLines(leave, lang) })),
     contextLine(t(lang, 'proxy_note')),
   ], { url: '/', tag: `proxy-${leave.id}` })
 }

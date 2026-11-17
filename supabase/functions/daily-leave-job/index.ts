@@ -17,7 +17,7 @@
 // App 推播（2026-11）：每則私訊都同時發 App 推播，沒有 Slack ID 但有開 App 通知的人也收得到。
 
 import {
-  adminClient, currentApprovers, leaveDetailLines, loadHolidays, LEAVE_SELECT, toRecipients, type LeaveRow,
+  adminClient, currentApprovers, leaveDetailLines, loadHolidays, LEAVE_SELECT, proxyDetailLines, toRecipients, type LeaveRow,
 } from '../_shared/leave.ts'
 import { dmManyLocalized, section, contextLine } from '../_shared/slack.ts'
 import { t } from '../_shared/i18n.ts'
@@ -74,6 +74,28 @@ Deno.serve(async () => {
     // 一則訊息裝了好幾張假單，處理其中一張就會把其他張的按鈕一起蓋掉。
     const remindedIds: string[] = []
     for (const leave of toRemind) {
+      // 還在等職務代理人確認（2026-11）：提醒的是代理人，不是簽核人
+      if (leave.proxy_status === 'pending') {
+        const name = leave.requester?.full_name ?? ''
+        await dmManyLocalized(toRecipients([leave.proxy as { id?: string; slack_user_id?: string | null; language?: string | null } | null]), (lang) => ({
+          text: t(lang, 'proxy_reminder_text', { name }),
+          blocks: [
+            section(t(lang, 'proxy_request_heading', { name, detail: proxyDetailLines(leave, lang) })),
+            contextLine(t(lang, 'proxy_request_note')),
+            {
+              type: 'actions',
+              elements: [
+                { type: 'button', style: 'primary', text: { type: 'plain_text', text: t(lang, 'btn_proxy_accept'), emoji: true },
+                  action_id: 'proxy_accept', value: leave.id },
+                { type: 'button', text: { type: 'plain_text', text: t(lang, 'btn_proxy_decline'), emoji: true },
+                  action_id: 'proxy_decline', value: leave.id },
+              ],
+            },
+          ],
+        }), { url: '/', tag: `proxy-req-${leave.id}`, todo: true })
+        remindedIds.push(leave.id)
+        continue
+      }
       if (!leave.flow_id || !leave.current_step) continue
 
       const recipients = await currentApprovers(db, leave)

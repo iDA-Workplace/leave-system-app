@@ -62,7 +62,7 @@ function LeaveForm({ userProfile }) {
 
   const isMultiDay = form.start_date && form.end_date && form.end_date > form.start_date
   const hours = isMultiDay ? null : calcHours(form.start_time, form.end_time)
-  const selectedLeaveType = leaveTypes.find(lt => lt.id === form.leave_type_id)
+  const proxyName = colleagues.find(c => c.id === form.proxy_user_id)?.full_name || ''
 
   useEffect(() => {
     fetchLeaveTypes()
@@ -189,6 +189,10 @@ function LeaveForm({ userProfile }) {
     if (!userProfile.default_flow_id) {
       showToast(t('leaveform_err_no_flow'), { tone: 'error' }); return
     }
+    // 職務代理人必填（2026-11 使用者決定，在家工作也要；資料庫也會擋）
+    if (!form.proxy_user_id) {
+      showToast(t('leaveform_err_proxy_required'), { tone: 'error' }); return
+    }
 
     setLoading(true)
 
@@ -212,8 +216,7 @@ function LeaveForm({ userProfile }) {
         start_time: isMultiDay ? '09:00' : form.start_time,
         end_time: isMultiDay ? '18:00' : form.end_time,
         hours: isMultiDay ? null : hours,
-        // WFH 不指定代理人：先選了人才改成 WFH 的話，這裡要把殘留值清掉
-        proxy_user_id: selectedLeaveType?.is_wfh ? null : (form.proxy_user_id || null),
+        proxy_user_id: form.proxy_user_id,
         reason: form.reason,
         attachment_path: attachment?.path || null,
         attachment_name: attachment?.name || null,
@@ -229,24 +232,11 @@ function LeaveForm({ userProfile }) {
       return
     }
 
-    const { data: steps } = await supabase
-      .from('approval_flow_steps')
-      .select('id')
-      .eq('flow_id', userProfile.default_flow_id)
-
-    if (!steps || steps.length === 0) {
-      // 沒有簽核關卡＝不需審核（目前只有老闆是這種設定）。這裡一樣要送出
-      // 「已核准」通知，否則這種員工當天臨時請假時，頻道上不會有任何人知道，
-      // 職務代理人也收不到通知。
-      await supabase.from('leave_requests').update({ status: 'approved' }).eq('id', data.id)
-      await supabase.functions.invoke('send-slack-notification', {
-        body: { type: 'approved', request_id: data.id }
-      })
-    } else {
-      await supabase.functions.invoke('send-slack-notification', {
-        body: { type: 'new_request', request_id: data.id }
-      })
-    }
+    // 2026-11 起一律先請職務代理人確認（通知代理人）。代理人同意後才送給簽核人；
+    // 流程沒有關卡的人（老闆），代理人同意就直接核准 —— 都在資料庫的 proxy_decide 裡處理。
+    await supabase.functions.invoke('send-slack-notification', {
+      body: { type: 'new_request', request_id: data.id }
+    })
 
     setLoading(false)
 
@@ -274,13 +264,20 @@ function LeaveForm({ userProfile }) {
 
         <div className="leave-modal__body">
           <form className="leave-modal__form" onSubmit={handleSubmit} id="leave-form">
-            {flowSteps.length > 0 && (
+            {userProfile?.default_flow_id && (
               <div className="leave-modal__field">
                 <span className="leave-modal__field-label leave-modal__field-label--center">{t('leaveform_flow')}</span>
                 <div className="leave-modal__flow-pills">
-                  {flowSteps.map((step, i) => (
+                  {/* 第一關一律是職務代理人（2026-11） */}
+                  <span className="leave-modal__flow-pill-wrap">
+                    <span className="leave-modal__flow-pill">
+                      <span className="leave-modal__flow-avatar">{proxyName ? initials(proxyName) : '?'}</span>
+                      {proxyName ? t('leaveform_flow_proxy_named', { name: proxyName }) : t('leaveform_flow_proxy')}
+                    </span>
+                  </span>
+                  {flowSteps.map((step) => (
                     <span key={step.step_order} className="leave-modal__flow-pill-wrap">
-                      {i > 0 && <span className="leave-modal__flow-arrow">→</span>}
+                      <span className="leave-modal__flow-arrow">→</span>
                       <span className="leave-modal__flow-pill">
                         <span className="leave-modal__flow-avatar">{initials(step.approver?.full_name)}</span>
                         {step.approver?.full_name}
@@ -372,19 +369,18 @@ function LeaveForm({ userProfile }) {
               placeholder={t('leaveform_reason_placeholder')}
             />
 
-            {/* 在家工作不需要職務代理人 —— 人有在上班，只是不在辦公室，
-                沒有職務要交接。整個欄位藏起來，比留著讓人猶豫要不要填好。
-                送出時也會一併清掉，避免先選了代理人才改成 WFH 的殘留值。 */}
-            {!selectedLeaveType?.is_wfh && (
-              <Select
-                label={t('leaveform_proxy_optional')}
-                value={form.proxy_user_id}
-                onChange={e => setForm(prev => ({ ...prev, proxy_user_id: e.target.value }))}
-              >
-                <option value="">{t('leaveform_select_proxy')}</option>
-                {colleagues.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
-              </Select>
-            )}
+            {/* 職務代理人必填（2026-11 使用者決定，在家工作也要）：送出後代理人先確認，
+                同意了才送給主管審核 */}
+            <Select
+              label={t('leaveform_proxy')}
+              required
+              helper={t('leaveform_proxy_helper')}
+              value={form.proxy_user_id}
+              onChange={e => setForm(prev => ({ ...prev, proxy_user_id: e.target.value }))}
+            >
+              <option value="">{t('leaveform_select_proxy')}</option>
+              {colleagues.map(c => <option key={c.id} value={c.id}>{c.full_name}</option>)}
+            </Select>
 
             <div className="leave-modal__field">
               <span className="leave-modal__field-label leave-modal__field-label--center">
@@ -475,7 +471,7 @@ function LeaveForm({ userProfile }) {
           <div><strong>{t('field_leave_type')}{t('common_colon')}</strong>{successInfo.typeLabel}</div>
           <div><strong>{t('leaveform_success_datetime')}{t('common_colon')}</strong>{successInfo.dateLabel}</div>
           <div><strong>{t('leaveform_success_hours')}{t('common_colon')}</strong>{successInfo.hoursLabel}</div>
-          <div><strong>{t('leaveform_flow')}{t('common_colon')}</strong>{flowSteps.length > 0 ? flowSteps.map(s => s.approver?.full_name).join(' → ') : t('leaveform_success_no_flow')}</div>
+          <div><strong>{t('leaveform_flow')}{t('common_colon')}</strong>{[t('leaveform_flow_proxy_named', { name: proxyName || '—' }), ...flowSteps.map(s => s.approver?.full_name)].join(' → ')}</div>
         </div>
         {/* 這張假單撞到自己的按摩預約時，提醒他釋出名額（沒撞到就不顯示） */}
         <MassageLeaveReminder leaveId={successInfo.leaveId} />

@@ -89,7 +89,7 @@ function adminClient(): SupabaseClient {
 
 // language 一併帶出來：通知要用「收件人自己」的語言，不是觸發動作那個人的。
 const LEAVE_SELECT = `
-  id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step,
+  id, created_at, start_date, end_date, start_time, end_time, hours, reason, status, flow_id, current_step, proxy_status, proxy_comment,
   registered_by, ack_deadline, acknowledged_at, auto_acknowledged, disputed_at, dispute_reason,
   requester:users!leave_requests_requester_id_fkey(id, full_name, department, slack_user_id, language),
   proxy:users!leave_requests_proxy_user_id_fkey(id, full_name, slack_user_id, language),
@@ -108,6 +108,9 @@ interface LeaveRow {
   status: string
   flow_id: string | null
   current_step: number | null
+  // 職務代理人確認（2026-11）：pending 待代理人確認、approved、rejected；空的＝不用（舊假單、HR 代登）
+  proxy_status?: string | null
+  proxy_comment?: string | null
   requester?: { id: string; full_name: string; department: string | null; slack_user_id: string | null; language?: string | null } | null
   proxy?: { id?: string; full_name: string; slack_user_id?: string | null; language?: string | null } | null
   leave_type?: { name: string; name_en?: string | null; is_wfh?: boolean | null } | null
@@ -197,6 +200,21 @@ function durationLabel(l: LeaveRow, lang: Lang): string {
  * 單張假單的條列式明細。`extra` 用來補該情境專屬的欄位
  * （例如駁回通知要多一行駁回原因）。
  */
+/**
+ * 給職務代理人看的版本：只有「誰、什麼假、哪天、幾點、多久」，沒有事由與附件
+ * （2026-11 使用者決定：代理人只看得到基本資料）。
+ */
+function proxyDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
+  return [
+    t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
+    t(lang, 'detail_type', { type: leaveTypeName(l, lang) }),
+    t(lang, 'detail_date', { date: dateLabel(l) }),
+    t(lang, 'detail_time', { time: timeLabel(l, lang) }),
+    t(lang, 'detail_hours', { duration: durationLabel(l, lang) }),
+    ...extra,
+  ].join('\n')
+}
+
 function leaveDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string {
   const lines = [
     t(lang, 'detail_requester', { name: l.requester?.full_name ?? '—' }),
@@ -219,7 +237,9 @@ function leaveDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string
  * 像資訊漏掉了。每日名單那邊已經有「■ 全天」的分組標題，就不用再重複。
  */
 function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}): string {
-  const name = l.requester?.full_name ?? t(lang, 'unknown_person')
+  // 請假人後面加上職務代理人（2026-11 使用者要求；HR 代登沒填代理人的就不加）
+  const name = (l.requester?.full_name ?? t(lang, 'unknown_person'))
+    + (l.proxy?.full_name ? t(lang, 'digest_proxy_suffix', { name: l.proxy.full_name }) : '')
   const type = leaveTypeName(l, lang)
   if (isMultiDay(l)) return `• ${name}　${type}（${t(lang, 'multiday_range', { range: dateLabel(l) })}）`
   if (isFullDay(l)) return `• ${name}　${type}${markFullDay ? t(lang, 'full_day_marker') : ''}`
@@ -447,6 +467,7 @@ const T = {
     leave_fallback_type: '請假',
     all_day: '整日',
     full_day_marker: '　整天',
+    digest_proxy_suffix: '（職務代理人：{name}）',
     days_unit: '{n} 天',
     hours_unit: '{n} 小時',
     multiday_range: '{range} 連假中',
@@ -498,6 +519,16 @@ const T = {
     proxy_text: '您被指定為 {name} 的職務代理人',
     proxy_heading: ':handshake: *您被指定為職務代理人*\n{detail}',
     proxy_note: '這張假單已核准，該時段請協助代理其職務。',
+    proxy_request_text: '{name} 請你擔任職務代理人，請確認',
+    proxy_request_heading: ':handshake: *{name} 請你擔任職務代理人*\n{detail}',
+    proxy_request_note: '同意後假單會送給主管審核；不能代理請按「不能代理」並寫原因，假單會退回給申請人換人。也可以到管理系統首頁的「待你確認的職務代理」處理。',
+    btn_proxy_accept: '同意代理',
+    btn_proxy_decline: '不能代理',
+    proxy_reminder_text: '{name} 的假單還在等你確認職務代理',
+    proxy_declined_text: '{proxy} 無法擔任你的職務代理人，假單已退回',
+    proxy_declined_heading: ':leftwards_arrow_with_hook: *職務代理人無法代理，假單已退回*\n{detail}',
+    proxy_declined_reason: '*原因:* {reason}',
+    proxy_declined_note: '請到管理系統「假單管理」按「重新送出」，並換一位職務代理人。',
     proxy_sent: 'sent',
 
     weekday_0: '日', weekday_1: '一', weekday_2: '二', weekday_3: '三',
@@ -507,6 +538,12 @@ const T = {
     digest_group_morning: '上午',
     digest_group_afternoon: '下午',
     digest_group_wfh: '在家工作',
+    digest_group_leave: '請假',
+    long_heading: ':calendar: *長假預告*',
+    long_line: '• {name}　{type}　{range}（共 {n} 個上班日）',
+    long_footer: '3 個上班日以上的假，約在開始前兩個月預告一次。請提早安排交接；需要請示或報備的事，請在休假前處理。',
+    long_summary_text: '長假預告：{n} 位同仁近期將請長假',
+    long_summary_text_wfh: '長假預告：{n} 位同仁近期將長時間在家工作',
     hrreg_dm_text: 'HR 幫你登記了一筆請假，請確認',
     hrreg_dm_heading: ':memo: *HR 幫你登記了一筆請假*\n{detail}',
     hrreg_dm_note: '⚠️ 內容正確請按「確認」；有誤請按「提出修改異議」並說明。*{deadline} 前未提出異議，視同確認。*',
@@ -610,6 +647,7 @@ const T = {
     leave_fallback_type: 'Leave',
     all_day: 'All day',
     full_day_marker: '　All day',
+    digest_proxy_suffix: ' (proxy: {name})',
     days_unit: '{n} days',
     hours_unit: '{n} hrs',
     multiday_range: '{range}',
@@ -659,6 +697,16 @@ const T = {
     proxy_text: 'You have been assigned as {name}’s proxy',
     proxy_heading: ':handshake: *You’ve been assigned as a proxy*\n{detail}',
     proxy_note: 'This leave request has been approved — please cover their responsibilities during that time.',
+    proxy_request_text: '{name} asked you to be their proxy — please confirm',
+    proxy_request_heading: ':handshake: *{name} asked you to be their proxy*\n{detail}',
+    proxy_request_note: 'Once you agree, the request goes to the approvers. If you can’t cover, click “Can’t cover” and give a reason — the request goes back to them to pick someone else. You can also respond under “Proxy requests for you” on the portal homepage.',
+    btn_proxy_accept: 'I’ll cover',
+    btn_proxy_decline: 'Can’t cover',
+    proxy_reminder_text: '{name}’s leave request is still waiting for your proxy confirmation',
+    proxy_declined_text: '{proxy} can’t be your proxy — your request was returned',
+    proxy_declined_heading: ':leftwards_arrow_with_hook: *Your proxy can’t cover — request returned*\n{detail}',
+    proxy_declined_reason: '*Reason:* {reason}',
+    proxy_declined_note: 'Go to “My Leave” in the portal, click “Resubmit” and choose another proxy.',
     proxy_sent: 'sent',
 
     weekday_0: 'Sun', weekday_1: 'Mon', weekday_2: 'Tue', weekday_3: 'Wed',
@@ -668,6 +716,12 @@ const T = {
     digest_group_morning: 'Morning',
     digest_group_afternoon: 'Afternoon',
     digest_group_wfh: 'Working from home',
+    digest_group_leave: 'On leave',
+    long_heading: ':calendar: *Upcoming extended leave*',
+    long_line: '• {name}　{type}　{range} ({n} working days)',
+    long_footer: 'Leave of 3+ working days is announced once, about two months before it starts. Please plan handovers early, and raise anything that needs their sign-off before they go.',
+    long_summary_text: 'Upcoming extended leave: {n} colleague(s)',
+    long_summary_text_wfh: 'Upcoming extended WFH: {n} colleague(s)',
     hrreg_dm_text: 'HR filed a leave record for you — please confirm',
     hrreg_dm_heading: ':memo: *HR filed a leave record for you*\n{detail}',
     hrreg_dm_note: '⚠️ If this is correct, click “Confirm”. If not, click “Raise an objection” and explain. *If you raise no objection before {deadline}, this counts as confirmed.*',
@@ -880,6 +934,9 @@ function plain(s: string): string {
 //
 //   · 當天上午 9:00 —— 「今天有誰請假」（scope=today，預設）
 //   · 前一天下午 1:00 —— 「下個上班日有誰請假」的預告（scope=next）
+//   · 早上 9:00 —— 長假預告（scope=long，2026-11）：3 個上班日以上、已核准、還沒預告過、
+//     兩個月內開始的假，合併成一則發一次（太晚核准的就在核准後的下一個上班日補發）。
+//     沒有長假就不發。發過的假單記在 long_notice_sent_at，同一張只預告一次。
 //     （原本是下午 4:00，2026-11 使用者決定提前到 1:00；只改排程，見 maintenance/move_preview_to_1pm.sql）
 //
 // 兩則刻意共用同一支：內容組法完全一樣，只差在查哪一天、標題怎麼寫、
@@ -935,15 +992,17 @@ Deno.serve(async req => {
     // scope=next → 前一天下午的預告；沒帶或帶別的值 → 維持原本的「今天」。
     // 用查詢字串而不是 request body：pg_cron 那邊 net.http_post 只要改網址，
     // 不必再組 JSON，出錯的機會少一點。
-    const scope = new URL(req.url).searchParams.get('scope') === 'next' ? 'next' : 'today'
+    const scopeParam = new URL(req.url).searchParams.get('scope')
+    const scope = scopeParam === 'next' ? 'next' : 'today'
     const today = taipeiToday()
     await loadHolidays(db)
-    // 國定假日當天兩則都不發（使用者決定 2026-11）；排程本來就只在週一～週五跑
+    // 國定假日當天都不發（使用者決定 2026-11）；排程本來就只在週一～週五跑
     if (!isWorkday(today)) {
       return new Response(JSON.stringify({ ok: true, skipped: 'holiday', date: today }), {
         headers: { 'Content-Type': 'application/json' },
       })
     }
+    if (scopeParam === 'long') return json(await postLongLeaveNotice(db, lang, today))
     const target = scope === 'next' ? nextWorkday(today) : today
     const tomorrow = scope === 'next' && isTomorrow(today, target)
     const params = dateParams(lang, target)
@@ -1028,6 +1087,70 @@ Deno.serve(async req => {
     return json({ error: (e as Error).message }, 500)
   }
 })
+
+// ===== 長假預告（scope=long） =====
+
+/** 3 個上班日以上算長假（使用者決定 2026-11）。 */
+const LONG_LEAVE_MIN_WORKDAYS = 3
+/** 開始前約兩個月預告（8 週）。 */
+const LONG_LEAVE_LOOKAHEAD_DAYS = 56
+
+function addDays(date: string, n: number): string {
+  const d = new Date(`${date}T00:00:00Z`)
+  d.setUTCDate(d.getUTCDate() + n)
+  return d.toISOString().slice(0, 10)
+}
+
+async function postLongLeaveNotice(db: ReturnType<typeof adminClient>, lang: Lang, today: string) {
+  // 還沒預告過、明天以後才開始、兩個月內開始的已核准假單。
+  // 開始日在兩個月以後的，等時間到了再發；太晚才核准、離開始不到兩個月的，這次就會被撈到（補發）。
+  // 今天就開始的不在這裡：早上的今日名單已經有他。
+  const { data, error } = await db
+    .from('leave_requests')
+    .select(LEAVE_SELECT)
+    .eq('status', 'approved')
+    .is('long_notice_sent_at', null)
+    .gt('start_date', today)
+    .lte('start_date', addDays(today, LONG_LEAVE_LOOKAHEAD_DAYS))
+    .order('start_date')
+  if (error) throw new Error(`讀取假單失敗：${error.message}`)
+
+  const longOnes = ((data ?? []) as unknown as LeaveRow[])
+    .map(l => ({ l, n: countWorkdays(l.start_date, l.end_date) }))
+    .filter(x => x.n >= LONG_LEAVE_MIN_WORKDAYS)
+  if (longOnes.length === 0) return { scope: 'long', date: today, count: 0, posted: false }
+
+  const line = ({ l, n }: { l: LeaveRow; n: number }) => t(lang, 'long_line', {
+    name: (l.requester?.full_name ?? t(lang, 'unknown_person'))
+      + (l.proxy?.full_name ? t(lang, 'digest_proxy_suffix', { name: l.proxy.full_name }) : ''),
+    type: leaveTypeName(l, lang),
+    range: dateLabel(l),
+    n,
+  })
+  const leave = longOnes.filter(x => !x.l.leave_type?.is_wfh)
+  const wfh = longOnes.filter(x => x.l.leave_type?.is_wfh)
+
+  const blocks: unknown[] = [section(t(lang, 'long_heading'))]
+  // 在家工作分開列（使用者決定）：他們有在工作，只是不在辦公室
+  for (const [label, rows] of [[t(lang, 'digest_group_leave'), leave], [t(lang, 'digest_group_wfh'), wfh]] as const) {
+    if (rows.length === 0) continue
+    blocks.push(section(t(lang, 'digest_group_heading', { label, lines: rows.map(line).join('\n') })))
+  }
+  blocks.push(contextLine(t(lang, 'long_footer')))
+
+  const summary = leave.length > 0
+    ? t(lang, 'long_summary_text', { n: leave.length })
+    : t(lang, 'long_summary_text_wfh', { n: wfh.length })
+  await postToChannel(requireEnv('SLACK_LEAVE_CHANNEL'), summary, blocks)
+
+  // 發成功才標記；發失敗（例如 bot 不在頻道裡）的話，明天會再試一次
+  const { error: markError } = await db.from('leave_requests')
+    .update({ long_notice_sent_at: new Date().toISOString() })
+    .in('id', longOnes.map(x => x.l.id))
+  if (markError) console.error('標記長假預告失敗：', markError.message)
+
+  return { scope: 'long', date: today, count: leave.length, wfh: wfh.length, posted: true }
+}
 
 function json(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
