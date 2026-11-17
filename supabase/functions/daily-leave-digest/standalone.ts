@@ -237,7 +237,9 @@ function leaveDetailLines(l: LeaveRow, lang: Lang, extra: string[] = []): string
  * 像資訊漏掉了。每日名單那邊已經有「■ 全天」的分組標題，就不用再重複。
  */
 function digestLine(l: LeaveRow, lang: Lang, { markFullDay = false } = {}): string {
-  const name = l.requester?.full_name ?? t(lang, 'unknown_person')
+  // 請假人後面加上職務代理人（2026-11 使用者要求；HR 代登沒填代理人的就不加）
+  const name = (l.requester?.full_name ?? t(lang, 'unknown_person'))
+    + (l.proxy?.full_name ? t(lang, 'digest_proxy_suffix', { name: l.proxy.full_name }) : '')
   const type = leaveTypeName(l, lang)
   if (isMultiDay(l)) return `• ${name}　${type}（${t(lang, 'multiday_range', { range: dateLabel(l) })}）`
   if (isFullDay(l)) return `• ${name}　${type}${markFullDay ? t(lang, 'full_day_marker') : ''}`
@@ -465,6 +467,7 @@ const T = {
     leave_fallback_type: '請假',
     all_day: '整日',
     full_day_marker: '　整天',
+    digest_proxy_suffix: '（職務代理人：{name}）',
     days_unit: '{n} 天',
     hours_unit: '{n} 小時',
     multiday_range: '{range} 連假中',
@@ -638,6 +641,7 @@ const T = {
     leave_fallback_type: 'Leave',
     all_day: 'All day',
     full_day_marker: '　All day',
+    digest_proxy_suffix: ' (proxy: {name})',
     days_unit: '{n} days',
     hours_unit: '{n} hrs',
     multiday_range: '{range}',
