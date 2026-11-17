@@ -16,8 +16,9 @@
 -- 這支做的事：
 --   1. leave_requests.long_notice_sent_at：這張假單的長假預告已經發過的時間
 --   2. 日期被改掉時自動清掉這個記號（重新預告）
---   3. 新增排程 long-leave-notice：週一～週五 台北 09:00，呼叫 daily-leave-digest?scope=long
---      （照抄現有 daily-leave-digest 排程的寫法，只改網址，金鑰不用重打）
+--   3. 新增排程 long-leave-notice：週一～週五 台北 09:00，呼叫每日請假名單那支 function 並帶 ?scope=long
+--      （照抄現有 daily-leave-digest 排程的寫法，只在網址後面加參數，金鑰不用重打。
+--       正式環境那支 function 的網址名稱是 clever-responder）
 --
 -- ⚠️ 要先部署新版 daily-leave-digest，再執行這支（否則 9:00 呼叫到舊版，會被當成今日名單多發一則）。
 --    「今日／隔天請假名單」暫停到 2027/1/1 的設定不受影響；這個新排程現在就啟用，
@@ -50,7 +51,9 @@ create trigger leave_requests_reset_long_notice
   before update of start_date, end_date on public.leave_requests
   for each row execute function public.leave_requests_reset_long_notice();
 
--- 3. 排程：照抄 daily-leave-digest 那一條，網址加上 ?scope=long
+-- 3. 排程：照抄 daily-leave-digest 那一條，網址後面加上 ?scope=long
+--    （正式資料庫的網址是 Supabase 自動取的名字 clever-responder，不是 daily-leave-digest，
+--     所以不認名字：找「url := '…'」那一段、而且原本沒有帶 ? 的，在後面加上參數）
 do $$
 declare
   src text;
@@ -60,10 +63,10 @@ begin
   if src is null then
     raise exception '找不到 daily-leave-digest 排程，沒有建立長假預告排程。請把這段訊息貼給開發者。';
   end if;
-  if (length(src) - length(replace(src, '/daily-leave-digest''', ''))) / length('/daily-leave-digest''') <> 1 then
+  if regexp_count(src, 'url\s*:=\s*''[^''?]+''') <> 1 then
     raise exception 'daily-leave-digest 排程的網址寫法跟預期不同，沒有建立長假預告排程。請把這段訊息貼給開發者。';
   end if;
-  cmd := replace(src, '/daily-leave-digest''', '/daily-leave-digest?scope=long''');
+  cmd := regexp_replace(src, '(url\s*:=\s*''[^''?]+)''', '\1?scope=long''');
 
   perform cron.unschedule(jobid) from cron.job where jobname = 'long-leave-notice';
   perform cron.schedule('long-leave-notice', '0 1 * * 1-5', cmd);   -- UTC 01:00 = 台北 09:00，週一～週五
@@ -81,5 +84,5 @@ select '改日期會重新預告',
 union all
 select '長假預告排程（週一～週五 09:00、網址帶 scope=long）',
        case when exists (select 1 from cron.job where jobname = 'long-leave-notice' and schedule = '0 1 * * 1-5'
-                                                  and command like '%daily-leave-digest?scope=long%' and active)
+                                                  and command like '%?scope=long''%' and active)
             then '是' else '否' end;
