@@ -259,6 +259,11 @@ export function MyStatus({ session, phase, now, mine, signups, leave, busy, run,
         <p className="massage-note">{t('massage_release_held_until', { time: fmtOpens(session.release_open_at, lang) })}</p>
       </>
     )
+  } else if (mine.released_at && mine.transferred_to) {
+    // 管理員把名額換給別人（2026-11）
+    const r = slotRange(session, mine.transferred_slot_no)
+    const to = signups.find(s => s.user_id === mine.transferred_to)?.user?.full_name || ''
+    body = <p className="massage-status__main">{t('massage_you_transferred', { n: mine.transferred_slot_no, from: r.from, to })}</p>
   } else if (mine.released_at) {
     const key = mine.yield_answer === 'yielded' ? 'massage_you_yielded'
       : mine.attendance === 'no_show' ? 'massage_you_no_show'

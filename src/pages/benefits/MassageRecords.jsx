@@ -42,6 +42,9 @@ function buildRoster(session, signups, events) {
     const moves = evs.filter(e => e.event === 'moved')
     const lastAttendance = [...evs].reverse().find(e => e.event === 'attendance' || e.event === 'no_show')
     const offers = evs.filter(e => e.event === 'offered').length
+    // 管理員換人（2026-11）：讓出、接手各記一筆
+    const transferredOut = [...evs].reverse().find(e => e.event === 'transferred_out')
+    const transferredIn = [...evs].reverse().find(e => e.event === 'transferred_in')
     return {
       s,
       firstSignedUpAt: first?.created_at || s.signed_up_at,
@@ -63,6 +66,8 @@ function buildRoster(session, signups, events) {
         ? (lastAttendance.event === 'no_show' || lastAttendance.details?.by === 'manager' ? 'manager' : 'self')
         : null,
       attendanceActor: lastAttendance?.actor?.full_name || null,
+      transferredOut: s.transferred_to ? transferredOut || null : null,
+      transferredIn: s.received_from ? transferredIn || null : null,
     }
   })
   rows.sort((a, b) => {
@@ -78,7 +83,7 @@ function buildStats(session, rows) {
   const count = f => rows.filter(f).length
   return [
     ['massage_stat_signed_up', rows.length],
-    ['massage_stat_withdrew_before', count(r => r.s.released_at && r.rank == null)],
+    ['massage_stat_withdrew_before', count(r => r.s.released_at && r.rank == null && !r.s.transferred_to)],
     ['massage_stat_selected', count(r => r.drawResult === 'selected')],
     ['massage_stat_waitlisted', count(r => r.drawResult === 'waitlist')],
     ['massage_stat_promoted', count(r => r.promotedBy)],
@@ -87,6 +92,7 @@ function buildStats(session, rows) {
     ['massage_stat_cancelled_after', count(r => r.released?.details?.reason === 'cancel' && !r.released.details.late)],
     ['massage_stat_cancelled_late', count(r => r.released?.details?.late)],
     ['massage_stat_yielded', count(r => r.released?.details?.reason === 'yield')],
+    ['massage_stat_transferred', count(r => r.s.transferred_to)],
     ['massage_stat_attended', count(r => r.s.attendance === 'attended')],
     ['massage_stat_no_show', count(r => r.s.attendance === 'no_show')],
     ['massage_stat_unmarked', count(r => !r.s.released_at && r.s.slot_no && !r.s.attendance && now >= slotEndAt(session, r.s.slot_no))],
@@ -94,7 +100,7 @@ function buildStats(session, rows) {
 }
 
 /** 一筆異動紀錄 → 一句人看得懂的話 */
-function describe(e, session, t, lang) {
+function describe(e, session, t, lang, signups = []) {
   const name = e.user?.full_name || t('massage_ev_someone')
   const actor = e.actor?.full_name || t('massage_ev_system')
   const d = e.details || {}
@@ -130,6 +136,10 @@ function describe(e, session, t, lang) {
     case 'assigned':
       return t(d.slot_conflict ? 'massage_ev_assigned_conflict' : 'massage_ev_assigned', { name, actor, slot: slotText(e.slot_no) })
     case 'moved': return t('massage_ev_moved', { name, from: d.from, to: d.to })
+    case 'transferred_out': {
+      const to = signups.find(g => g.user_id === d.to_user_id)?.user?.full_name || t('massage_ev_someone')
+      return t('massage_ev_transferred', { actor, name, to, slot: slotText(e.slot_no), note: d.note || '' })
+    }
     case 'hidden': return t('massage_ev_hidden', { actor })
     case 'signup_closed_early': return t('massage_ev_closed_early', { actor, time: fmtDateTime(d.previous_deadline, lang) })
     case 'unhidden': return t('massage_ev_unhidden', { actor })
@@ -169,8 +179,10 @@ function MassageRecords({ session, signups }) {
 
   const drawn = events.find(e => e.event === 'drawn')
   const stats = buildStats(session, rows)
-  // 每人的抽籤結果已經在名單裡，時間軸只放「發生了什麼事」，免得被 9～17 筆洗版
-  const timeline = events.filter(e => e.event !== 'draw_result')
+  // 每人的抽籤結果已經在名單裡，時間軸只放「發生了什麼事」，免得被 9～17 筆洗版。
+  // 換人記兩筆（讓出／接手），時間軸只放讓出那筆（裡面已寫了換給誰）
+  const timeline = events.filter(e => e.event !== 'draw_result' && e.event !== 'transferred_in')
+  const userName = id => signups.find(g => g.user_id === id)?.user?.full_name || ''
   // 畫面上：最新的在最前面，一頁 10 筆（不讓時間軸佔掉整個頁面）。匯出 Excel 仍是全部、照時間先後
   const totalPages = Math.max(1, Math.ceil(timeline.length / TIMELINE_PAGE_SIZE))
   const currentPage = Math.min(page, totalPages)
@@ -178,6 +190,17 @@ function MassageRecords({ session, signups }) {
     .slice((currentPage - 1) * TIMELINE_PAGE_SIZE, currentPage * TIMELINE_PAGE_SIZE)
 
   const slotLabel = n => (n ? `${n}（${slotRange(session, n).from}）` : '—')
+  const releasedLabel = r => (r.s.transferred_to
+    ? t('massage_slot_transferred', { name: userName(r.s.transferred_to) })
+    : t('massage_slot_released'))
+  const slotChange = r => {
+    if (r.s.transferred_to) return `${slotLabel(r.originalSlot || r.s.transferred_slot_no)} → ${releasedLabel(r)}`
+    if (r.originalSlot && r.originalSlot !== r.s.slot_no) {
+      return `${slotLabel(r.originalSlot)} → ${r.s.released_at ? releasedLabel(r) : slotLabel(r.s.slot_no)}`
+    }
+    if (r.s.released_at) return r.originalSlot ? `${slotLabel(r.originalSlot)} → ${releasedLabel(r)}` : '—'
+    return slotLabel(r.s.slot_no)
+  }
   const resultLabel = r => (r.drawResult ? t(`massage_result_${r.drawResult}`) : t('massage_result_none'))
   const attendanceLabel = r => {
     if (!r.s.attendance) return r.s.slot_no && !r.s.released_at ? t('massage_attendance_unmarked') : '—'
@@ -198,7 +221,12 @@ function MassageRecords({ session, signups }) {
     if (r.grabbed) out.push([t('massage_note_grabbed'), 'success'])
     if (r.releaseCancelled) out.push([t('massage_note_release_cancelled'), 'neutral'])
     if (r.moves.length) out.push([t('massage_note_moved', { n: r.moves.length }), 'info'])
-    if (r.released?.details?.reason === 'yield') out.push([t('massage_note_yielded'), 'info'])
+    if (r.transferredIn) {
+      out.push([t('massage_note_transferred_in', { name: userName(r.s.received_from), actor: r.transferredIn.actor?.full_name || '' }), 'success'])
+    }
+    if (r.s.transferred_to) {
+      out.push([t('massage_note_transferred_out', { name: userName(r.s.transferred_to), note: r.transferredOut?.details?.note || '' }), 'info'])
+    } else if (r.released?.details?.reason === 'yield') out.push([t('massage_note_yielded'), 'info'])
     else if (r.released?.details?.late) out.push([t('massage_note_cancelled_late', { time: fmtDateTime(r.released.created_at, lang) }), 'error'])
     else if (r.released) out.push([t('massage_note_cancelled', { time: fmtDateTime(r.released.created_at, lang) }), 'neutral'])
     // 沒到也會把時段放出來（released_at 有值），但那不是取消 —— 只有抽籤前的退出才看 released_at
@@ -224,7 +252,7 @@ function MassageRecords({ session, signups }) {
     const log = timeline.map(e => ({
       [t('massage_col_time')]: fmtDateTime(e.created_at, lang),
       [t('massage_col_actor')]: e.actor?.full_name || t('massage_ev_system'),
-      [t('massage_col_what')]: describe(e, session, t, lang),
+      [t('massage_col_what')]: describe(e, session, t, lang, signups),
     }))
     const summary = stats.map(([key, n]) => ({ [t('massage_col_item')]: t(key), [t('massage_col_count_n')]: n }))
     const wb = XLSX.utils.book_new()
@@ -286,11 +314,7 @@ function MassageRecords({ session, signups }) {
                   <td>{r.s.user?.full_name}</td>
                   <td>{fmtDateTime(r.firstSignedUpAt, lang)}</td>
                   <td>{resultLabel(r)}</td>
-                  <td>
-                    {r.originalSlot && r.originalSlot !== r.s.slot_no
-                      ? `${slotLabel(r.originalSlot)} → ${r.s.released_at ? t('massage_slot_released') : slotLabel(r.s.slot_no)}`
-                      : (r.s.released_at ? (r.originalSlot ? `${slotLabel(r.originalSlot)} → ${t('massage_slot_released')}` : '—') : slotLabel(r.s.slot_no))}
-                  </td>
+                  <td>{slotChange(r)}</td>
                   <td>
                     <div className="massage-chips">
                       {notes(r).map(([text, tone]) => <Chip key={text} tone={tone}>{text}</Chip>)}
@@ -312,7 +336,7 @@ function MassageRecords({ session, signups }) {
               {pageItems.map(e => (
                 <li key={e.id}>
                   <span className="massage-timeline__time">{fmtDateTime(e.created_at, lang)}</span>
-                  <span className="massage-timeline__what">{describe(e, session, t, lang)}</span>
+                  <span className="massage-timeline__what">{describe(e, session, t, lang, signups)}</span>
                   <span className="massage-timeline__actor">{e.actor?.full_name || t('massage_ev_system')}</span>
                 </li>
               ))}

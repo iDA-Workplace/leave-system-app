@@ -35,12 +35,14 @@ function buildPeople(sessions, signups) {
     const p = (byUser[g.user_id] ||= {
       userId: g.user_id, name: g.user?.full_name || '', dept: g.user?.department || '',
       signedUp: 0, selected: 0, waitlisted: 0, promoted: 0, added: 0, grabbed: 0, attended: 0, noShow: 0,
-      cancelled: 0, cancelledLate: 0, yielded: 0, lastAttended: null, history: [],
+      cancelled: 0, cancelledLate: 0, yielded: 0, transferredOut: 0, transferredIn: 0, lastAttended: null, history: [],
     })
     const inDraw = g.draw_rank != null
     const wasSelected = inDraw && g.draw_rank <= s.slot_count
     const promoted = !!g.promoted_at
-    const notSignedUp = (!!g.added_at || !!g.grabbed_at) && g.draw_rank == null
+    // 管理員換人（2026-11）：讓出的不算取消；接手的人如果這期沒報名，跟「管理員加入」一樣不算報名
+    const received = !!g.received_from
+    const notSignedUp = (!!g.added_at || !!g.grabbed_at || received) && g.draw_rank == null
     if (!notSignedUp) p.signedUp += 1
     if (g.added_at) p.added += 1
     if (g.grabbed_at) p.grabbed += 1
@@ -52,10 +54,12 @@ function buildPeople(sessions, signups) {
       if (!p.lastAttended || s.session_date > p.lastAttended) p.lastAttended = s.session_date
     }
     if (g.attendance === 'no_show') p.noShow += 1
-    if (g.yield_answer === 'yielded') p.yielded += 1
+    if (received) p.transferredIn += 1
+    if (g.transferred_to) p.transferredOut += 1
+    else if (g.yield_answer === 'yielded') p.yielded += 1
     else if (g.released_at) p.cancelled += 1
     if (g.released_late) p.cancelledLate += 1
-    if (inDraw) p.history.push({ date: s.session_date, lost: !wasSelected && !promoted && !g.grabbed_at })
+    if (inDraw) p.history.push({ date: s.session_date, lost: !wasSelected && !promoted && !g.grabbed_at && !received })
   }
   for (const p of Object.values(byUser)) {
     p.history.sort((a, b) => (a.date < b.date ? 1 : -1))
@@ -82,6 +86,8 @@ const COLUMNS = [
   ['cancelled', 'massage_people_cancelled'],
   ['cancelledLate', 'massage_people_cancelled_late'],
   ['yielded', 'massage_people_yielded'],
+  ['transferredOut', 'massage_people_transferred_out'],
+  ['transferredIn', 'massage_people_transferred_in'],
   ['streak', 'massage_people_streak'],
   ['lastAttended', 'massage_people_last_attended'],
 ]
@@ -103,6 +109,7 @@ function MassagePeopleStats() {
         fetchAllRows(() => supabase.from('massage_sessions').select('id, session_date, slot_count, drawn_at').order('id')),
         fetchAllRows(() => supabase.from('massage_signups').select(`
           user_id, session_id, draw_rank, promoted_at, added_at, grabbed_at, released_at, released_late, yield_answer, attendance,
+          transferred_to, received_from,
           user:users!massage_signups_user_id_fkey(full_name, department)
         `).order('id')),
       ])

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import { supabase } from '../../lib/supabase'
-import { Button, Card, Chip, ConfirmDialog, EmptyState, Select, Skeleton, Tabs } from '../../components/ui'
+import { Button, Card, Chip, ConfirmDialog, Dialog, EmptyState, Select, Skeleton, Tabs, Textarea } from '../../components/ui'
 import { useToast } from '../../context/ToastContext'
 import { useLanguage } from '../../context/LanguageContext'
 import {
@@ -18,6 +18,8 @@ import MassageRecords from './MassageRecords'
  * 候補功能照使用者要求保留彈性 —— 下拉選單照候補順序排，但可以選任何一位。
  * 空的時段可以按「編輯」直接加任何一位在職同仁（massage_add_to_slot），
  * 撞到請假會先問一次；加入後 Slack 會通知當事人。
+ * 有人的時段（還沒開始）可以按「換人」把名額改給另一位在職同仁（massage_transfer_slot，2026-11）：
+ * 一定要寫說明，Slack 會私訊讓出的人（附說明）與接手的人。同仁不能自己轉讓，只能由管理員改。
  */
 function MassageSessionPanel() {
   const { sessionId } = useParams()
@@ -29,6 +31,7 @@ function MassageSessionPanel() {
   const [confirm, setConfirm] = useState(null)
   const [viewChoice, setViewChoice] = useState(null)
   const [addTo, setAddTo] = useState(null)          // { n, userId }：正在編輯哪個空時段
+  const [transfer, setTransfer] = useState(null)    // { h, n, userId, note }：正在換人的時段
   const reload = () => setTick(n => n + 1)
 
   useEffect(() => {
@@ -84,6 +87,35 @@ function MassageSessionPanel() {
     reload()
   }
 
+  /** 換人：A 的時段改給 B。B 撞到請假時資料庫先回 leave_conflict_confirm，問過管理者再帶 force 送一次 */
+  async function submitTransfer(force = false) {
+    const { h, n, userId, note } = transfer
+    if (!userId) return
+    if (!note.trim()) { showToast(t('massage_err_note_required'), { tone: 'error' }); return }
+    const from = h.user?.full_name || ''
+    const to = state.people.find(p => p.id === userId)?.full_name || ''
+    setBusy(true)
+    const res = await callMassage('massage_transfer_slot',
+      { p_signup_id: h.id, p_to_user: userId, p_note: note.trim(), p_force: force })
+    setBusy(false)
+    if (!res.ok && res.data?.code === 'leave_conflict_confirm') {
+      setConfirm({
+        title: t('massage_confirm_add_conflict_title'),
+        desc: t('massage_confirm_add_conflict', { name: to, n, from: slotRange(state.session, n).from }),
+        label: t('massage_transfer_submit'),
+        onConfirm: () => submitTransfer(true),
+      })
+      return
+    }
+    setConfirm(null)
+    if (!res.ok) showToast(t(res.errorKey), { tone: 'error' })
+    else {
+      setTransfer(null)
+      showToast(t('massage_toast_transferred', { from, to, n }))
+    }
+    reload()
+  }
+
   const { loading, session, signups, okSlots, people } = state
   if (loading) return <div className="massage-page"><Skeleton height="200px" /></div>
   if (!session) {
@@ -109,7 +141,8 @@ function MassageSessionPanel() {
   // 「編輯」的人選：已經有時段的人不列（他們要用改時段）；候補照順位排最前面，其餘照名字
   const holderIds = new Set(active.filter(s => s.slot_no).map(s => s.user_id))
   const waitRank = new Map(waitlist.map((w, i) => [w.user_id, i + 1]))
-  const cancelledIds = new Set(signups.filter(s => s.released_at).map(s => s.user_id))
+  const cancelledIds = new Set(signups.filter(s => s.released_at && !s.transferred_to).map(s => s.user_id))
+  const transferredIds = new Set(signups.filter(s => s.released_at && s.transferred_to).map(s => s.user_id))
   const candidates = people
     .filter(p => !holderIds.has(p.id))
     .sort((a, b) => (waitRank.get(a.id) ?? Infinity) - (waitRank.get(b.id) ?? Infinity)
@@ -117,7 +150,8 @@ function MassageSessionPanel() {
   const candidateLabel = p => p.full_name
     + (p.department ? `（${p.department}）` : '')
     + (waitRank.has(p.id) ? t('massage_add_option_waitlist', { k: waitRank.get(p.id) })
-      : cancelledIds.has(p.id) ? t('massage_add_option_cancelled') : '')
+      : cancelledIds.has(p.id) ? t('massage_add_option_cancelled')
+        : transferredIds.has(p.id) ? t('massage_add_option_transferred') : '')
   // 已經結束的期數，點進來多半是要查紀錄；其他時候預設停在現場
   const view = viewChoice ?? (phase === 'finished' ? 'records' : 'live')
   const unmarked = active.filter(s => s.slot_no && !s.attendance && now >= slotEndAt(session, s.slot_no)).length
@@ -288,6 +322,11 @@ function MassageSessionPanel() {
                         </Select>
                       )}
 
+                      {h && !started && (
+                        <Button size="sm" variant="outlined" disabled={busy}
+                          onClick={() => setTransfer({ h, n, userId: '', note: '' })}>{t('massage_transfer')}</Button>
+                      )}
+
                       {!h && !over && addTo?.n === n && (
                         <>
                           <Button size="sm" disabled={busy || !addTo.userId} loading={busy}
@@ -355,6 +394,41 @@ function MassageSessionPanel() {
             )}
           </Card>
         </>
+      )}
+
+      {transfer && (
+        <Dialog
+          title={t('massage_transfer_title', { name: transfer.h.user?.full_name, n: transfer.n, from: slotRange(session, transfer.n).from })}
+          labelledBy="massage-transfer-title"
+          onClose={() => !busy && setTransfer(null)}
+          actions={(
+            <>
+              <Button variant="text" disabled={busy} onClick={() => setTransfer(null)}>{t('common_cancel')}</Button>
+              <Button loading={busy} disabled={!transfer.userId || !transfer.note.trim()}
+                onClick={() => submitTransfer()}>{t('massage_transfer_submit')}</Button>
+            </>
+          )}
+        >
+          <p className="admin-form-card__hint">{t('massage_transfer_hint')}</p>
+          <Select
+            label={t('massage_transfer_to')}
+            required
+            value={transfer.userId}
+            disabled={busy}
+            onChange={e => setTransfer({ ...transfer, userId: e.target.value })}
+          >
+            <option value="">{t('massage_add_placeholder')}</option>
+            {candidates.map(p => <option key={p.id} value={p.id}>{candidateLabel(p)}</option>)}
+          </Select>
+          <Textarea
+            label={t('massage_transfer_note')}
+            required
+            value={transfer.note}
+            disabled={busy}
+            onChange={e => setTransfer({ ...transfer, note: e.target.value })}
+            placeholder={t('massage_transfer_note_placeholder')}
+          />
+        </Dialog>
       )}
 
       {confirm && (

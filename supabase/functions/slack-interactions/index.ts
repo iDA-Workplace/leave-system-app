@@ -2219,6 +2219,7 @@ const MT = {
     me_offer_until: '請在 {time} 前按「我要」。',
     me_yield: '你上一期已經按過摩囉！這期也很幸運地抽中了 🎉 如果你願意，可以把名額讓給還在候補、還沒按到的同仁，讓更多人有機會體驗。要不要讓完全由你決定，選擇保留也完全沒問題。',
     me_released: '你已取消這一期。',
+    me_transferred: '你的{slot}已由管理員改給 {name}。',
     me_release_held: '你已釋出{slot}，{time} 前仍可取消釋出名額。',
     me_attended: '✅ 已記錄你有按到。',
     me_no_show: '這一期記錄為未到。',
@@ -2343,6 +2344,7 @@ const MT = {
     me_offer_until: 'Tap "I want it" before {time}.',
     me_yield: "You had a massage last time, and you got lucky again this time 🎉 If you'd like, you can give this spot to a colleague on the waitlist who hasn't had one yet, so more people get a chance. It's entirely your call — keeping it is completely fine too.",
     me_released: 'You cancelled this session.',
+    me_transferred: 'The admin gave your {slot} to {name}.',
     me_release_held: 'You released {slot}. You can undo the release until {time}.',
     me_attended: '✅ Recorded that you got your massage.',
     me_no_show: 'Recorded as a no-show for this session.',
@@ -2527,10 +2529,11 @@ const mConfirm = (lang: Lang, title: MKey, text: MKey, ok: string) => ({
 interface MSignup {
   id: string; user_id: string; signed_up_at: string; draw_rank: number | null; slot_no: number | null
   slot_conflict: boolean; released_at: string | null; yield_asked: boolean; yield_answer: string | null
+  transferred_to?: string | null; transferred_slot_no?: number | null
   offer_status: string | null; offer_slot_no: number | null; offer_expires_at: string | null
   attendance: string | null
 }
-const M_SIGNUP_COLS = 'id, user_id, signed_up_at, draw_rank, slot_no, slot_conflict, released_at, yield_asked, yield_answer, offer_status, offer_slot_no, offer_expires_at, attendance'
+const M_SIGNUP_COLS = 'id, user_id, signed_up_at, draw_rank, slot_no, slot_conflict, released_at, yield_asked, yield_answer, offer_status, offer_slot_no, offer_expires_at, attendance, transferred_to, transferred_slot_no'
 
 /** 還沒結束的期數，最多 3 期（最近的在前） */
 async function upcomingMassageSessions(db: SupabaseClient): Promise<MSession[]> {
@@ -2568,6 +2571,10 @@ async function massageCardBlocks(db: SupabaseClient, me: any, lang: Lang): Promi
       const time = mFmtOpens(lang, s.release_open_at)
       lines.push(mt(lang, 'me_release_held', { slot: mSlot(lang, s, mine!.slot_no!), time }))
       buttons.push(mButton(mt(lang, 'btn_cancel_release'), 'massage_cancel_release', mine!.id, { style: 'primary' }))
+    } else if (mine?.released_at && mine.transferred_to && mine.transferred_slot_no) {
+      // 管理員把名額換給別人（2026-11）
+      const { data: to } = await db.from('users').select('full_name').eq('id', mine.transferred_to).maybeSingle()
+      lines.push(mt(lang, 'me_transferred', { slot: mSlot(lang, s, mine.transferred_slot_no), name: to?.full_name ?? '—' }))
     } else if (!mine || mine.released_at) {
       if (mine?.released_at && (phase !== 'open')) lines.push(mt(lang, 'me_released'))
       else lines.push(mt(lang, phase === 'open' ? 'me_none_open' : 'me_none'))
