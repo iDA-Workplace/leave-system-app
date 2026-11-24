@@ -36,6 +36,8 @@
 //      assigned          → 負責人直接指定某位候補遞補：私訊被指定的人
 //      added             → 負責人把某位同仁直接加進空時段（不一定有報名）：私訊當事人
 //      moved             → 負責人改了某人的時段（交換的話兩個人各一筆）：私訊當事人
+//      transferred_out   → 管理員把某人的時段換給別人（2026-11）：私訊讓出的人，附管理員寫的說明
+//      transferred_in    → 同上，私訊接手的人（寫出是誰讓給他的）；頻道發一則時段異動（不寫說明）
 //      released（等待期間）→ 私訊本人，附「取消釋出」（負責人不個別通知，看開放時間的總整理）
 //      releases_opened   → 釋出開放時間到了：負責人一則總整理；頻道發時段異動
 //      slot_open         → 沒有候補的空時段：頻道發一則，附「報名」（先搶先贏），並在討論串 tag 可以搶的同仁
@@ -109,6 +111,7 @@ const T = {
     change_promoted: '{name} 遞補{slot}',
     change_added: '{name} 排入{slot}',
     change_moved: '{name} 從時段 {from} 改到時段 {to}',
+    change_transferred: '{from} 的{slot}改由 {to}',
     change_grabbed: '{name} 報名了{slot}',
     change_opened: '{slots}空出來了',
     held_slot: '_釋出中（{time} 開放）_',
@@ -121,7 +124,7 @@ const T = {
     draw_won_heading: '🎉 *{title}*（{date}）抽籤結果：你抽中了！\n你的{slot}。',
     draw_assigned_text: '💆 你的按摩時段',
     draw_assigned_heading: '💆 *{title}*（{date}）報名人數沒有超過名額，不用抽籤。\n你的{slot}。',
-    draw_won_note: '不能來請盡早按下方「釋出名額」，讓候補的同仁遞補；請勿私下轉讓。時段開始前 10 分鐘會再提醒你。',
+    draw_won_note: '不能來請盡早按下方「釋出名額」，讓候補的同仁遞補；想讓給特定同仁，請聯絡管理員 Anna 協助更改。時段開始前 10 分鐘會再提醒你。',
     draw_wait_text: '💆 按摩抽籤結果：候補',
     draw_wait_heading: '💆 *{title}*（{date}）抽籤結果：這次沒抽中，你是*候補第 {n} 位*。',
     draw_wait_note: '有人釋出名額時，系統會依候補順序私訊通知你，請留意 Slack。',
@@ -189,6 +192,11 @@ const T = {
 
     moved_text: '💆 你的按摩時段已調整',
     moved_heading: '💆 *{title}*（{date}）負責人已調整你的時段：\n{from} → *{to}*',
+    transferred_out_text: '💆 你的按摩時段已改給其他同仁',
+    transferred_out_heading: '💆 *{title}*（{date}）管理員已把你的{slot}改給 *{to}*。\n說明：{note}',
+    transferred_out_note: '這次不算取消，也不算未到。有問題請找管理員 Anna。',
+    transferred_in_text: '💆 有同仁把按摩時段讓給你',
+    transferred_in_heading: '💆 *{title}*（{date}）*{from}* 把{slot}讓給你，管理員已幫你排好。',
     moved_swapped: '跟 {name} 交換。',
 
     remind_text: '💆 按摩時段快到了',
@@ -260,6 +268,7 @@ const T = {
     change_promoted: '{name} takes {slot} from the waitlist',
     change_added: '{name} was added to {slot}',
     change_moved: '{name} moved from slot {from} to slot {to}',
+    change_transferred: '{from}\'s {slot} now goes to {to}',
     change_grabbed: '{name} signed up for {slot}',
     change_opened: '{slots} opened up',
     held_slot: '_Released (opens {time})_',
@@ -272,7 +281,7 @@ const T = {
     draw_won_heading: '🎉 *{title}* ({date}) draw result: you got a spot!\nYour {slot}.',
     draw_assigned_text: '💆 Your massage slot',
     draw_assigned_heading: '💆 *{title}* ({date}): sign-ups did not exceed the spots, so there was no draw.\nYour {slot}.',
-    draw_won_note: "If you can't make it, please tap \"Release spot\" below as early as possible so someone on the waitlist can take it. Please don't hand it over privately. You'll get a reminder 10 minutes before your slot.",
+    draw_won_note: "If you can't make it, please tap \"Release spot\" below as early as possible so someone on the waitlist can take it. To give it to a specific colleague, ask the admin (Anna) to update the list. You'll get a reminder 10 minutes before your slot.",
     draw_wait_text: '💆 Massage draw result: waitlist',
     draw_wait_heading: '💆 *{title}* ({date}) draw result: no spot this time — you are *#{n} on the waitlist*.',
     draw_wait_note: "When someone releases a spot, the system will DM people on the waitlist in order. Keep an eye on Slack.",
@@ -340,6 +349,11 @@ const T = {
 
     moved_text: '💆 Your massage slot changed',
     moved_heading: '💆 *{title}* ({date}): the organizer changed your slot:\n{from} → *{to}*',
+    transferred_out_text: '💆 Your massage slot was given to a colleague',
+    transferred_out_heading: '💆 *{title}* ({date}): the admin gave your {slot} to *{to}*.\nNote: {note}',
+    transferred_out_note: 'This does not count as a cancellation or a no-show. Questions? Ask the admin (Anna).',
+    transferred_in_text: '💆 A colleague gave you their massage slot',
+    transferred_in_heading: '💆 *{title}* ({date}): *{from}* gave you {slot}, and the admin has booked it for you.',
     moved_swapped: 'Swapped with {name}.',
 
     remind_text: '💆 Your massage slot is coming up',
@@ -756,6 +770,8 @@ async function handleEvent(ctx: Ctx, e: MassageEvent) {
     case 'assigned': await notifyAssigned(ctx, e, 'assigned_text', 'assigned_heading'); break
     case 'added': await notifyAssigned(ctx, e, 'added_text', 'added_heading'); break
     case 'moved': await notifyMoved(ctx, e); break
+    case 'transferred_out': await notifyTransferredOut(ctx, e); break
+    case 'transferred_in': await notifyTransferredIn(ctx, e); break
   }
   await postScheduleChange(ctx, e)
 }
@@ -787,6 +803,7 @@ async function postScheduleChange(ctx: Ctx, e: MassageEvent) {
     : e.event === 'grabbed' ? 'grabbed'
     : e.event === 'added' ? 'added'
     : e.event === 'moved' ? 'moved'
+    : e.event === 'transferred_in' ? 'transferred'   // 換人記兩筆，只看接手那筆發一則
     : null
   if (!kind || !e.slot_no) return
   const s = await ctx.session(e.session_id!)
@@ -802,6 +819,11 @@ async function postScheduleChange(ctx: Ctx, e: MassageEvent) {
   else if (kind === 'promoted') change = t(lang, 'change_promoted', { name, slot: slotText(lang, s, e.slot_no) })
   else if (kind === 'added') change = t(lang, 'change_added', { name, slot: slotText(lang, s, e.slot_no) })
   else if (kind === 'grabbed') change = t(lang, 'change_grabbed', { name, slot: slotText(lang, s, e.slot_no) })
+  else if (kind === 'transferred') {
+    // 說明只私訊給讓出的人，頻道不寫
+    const fromName = (await ctx.person(e.details?.from_user_id ?? null))?.full_name ?? '—'
+    change = t(lang, 'change_transferred', { from: fromName, to: name, slot: slotText(lang, s, e.slot_no) })
+  }
   else {
     const from = Number(e.details?.from)
     const to = Number(e.details?.to)
@@ -1279,6 +1301,48 @@ async function notifyMoved(ctx: Ctx, e: MassageEvent) {
     if (otherName) blocks.push(contextLine(t(lang, 'moved_swapped', { name: otherName })))
   }
   await dm(ctx, p, t(lang, 'moved_text'), blocks)
+}
+
+/**
+ * 管理員換人（2026-11 使用者決定）：讓出的人收到「改給誰」＋管理員寫的說明；
+ * 接手的人收到「誰讓給你」。之後又被改掉（再換一次、取消）就不發，之後那一筆會有自己的通知。
+ */
+async function notifyTransferredOut(ctx: Ctx, e: MassageEvent) {
+  const s = await ctx.session(e.session_id!)
+  const p = await ctx.person(e.user_id)
+  if (!s || !p || !e.signup_id || !e.slot_no) return
+  const { data: g } = await ctx.db.from('massage_signups')
+    .select('transferred_to, transferred_slot_no').eq('id', e.signup_id).maybeSingle()
+  if (!g || g.transferred_to !== e.details?.to_user_id || g.transferred_slot_no !== e.slot_no) return
+
+  const lang = normalizeLang(p.language)
+  const to = (await ctx.person(e.details?.to_user_id ?? null))?.full_name ?? '—'
+  await dm(ctx, p, t(lang, 'transferred_out_text'), [
+    section(t(lang, 'transferred_out_heading', {
+      title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no), to, note: String(e.details?.note ?? ''),
+    })),
+    contextLine(t(lang, 'transferred_out_note')),
+  ])
+}
+
+async function notifyTransferredIn(ctx: Ctx, e: MassageEvent) {
+  const s = await ctx.session(e.session_id!)
+  const p = await ctx.person(e.user_id)
+  if (!s || !p || !e.signup_id || !e.slot_no) return
+  const { data: g } = await ctx.db.from('massage_signups')
+    .select('slot_no, released_at').eq('id', e.signup_id).maybeSingle()
+  if (!g || g.released_at || g.slot_no !== e.slot_no) return
+
+  const lang = normalizeLang(p.language)
+  const from = (await ctx.person(e.details?.from_user_id ?? null))?.full_name ?? '—'
+  const blocks: unknown[] = [
+    section(t(lang, 'transferred_in_heading', {
+      title: s.title, date: fmtDate(lang, s.session_date), slot: slotText(lang, s, e.slot_no), from,
+    })),
+  ]
+  if (e.details?.slot_conflict) blocks.push(section(t(lang, 'assigned_conflict')))
+  blocks.push(contextLine(t(lang, 'assigned_note')))
+  await dm(ctx, p, t(lang, 'transferred_in_text'), blocks)
 }
 
 // ===== c. 時間到才做的事 =====

@@ -25,6 +25,8 @@ psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/60_onboarding_tests.s
 # 或者（另開一個資料庫，00 → 10 → 40 → 70）：20261122 職務代理人必填＋先審批（25 項）
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/40_push_tests.sql
 psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/70_proxy_tests.sql
+# 或者（另開一個資料庫，00 → 10 → 80）：20261124 按摩預約管理員換人（18 項，會先載入按摩預約的 migration）
+psql -d sect -v ON_ERROR_STOP=1 -f supabase/tests/security/80_massage_transfer_tests.sql
 ```
 
 最後會列出每一項 PASS／FAIL；有任何 FAIL 會以錯誤結束。

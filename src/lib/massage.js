@@ -13,6 +13,7 @@ export const SIGNUP_SELECT = `
   id, session_id, user_id, signed_up_at, draw_rank, result, went_last_time,
   yield_asked, yield_answer, slot_no, slot_conflict, released_at, released_late,
   offer_slot_no, offer_status, offer_expires_at, attendance, grabbed_at,
+  transferred_to, transferred_slot_no, received_from,
   user:users!massage_signups_user_id_fkey(full_name, department)
 `
 
@@ -209,7 +210,7 @@ const KNOWN_CODES = new Set([
   'invalid_slot', 'not_started', 'already_marked', 'invalid_status', 'no_slot',
   'not_asked', 'already_answered', 'not_waitlisted', 'owner_not_manager',
   'not_drawn', 'already_has_slot', 'not_open', 'cancel_release_closed', 'not_released',
-  'bad_channel',
+  'bad_channel', 'note_required', 'transfer_no_slot', 'slot_started', 'same_person',
 ])
 
 export function massageErrorKey(code) {
